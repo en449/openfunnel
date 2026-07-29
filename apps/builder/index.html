@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpenFunnel — Visual Builder</title>
+    <link rel="stylesheet" href="/_builder/builder.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  </head>
+  <body class="of-builder-body">
+    <!-- Top Navigation Bar -->
+    <header class="of-nav">
+      <div class="of-nav-left">
+        <a href="/" class="of-logo">
+          <span class="of-logo-icon">⚡</span>
+          <span class="of-logo-text">OpenFunnel <span class="of-badge">Builder</span></span>
+        </a>
+        <div class="of-funnel-selector">
+          <label for="funnelSelect" class="sr-only">Select Funnel</label>
+          <select id="funnelSelect" class="of-select">
+            <option value="lead-gen">Lead Gen Funnel (lead-gen)</option>
+            <option value="fitness">Fitness Quiz Funnel (fitness)</option>
+            <option value="real-estate">Real Estate Qualifier (real-estate)</option>
+            <option value="+new">+ Create New Funnel</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="of-nav-center">
+        <input type="text" id="funnelName" class="of-input-name" value="Lead Gen Funnel" placeholder="Funnel Name" />
+      </div>
+
+      <div class="of-nav-right">
+        <button id="toggleThemeBtn" class="of-btn of-btn-ghost" title="Theme Settings">
+          🎨 Theme
+        </button>
+        <a id="previewFunnelBtn" href="/f/lead-gen" target="_blank" class="of-btn of-btn-secondary">
+          ↗ Preview
+        </a>
+        <button id="exportJsonBtn" class="of-btn of-btn-secondary">
+          📋 Export JSON
+        </button>
+        <button id="saveFunnelBtn" class="of-btn of-btn-primary">
+          💾 Save Funnel
+        </button>
+      </div>
+    </header>
+
+    <!-- Theme Customizer Modal/Drawer -->
+    <div id="themeDrawer" class="of-drawer hidden">
+      <div class="of-drawer-header">
+        <h3>Theme & Styling</h3>
+        <button id="closeThemeBtn" class="of-btn-icon">&times;</button>
+      </div>
+      <div class="of-drawer-body">
+        <div class="of-field">
+          <label>Primary Accent Color</label>
+          <div class="of-color-picker">
+            <input type="color" id="themePrimaryColor" value="#4f46e5" />
+            <input type="text" id="themePrimaryTextVal" class="of-input" value="#4f46e5" />
+          </div>
+        </div>
+        <div class="of-field">
+          <label>Color Mode</label>
+          <select id="themeMode" class="of-select">
+            <option value="light">Light Mode</option>
+            <option value="dark">Dark Mode</option>
+          </select>
+        </div>
+        <div class="of-field">
+          <label>Corner Radius</label>
+          <input type="text" id="themeRadius" class="of-input" value="18px" placeholder="e.g. 18px" />
+        </div>
+        <div class="of-field">
+          <label>Background Color</label>
+          <input type="color" id="themeBg" value="#eef1f6" />
+        </div>
+        <div class="of-field">
+          <label>Card Surface Color</label>
+          <input type="color" id="themeSurface" value="#ffffff" />
+        </div>
+      </div>
+    </div>
+
+    <!-- Main Workspace Split View -->
+    <div class="of-workspace">
+      <!-- Left Panel: Steps List & Inspector -->
+      <aside class="of-sidebar">
+        <!-- Steps Navigation List -->
+        <div class="of-sidebar-section">
+          <div class="of-section-title">
+            <span>Funnels Steps (<span id="stepCount">0</span>)</span>
+            <button id="addStepBtn" class="of-btn-xs">+ Add Step</button>
+          </div>
+          <div id="stepsList" class="of-steps-list"></div>
+        </div>
+
+        <!-- Step Inspector -->
+        <div class="of-sidebar-section of-inspector" id="stepInspector">
+          <div class="of-section-title">Step Inspector</div>
+          <div id="inspectorContent">
+            <p class="of-placeholder-text">Select a step above to inspect and edit details.</p>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Right Viewport: Mobile Phone Device Canvas -->
+      <main class="of-preview-container">
+        <div class="of-device-toolbar">
+          <span class="of-device-label">📱 Mobile Frame Preview</span>
+          <div class="of-device-actions">
+            <button id="resetPreviewBtn" class="of-btn-xs">🔄 Restart Funnel</button>
+          </div>
+        </div>
+        
+        <div class="of-phone-frame">
+          <div class="of-phone-notch">
+            <div class="of-phone-speaker"></div>
+            <div class="of-phone-camera"></div>
+          </div>
+          <div class="of-phone-screen">
+            <iframe id="previewIframe" src="/f/lead-gen?preview=1"></iframe>
+          </div>
+          <div class="of-phone-home-indicator"></div>
+        </div>
+      </main>
+    </div>
+
+    <!-- Export JSON Modal -->
+    <dialog id="jsonModal" class="of-modal">
+      <div class="of-modal-content">
+        <h3>Funnel JSON Document</h3>
+        <textarea id="jsonTextarea" class="of-textarea" readonly></textarea>
+        <div class="of-modal-actions">
+          <button id="copyJsonBtn" class="of-btn of-btn-primary">Copy JSON</button>
+          <button id="closeJsonModalBtn" class="of-btn of-btn-secondary">Close</button>
+        </div>
+      </div>
+    </dialog>
+
+    <script type="module" src="/_builder/builder.js"></script>
+  </body>
+</html>

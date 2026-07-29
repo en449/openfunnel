@@ -1,0 +1,61 @@
+{
+  "id": "real-estate",
+  "name": "Home Value / Lead Qualifier",
+  "slug": "real-estate",
+  "theme": { "primary": "#0ea5e9", "radius": "14px" },
+  "settings": { "showProgress": true, "transition": "slide" },
+  "steps": [
+    {
+      "id": "intent",
+      "type": "choice",
+      "headline": "Are you looking to buy or sell?",
+      "options": [
+        { "id": "buy", "label": "Buy a home", "icon": "🔑", "next": "buy-timeline" },
+        { "id": "sell", "label": "Sell my home", "icon": "🏡", "next": "sell-timeline" }
+      ]
+    },
+    {
+      "id": "buy-timeline",
+      "type": "choice",
+      "headline": "When do you hope to buy?",
+      "next": "contact",
+      "options": [
+        { "id": "0-3", "label": "0–3 months", "icon": "⚡" },
+        { "id": "3-6", "label": "3–6 months", "icon": "📅" },
+        { "id": "browsing", "label": "Just browsing", "icon": "👀" }
+      ]
+    },
+    {
+      "id": "sell-timeline",
+      "type": "choice",
+      "headline": "How soon do you want to sell?",
+      "next": "contact",
+      "options": [
+        { "id": "asap", "label": "As soon as possible", "icon": "⚡" },
+        { "id": "season", "label": "This season", "icon": "🍂" },
+        { "id": "curious", "label": "Just curious about value", "icon": "💭" }
+      ]
+    },
+    {
+      "id": "contact",
+      "type": "form",
+      "headline": "Get your personalized report",
+      "subtext": "A local expert will reach out with details.",
+      "submitLabel": "Send me the report",
+      "fields": [
+        { "name": "name", "type": "name", "label": "Name", "required": true },
+        { "name": "phone", "type": "tel", "label": "Phone", "required": true },
+        { "name": "email", "type": "email", "label": "Email", "required": true }
+      ]
+    },
+    {
+      "id": "done",
+      "type": "success",
+      "headline": "Thanks, {{name}}!",
+      "subtext": "Your report is being prepared. Book a quick call to go over it.",
+      "buttonLabel": "Book a call",
+      "redirectUrl": "https://cal.com/",
+      "progress": false
+    }
+  ]
+}

@@ -1,0 +1,116 @@
+{
+  "id": "lead-gen",
+  "name": "Free Consultation — Lead Gen",
+  "slug": "lead-gen",
+  "theme": {
+    "primary": "#4f46e5",
+    "mode": "light",
+    "radius": "18px"
+  },
+  "settings": {
+    "showProgress": true,
+    "allowBack": true,
+    "persist": true,
+    "transition": "slide"
+  },
+  "integrations": {
+    "leadEndpoint": "/api/lead"
+  },
+  "steps": [
+    {
+      "id": "intro",
+      "type": "content",
+      "headline": "Get a free, no-obligation quote in 60 seconds",
+      "subtext": "Answer 3 quick questions and we'll match you with the right plan.",
+      "blocks": [
+        { "type": "list", "items": [
+          { "icon": "⚡", "text": "Takes less than a minute" },
+          { "icon": "🔒", "text": "Your details stay private" },
+          { "icon": "🎁", "text": "100% free — no card required" }
+        ] }
+      ],
+      "ctaLabel": "Start now",
+      "progress": false
+    },
+    {
+      "id": "goal",
+      "type": "choice",
+      "headline": "What are you looking for?",
+      "subtext": "Pick the one that fits best.",
+      "options": [
+        { "id": "grow", "label": "Grow my business", "icon": "📈", "subtext": "More leads & sales" },
+        { "id": "save", "label": "Save time", "icon": "⏱️", "subtext": "Automate the busywork" },
+        { "id": "advice", "label": "Get expert advice", "icon": "🧭", "subtext": "Talk to a specialist", "next": "budget" }
+      ]
+    },
+    {
+      "id": "timeline",
+      "type": "choice",
+      "headline": "When do you want to get started?",
+      "options": [
+        { "id": "now", "label": "Right away", "icon": "🚀" },
+        { "id": "month", "label": "Within a month", "icon": "📅" },
+        { "id": "exploring", "label": "Just exploring", "icon": "👀" }
+      ]
+    },
+    {
+      "id": "budget",
+      "type": "choice",
+      "headline": "What monthly budget are you working with?",
+      "options": [
+        { "id": "low", "label": "Under $500", "icon": "💵" },
+        { "id": "mid", "label": "$500 – $2,000", "icon": "💳" },
+        { "id": "high", "label": "$2,000+", "icon": "💎" }
+      ]
+    },
+    {
+      "id": "challenges",
+      "type": "multiselect",
+      "headline": "Which of these are on your mind?",
+      "subtext": "Select all that apply.",
+      "min": 1,
+      "max": 3,
+      "submitLabel": "Continue",
+      "options": [
+        { "id": "leads", "label": "Not enough leads", "icon": "🧲" },
+        { "id": "time", "label": "Too little time", "icon": "⏳" },
+        { "id": "tools", "label": "Messy tools & data", "icon": "🧰" },
+        { "id": "cost", "label": "Costs too high", "icon": "📉" }
+      ]
+    },
+    {
+      "id": "analyzing",
+      "type": "loader",
+      "headline": "Building your personalized plan",
+      "items": [
+        "Reviewing your answers",
+        "Matching you to the best option",
+        "Preparing your free quote"
+      ],
+      "durationMs": 2800,
+      "progress": false
+    },
+    {
+      "id": "contact",
+      "type": "form",
+      "headline": "Nice — your plan is ready!",
+      "subtext": "Where should we send it?",
+      "submitLabel": "Get my free quote",
+      "consent": "By continuing you agree to be contacted about your request. We never share your data.",
+      "fields": [
+        { "name": "name", "type": "name", "label": "Full name", "placeholder": "Jane Doe", "required": true },
+        { "name": "email", "type": "email", "label": "Email", "placeholder": "jane@company.com", "required": true },
+        { "name": "phone", "type": "tel", "label": "Phone (optional)", "placeholder": "+1 555 000 1234" }
+      ]
+    },
+    {
+      "id": "done",
+      "type": "success",
+      "headline": "You're all set, {{name}}! 🎉",
+      "subtext": "Check your inbox — your free quote is on its way. Want to fast-track things? Book a call now.",
+      "buttonLabel": "Book my free call",
+      "redirectUrl": "https://cal.com/",
+      "progress": false
+    }
+  ]
+}

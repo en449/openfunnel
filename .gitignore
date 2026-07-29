@@ -1,0 +1,26 @@
+node_modules/
+.next/
+out/
+dist/
+build/
+coverage/
+
+# runtime lead/event storage (JSONL sink)
+.data/
+.tmp/
+
+# env / secrets
+.env
+.env.local
+.env*.local
+!.env.example
+
+# supabase local
+supabase/.branches/
+supabase/.temp/
+
+# os / editor
+.DS_Store
+*.log
+.vscode/
+.idea/

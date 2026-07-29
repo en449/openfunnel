@@ -1,0 +1,28 @@
+{
+  "name": "openfunnel",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OpenFunnel — an open-source, mobile-first quiz/lead funnel platform. A self-hostable alternative to Perspective.co.",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "packageManager": "bun@1.3.14",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "demo": "bun scripts/serve.mjs demo 4321",
+    "dev": "bun run --filter @openfunnel/runtime dev",
+    "start": "bun run --filter @openfunnel/runtime start",
+    "test": "bun test",
+    "typecheck": "bunx tsc -p packages/engine/jsconfig.json && bunx tsc -p tsconfig.base.json --noEmit"
+  },
+  "devDependencies": {
+    "happy-dom": "^20.11.0",
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "bun": ">=1.1.0",
+    "node": ">=20"
+  }
+}

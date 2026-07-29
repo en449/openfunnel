@@ -1,0 +1,22 @@
+{
+  "name": "@openfunnel/engine",
+  "version": "0.1.0",
+  "description": "Framework-agnostic, zero-dependency funnel runtime engine — the core of OpenFunnel. Renders a JSON funnel into a fast, swipe-through mobile experience.",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "main": "./src/index.js",
+  "module": "./src/index.js",
+  "types": "./types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./types/index.d.ts",
+      "default": "./src/index.js"
+    },
+    "./styles.css": "./src/styles.css"
+  },
+  "files": ["src", "types"],
+  "sideEffects": ["*.css"],
+  "scripts": {
+    "typecheck": "tsc -p jsconfig.json"
+  }
+}

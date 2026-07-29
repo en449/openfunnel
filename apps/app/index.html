@@ -1,0 +1,647 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpenFunnel — mobile funnel console</title>
+    <meta name="description" content="Build, ship and measure mobile quiz funnels." />
+    <script>
+      // Resolve the theme before first paint so the console never flashes.
+      try {
+        var t = localStorage.getItem("of.theme");
+        if (!t) t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        document.documentElement.dataset.theme = t;
+      } catch (e) {}
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..125,400..700&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/_app/app.css" />
+  </head>
+  <body>
+    <!-- Icon sprite. Stroke-based, 24px grid, currentColor — the console has no
+         emoji anywhere: an emoji renders differently on every OS and cannot
+         inherit weight or colour. -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true" focusable="false">
+      <defs>
+        <g id="i-base" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"></g>
+      </defs>
+      <symbol id="i-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 5h18M6 12h12M10 19h4" />
+      </symbol>
+      <symbol id="i-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m6 9 6 6 6-6" />
+      </symbol>
+      <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" />
+      </symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 5v14M5 12h14" />
+      </symbol>
+      <symbol id="i-external" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 4h6v6M20 4l-8 8M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" />
+      </symbol>
+      <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+      </symbol>
+      <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a6.8 6.8 0 0 0 10.5 10.5Z" />
+      </symbol>
+      <symbol id="i-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M6 6l12 12M18 6L6 18" />
+      </symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 7h16M9 7V5h6v2M6 7l1 12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-12" />
+      </symbol>
+      <symbol id="i-up" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 19V5M6 11l6-6 6 6" />
+      </symbol>
+      <symbol id="i-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 5v14M6 13l6 6 6-6" />
+      </symbol>
+      <symbol id="i-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M5 12h14M13 6l6 6-6 6" />
+      </symbol>
+      <symbol id="i-ai" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 3.5 13.6 8 18 9.6 13.6 11.2 12 15.7 10.4 11.2 6 9.6 10.4 8 12 3.5Z" /><path d="M18.5 15.5l.7 1.9 1.8.7-1.8.7-.7 1.9-.7-1.9-1.8-.7 1.8-.7.7-1.9Z" />
+      </symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V6a1 1 0 0 1 1-1h9" />
+      </symbol>
+      <symbol id="i-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M4 19h16" />
+      </symbol>
+      <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m5 12.5 4.5 4.5L19 7" />
+      </symbol>
+      <symbol id="i-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="9" /><path d="M12 7.5v5M12 16h.01" />
+      </symbol>
+      <symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20 12a8 8 0 1 1-2.6-5.9M20 4v5h-5" />
+      </symbol>
+      <symbol id="i-code" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m9 8-5 4 5 4M15 8l5 4-5 4" />
+      </symbol>
+      <symbol id="i-phone" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="7" y="3" width="10" height="18" rx="2.5" /><path d="M11 18h2" />
+      </symbol>
+      <symbol id="i-tablet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="5" y="3" width="14" height="18" rx="2.5" /><path d="M11 18h2" />
+      </symbol>
+      <symbol id="i-desktop" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="4" width="18" height="12" rx="2" /><path d="M9 20h6M12 16v4" />
+      </symbol>
+      <symbol id="i-grid" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="4" y="4" width="7" height="7" rx="1.5" /><rect x="13" y="4" width="7" height="7" rx="1.5" /><rect x="4" y="13" width="7" height="7" rx="1.5" /><rect x="13" y="13" width="7" height="7" rx="1.5" />
+      </symbol>
+      <symbol id="i-inbox" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 13h4l1.5 3h5L16 13h4" /><path d="M5.5 5h13l1.5 8v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-5l1.5-8Z" />
+      </symbol>
+      <symbol id="i-chart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
+      </symbol>
+      <symbol id="i-layers" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m12 3 8 4.5-8 4.5-8-4.5L12 3Z" /><path d="m4 12.5 8 4.5 8-4.5" />
+      </symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3" /><path d="M19.4 14.5a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1v.3a2 2 0 1 1-4 0v-.2a1.6 1.6 0 0 0-2.8-1.1l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0-1.1-2.7H3a2 2 0 1 1 0-4h.2a1.6 1.6 0 0 0 1.1-2.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 2.7-1.1V3a2 2 0 1 1 4 0v.2a1.6 1.6 0 0 0 2.8 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0 1.1 2.7h.3a2 2 0 1 1 0 4h-.2a1.6 1.6 0 0 0-1.5 1Z" />
+      </symbol>
+      <symbol id="i-broadcast" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="2" /><path d="M8.5 15.5a5 5 0 0 1 0-7M15.5 8.5a5 5 0 0 1 0 7M5.6 18.4a9 9 0 0 1 0-12.8M18.4 5.6a9 9 0 0 1 0 12.8" />
+      </symbol>
+      <symbol id="i-palette" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 3a9 9 0 1 0 0 18 2 2 0 0 0 1.6-3.2 2 2 0 0 1 1.6-3.2h1.9A3.9 3.9 0 0 0 21 10.7 9 9 0 0 0 12 3Z" /><path d="M7.5 11.5h.01M10.5 8h.01M14.5 8h.01" />
+      </symbol>
+      <symbol id="i-save" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M5 4h11l3 3v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Z" /><path d="M8 4v5h7M8 20v-5h8v5" />
+      </symbol>
+    </svg>
+
+    <!-- ── Identity + funnel context ─────────────────────────────────────── -->
+    <header class="app-bar">
+      <button id="brandBtn" class="brand" title="Overview">
+        <svg class="brand-mark" aria-hidden="true"><use href="#i-mark" /></svg>
+        <span class="brand-name">OpenFunnel</span>
+      </button>
+
+      <span class="bar-divider" aria-hidden="true"></span>
+
+      <div class="switcher">
+        <span class="switcher-swatch" aria-hidden="true"></span>
+        <select id="funnelSelect" aria-label="Active funnel"></select>
+        <span class="switcher-caret" aria-hidden="true">
+          <svg width="14" height="14"><use href="#i-chevron" /></svg>
+        </span>
+      </div>
+
+      <span class="bar-spacer"></span>
+
+      <div class="bar-actions">
+        <button id="paletteBtn" class="btn btn-ghost btn-sm" title="Search and commands">
+          <svg width="14" height="14"><use href="#i-search" /></svg>
+          <span class="kbd">⌘K</span>
+        </button>
+        <button id="themeBtn" class="btn btn-icon" title="Switch theme" aria-label="Switch theme">
+          <svg width="15" height="15"><use href="#i-moon" /></svg>
+        </button>
+        <button id="saveBtn" class="btn btn-primary">
+          <svg width="14" height="14"><use href="#i-save" /></svg>
+          <span>Save</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- ── Views ─────────────────────────────────────────────────────────── -->
+    <nav class="tab-bar" role="tablist" aria-label="Console sections">
+      <button class="tab" role="tab" data-view="dashboard" aria-selected="true">Overview</button>
+      <button class="tab" role="tab" data-view="builder" aria-selected="false">Builder</button>
+      <button class="tab" role="tab" data-view="leads" aria-selected="false">Leads</button>
+      <button class="tab" role="tab" data-view="analytics" aria-selected="false">Analytics</button>
+      <button class="tab" role="tab" data-view="templates" aria-selected="false">Templates</button>
+      <button class="tab" role="tab" data-view="settings" aria-selected="false">Settings</button>
+      <a id="liveLink" class="live-link" href="/f/lead-gen" target="_blank" rel="noopener">
+        <span id="liveLinkText">/f/lead-gen</span>
+        <svg width="12" height="12"><use href="#i-external" /></svg>
+      </a>
+    </nav>
+
+    <main class="workspace">
+      <!-- ── Overview ─────────────────────────────────────────────────────── -->
+      <section id="view-dashboard" class="view is-active" role="tabpanel">
+        <div class="view-pad">
+          <div class="page-head">
+            <div>
+              <h1 class="page-title">Overview</h1>
+              <p class="page-sub" id="dashSub">Loading workspace…</p>
+            </div>
+            <div class="page-actions">
+              <div class="search">
+                <svg width="14" height="14"><use href="#i-search" /></svg>
+                <input id="funnelSearch" class="input" type="search" placeholder="Filter funnels" style="width: 190px" />
+              </div>
+              <button id="aiGenerateBtn" class="btn">
+                <svg width="14" height="14"><use href="#i-ai" /></svg>
+                Generate with AI
+              </button>
+              <button id="newFunnelBtn" class="btn btn-primary">
+                <svg width="14" height="14"><use href="#i-plus" /></svg>
+                New funnel
+              </button>
+            </div>
+          </div>
+
+          <div class="metrics" id="dashMetrics">
+            <div class="metric">
+              <div class="eyebrow">Starts</div>
+              <div class="metric-value" id="mStarts">—</div>
+              <div class="metric-note">Visitors who opened a funnel</div>
+            </div>
+            <div class="metric">
+              <div class="eyebrow">Leads</div>
+              <div class="metric-value" id="mLeads">—</div>
+              <div class="metric-note">Contact details captured</div>
+            </div>
+            <div class="metric">
+              <div class="eyebrow">Lead rate</div>
+              <div class="metric-value" id="mRate">—</div>
+              <div class="metric-note" id="mRateNote">Leads per start</div>
+            </div>
+            <div class="metric">
+              <div class="eyebrow">Completed</div>
+              <div class="metric-value" id="mCompletes">—</div>
+              <div class="metric-note">Reached the final step</div>
+            </div>
+          </div>
+
+          <div class="section-head">
+            <span class="eyebrow">Funnels</span>
+            <span class="eyebrow" id="funnelCount"></span>
+          </div>
+          <div id="funnelGrid" class="grid"></div>
+
+          <div class="section-head">
+            <span class="eyebrow">Recent captures</span>
+            <button id="allLeadsBtn" class="btn btn-ghost btn-sm">
+              Open leads
+              <svg width="13" height="13"><use href="#i-right" /></svg>
+            </button>
+          </div>
+          <div class="card"><div class="feed" id="captureFeed"></div></div>
+        </div>
+      </section>
+
+      <!-- ── Builder ──────────────────────────────────────────────────────── -->
+      <section id="view-builder" class="view" role="tabpanel">
+        <div class="builder">
+          <!-- The spine: the funnel's sequence, in order, always visible. -->
+          <aside class="pane pane-left">
+            <div class="pane-head">
+              <span class="eyebrow">Steps <span id="stepCount"></span></span>
+              <button id="aiStepBtn" class="btn btn-ghost btn-sm" title="Generate a funnel with AI">
+                <svg width="13" height="13"><use href="#i-ai" /></svg>
+              </button>
+            </div>
+            <div class="pane-body"><div id="stepSpine" class="spine"></div></div>
+            <div class="pane-foot">
+              <button id="addStepBtn" class="btn btn-sm" style="width: 100%">
+                <svg width="13" height="13"><use href="#i-plus" /></svg>
+                Add step
+              </button>
+            </div>
+          </aside>
+
+          <div class="stage">
+            <div class="stage-bar">
+              <div class="seg" id="chassisSeg" role="group" aria-label="Preview size">
+                <button data-chassis="mobile" aria-pressed="true"><svg width="13" height="13"><use href="#i-phone" /></svg> Phone</button>
+                <button data-chassis="tablet" aria-pressed="false"><svg width="13" height="13"><use href="#i-tablet" /></svg> Tablet</button>
+                <button data-chassis="desktop" aria-pressed="false"><svg width="13" height="13"><use href="#i-desktop" /></svg> Desktop</button>
+              </div>
+              <div class="page-actions">
+                <button id="reloadPreviewBtn" class="btn btn-sm" title="Restart the preview">
+                  <svg width="13" height="13"><use href="#i-refresh" /></svg>
+                  Restart
+                </button>
+                <button id="jsonBtn" class="btn btn-sm">
+                  <svg width="13" height="13"><use href="#i-code" /></svg>
+                  JSON
+                </button>
+                <a id="fullscreenLink" class="btn btn-sm" href="/f/lead-gen" target="_blank" rel="noopener">
+                  <svg width="13" height="13"><use href="#i-external" /></svg>
+                  Open
+                </a>
+              </div>
+            </div>
+            <div class="stage-body">
+              <div class="device" id="device" data-chassis="mobile">
+                <div class="device-screen">
+                  <iframe id="previewFrame" title="Funnel preview" src="/f/lead-gen?preview=1"></iframe>
+                </div>
+              </div>
+              <div class="device-label" id="deviceLabel">390 × 844</div>
+            </div>
+          </div>
+
+          <aside class="pane pane-right">
+            <div class="pane-head">
+              <span class="eyebrow">Step</span>
+              <div style="display: flex; gap: 4px">
+                <button id="themeModalBtn" class="btn btn-ghost btn-sm" title="Funnel theme">
+                  <svg width="13" height="13"><use href="#i-palette" /></svg>
+                  Theme
+                </button>
+                <button id="pixelsModalBtn" class="btn btn-ghost btn-sm" title="Pixels and integrations">
+                  <svg width="13" height="13"><use href="#i-broadcast" /></svg>
+                  Pixels
+                </button>
+              </div>
+            </div>
+            <div class="pane-body" id="inspector"></div>
+          </aside>
+        </div>
+      </section>
+
+      <!-- ── Leads ────────────────────────────────────────────────────────── -->
+      <section id="view-leads" class="view" role="tabpanel">
+        <div class="view-pad">
+          <div class="page-head">
+            <div>
+              <h1 class="page-title">Leads</h1>
+              <p class="page-sub" id="leadsSub">Everything your funnels have captured.</p>
+            </div>
+            <div class="page-actions">
+              <div class="search">
+                <svg width="14" height="14"><use href="#i-search" /></svg>
+                <input id="leadSearch" class="input" type="search" placeholder="Search name, email or answer" style="width: 260px" />
+              </div>
+              <button id="exportCsvBtn" class="btn">
+                <svg width="14" height="14"><use href="#i-download" /></svg>
+                Export CSV
+              </button>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="table-wrap">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th>Captured</th>
+                    <th>Funnel</th>
+                    <th>Contact</th>
+                    <th>Answers</th>
+                  </tr>
+                </thead>
+                <tbody id="leadsBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── Analytics ────────────────────────────────────────────────────── -->
+      <section id="view-analytics" class="view" role="tabpanel">
+        <div class="view-pad">
+          <div class="page-head">
+            <div>
+              <h1 class="page-title">Analytics</h1>
+              <p class="page-sub" id="analyticsSub">Where visitors leave, step by step.</p>
+            </div>
+          </div>
+
+          <div class="metrics">
+            <div class="metric">
+              <div class="eyebrow">Starts</div>
+              <div class="metric-value" id="aStarts">—</div>
+              <div class="metric-note">This funnel</div>
+            </div>
+            <div class="metric">
+              <div class="eyebrow">Leads</div>
+              <div class="metric-value" id="aLeads">—</div>
+              <div class="metric-note">Contact details captured</div>
+            </div>
+            <div class="metric">
+              <div class="eyebrow">Completed</div>
+              <div class="metric-value" id="aCompletes">—</div>
+              <div class="metric-note">Reached the final step</div>
+            </div>
+            <div class="metric">
+              <div class="eyebrow">Biggest drop</div>
+              <div class="metric-value" id="aWorst">—</div>
+              <div class="metric-note" id="aWorstNote">Needs traffic to measure</div>
+            </div>
+          </div>
+
+          <div class="section-head">
+            <span class="eyebrow">Step drop-off</span>
+            <span class="eyebrow">Distinct visitors per step</span>
+          </div>
+          <div class="card card-pad">
+            <div id="measureSpine" class="spine spine-measure"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── Templates ────────────────────────────────────────────────────── -->
+      <section id="view-templates" class="view" role="tabpanel">
+        <div class="view-pad">
+          <div class="page-head">
+            <div>
+              <h1 class="page-title">Templates</h1>
+              <p class="page-sub">Start from a funnel that already works, then edit every step.</p>
+            </div>
+          </div>
+          <div id="templateGrid" class="grid"></div>
+        </div>
+      </section>
+
+      <!-- ── Settings ─────────────────────────────────────────────────────── -->
+      <section id="view-settings" class="view" role="tabpanel">
+        <div class="view-pad">
+          <div class="page-head">
+            <div>
+              <h1 class="page-title">Settings</h1>
+              <p class="page-sub">Workspace details and the AI copilot. Stored in this browser.</p>
+            </div>
+            <div class="page-actions">
+              <button id="saveSettingsBtn" class="btn btn-primary">Save settings</button>
+            </div>
+          </div>
+
+          <div class="settings-grid">
+            <div class="card">
+              <div class="card-head"><span class="card-title">Workspace</span></div>
+              <div class="card-pad">
+                <div class="field">
+                  <label for="setWorkspace">Workspace name</label>
+                  <input id="setWorkspace" class="input" type="text" />
+                </div>
+                <div class="field">
+                  <label for="setDomain">Custom domain</label>
+                  <input id="setDomain" class="input input-mono" type="text" placeholder="funnels.yourcompany.com" />
+                  <p class="field-hint">Point a CNAME at this server, then serve funnels from your own domain.</p>
+                </div>
+                <div class="field row-between">
+                  <div>
+                    <div style="font-weight: 600">Hide the OpenFunnel badge</div>
+                    <p class="field-hint">Removes “Powered by OpenFunnel” from the bottom of every funnel.</p>
+                  </div>
+                  <label class="switch">
+                    <input id="setBranding" type="checkbox" aria-label="Hide the OpenFunnel badge" />
+                    <span class="switch-track"></span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-head"><span class="card-title">AI copilot</span></div>
+              <div class="card-pad">
+                <div class="field">
+                  <label for="setProvider">Provider</label>
+                  <span class="select-wrap">
+                    <select id="setProvider" class="select">
+                      <option value="builtin">Built-in generator — no key needed</option>
+                      <option value="byo">Your own API key</option>
+                    </select>
+                    <span class="select-caret"><svg width="14" height="14"><use href="#i-chevron" /></svg></span>
+                  </span>
+                </div>
+                <div class="field">
+                  <label for="setModel">Model</label>
+                  <span class="select-wrap">
+                    <select id="setModel" class="select">
+                      <option value="claude-opus-4-5">Claude Opus 4.5</option>
+                      <option value="claude-sonnet-4-5">Claude Sonnet 4.5</option>
+                      <option value="gpt-4o">GPT-4o</option>
+                      <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+                    </select>
+                    <span class="select-caret"><svg width="14" height="14"><use href="#i-chevron" /></svg></span>
+                  </span>
+                </div>
+                <div class="field">
+                  <label for="setApiKey">API key</label>
+                  <input id="setApiKey" class="input input-mono" type="password" placeholder="sk-…" autocomplete="off" />
+                  <p class="field-hint">Kept in this browser only. For a shared server, set the key as an environment variable instead.</p>
+                </div>
+                <div class="field">
+                  <label for="setTone">Copy tone</label>
+                  <span class="select-wrap">
+                    <select id="setTone" class="select">
+                      <option value="direct">Direct response</option>
+                      <option value="quiz">Conversational quiz</option>
+                      <option value="professional">Formal</option>
+                    </select>
+                    <span class="select-caret"><svg width="14" height="14"><use href="#i-chevron" /></svg></span>
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- ── Overlays ──────────────────────────────────────────────────────── -->
+    <div id="aiOverlay" class="overlay" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="aiTitle">
+        <div class="modal-head">
+          <span class="modal-title" id="aiTitle">Generate a funnel</span>
+          <button class="btn btn-ghost btn-icon btn-sm" data-close aria-label="Close">
+            <svg width="14" height="14"><use href="#i-close" /></svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <div class="field">
+            <label for="aiPrompt">What is the offer, and who is it for?</label>
+            <textarea id="aiPrompt" class="textarea" rows="4" placeholder="Roof replacement for homeowners in Austin. Qualify by roof age and whether they own the home."></textarea>
+            <p class="field-hint">You get a full draft funnel — every step stays editable afterwards.</p>
+          </div>
+        </div>
+        <div class="modal-foot">
+          <button class="btn" data-close>Cancel</button>
+          <button id="aiSubmitBtn" class="btn btn-primary">
+            <svg width="14" height="14"><use href="#i-ai" /></svg>
+            Generate funnel
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="pixelsOverlay" class="overlay" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="pixelsTitle">
+        <div class="modal-head">
+          <span class="modal-title" id="pixelsTitle">Pixels and integrations</span>
+          <button class="btn btn-ghost btn-icon btn-sm" data-close aria-label="Close">
+            <svg width="14" height="14"><use href="#i-close" /></svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <div class="field">
+            <label for="pxMeta">Meta pixel ID</label>
+            <input id="pxMeta" class="input input-mono" type="text" placeholder="123456789012345" />
+          </div>
+          <div class="field">
+            <label for="pxGtm">Google Tag Manager container</label>
+            <input id="pxGtm" class="input input-mono" type="text" placeholder="GTM-XXXXXXX" />
+          </div>
+          <div class="field">
+            <label for="pxGa4">GA4 measurement ID</label>
+            <input id="pxGa4" class="input input-mono" type="text" placeholder="G-XXXXXXXXXX" />
+          </div>
+          <div class="field">
+            <label for="pxTiktok">TikTok pixel ID</label>
+            <input id="pxTiktok" class="input input-mono" type="text" placeholder="C1XXXXXXXXXXXXXXXXX" />
+          </div>
+          <div class="field">
+            <label for="pxWebhook">Webhook URL</label>
+            <input id="pxWebhook" class="input input-mono" type="text" placeholder="https://hooks.zapier.com/…" />
+            <p class="field-hint">Every captured lead is posted here as JSON. Save the funnel to apply.</p>
+          </div>
+        </div>
+        <div class="modal-foot"><button class="btn btn-primary" data-close>Done</button></div>
+      </div>
+    </div>
+
+    <div id="themeOverlay" class="overlay" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="themeTitle">
+        <div class="modal-head">
+          <span class="modal-title" id="themeTitle">Funnel theme</span>
+          <button class="btn btn-ghost btn-icon btn-sm" data-close aria-label="Close">
+            <svg width="14" height="14"><use href="#i-close" /></svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <p class="field-hint" style="margin: 0 0 14px">
+            This styles the funnel your visitors see. The console picks up the same colour to mark anything belonging to this funnel.
+          </p>
+          <div class="field">
+            <label for="thPreset">Preset</label>
+            <span class="select-wrap">
+              <select id="thPreset" class="select">
+                <option value="">Custom</option>
+                <option value="midnight-glass">Midnight glass</option>
+                <option value="saas-gradient">Indigo pop</option>
+                <option value="clean-light">Clean light</option>
+                <option value="warm-editorial">Warm editorial</option>
+                <option value="neo-brutalist">High contrast</option>
+              </select>
+              <span class="select-caret"><svg width="14" height="14"><use href="#i-chevron" /></svg></span>
+            </span>
+          </div>
+          <div class="field">
+            <label for="thPrimary">Accent colour</label>
+            <div style="display: flex; gap: 8px; align-items: center">
+              <input id="thPrimary" type="color" style="width: 42px; height: 34px; padding: 2px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); cursor: pointer" />
+              <input id="thPrimaryHex" class="input input-mono" type="text" spellcheck="false" style="flex: 1" />
+            </div>
+          </div>
+          <div class="field">
+            <label for="thMode">Mode</label>
+            <span class="select-wrap">
+              <select id="thMode" class="select">
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+              </select>
+              <span class="select-caret"><svg width="14" height="14"><use href="#i-chevron" /></svg></span>
+            </span>
+          </div>
+          <div class="field">
+            <label for="thRadius">Corner radius</label>
+            <input id="thRadius" class="input input-mono" type="text" placeholder="18px" />
+          </div>
+        </div>
+        <div class="modal-foot"><button class="btn btn-primary" data-close>Done</button></div>
+      </div>
+    </div>
+
+    <div id="jsonOverlay" class="overlay" hidden>
+      <div class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="jsonTitle">
+        <div class="modal-head">
+          <span class="modal-title" id="jsonTitle">Funnel document</span>
+          <button class="btn btn-ghost btn-icon btn-sm" data-close aria-label="Close">
+            <svg width="14" height="14"><use href="#i-close" /></svg>
+          </button>
+        </div>
+        <div class="modal-body"><textarea id="jsonArea" class="code" readonly spellcheck="false"></textarea></div>
+        <div class="modal-foot">
+          <button class="btn" data-close>Close</button>
+          <button id="copyJsonBtn" class="btn btn-primary">
+            <svg width="14" height="14"><use href="#i-copy" /></svg>
+            Copy
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="paletteOverlay" class="overlay" hidden>
+      <div class="modal palette" role="dialog" aria-modal="true" aria-label="Commands">
+        <div class="palette-input-row">
+          <svg width="15" height="15"><use href="#i-search" /></svg>
+          <input id="paletteInput" class="palette-input" type="text" placeholder="Jump to a view, switch funnel, run a command" autocomplete="off" spellcheck="false" />
+          <span class="kbd">esc</span>
+        </div>
+        <div id="paletteList" class="palette-list"></div>
+      </div>
+    </div>
+
+    <div id="drawerScrim" class="drawer-scrim"></div>
+    <aside id="leadDrawer" class="drawer" aria-label="Lead detail" aria-hidden="true">
+      <div class="drawer-head">
+        <span class="modal-title">Lead</span>
+        <button id="drawerCloseBtn" class="btn btn-ghost btn-icon btn-sm" aria-label="Close">
+          <svg width="14" height="14"><use href="#i-close" /></svg>
+        </button>
+      </div>
+      <div class="drawer-body" id="drawerBody"></div>
+    </aside>
+
+    <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+
+    <script type="module" src="/_app/app.js"></script>
+  </body>
+</html>

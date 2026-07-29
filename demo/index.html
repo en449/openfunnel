@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <title>OpenFunnel — Demo</title>
+    <!--
+      Zero-build demo. It loads the engine and its stylesheet directly as ES
+      modules from packages/engine/src — no bundler, no framework. This is the
+      whole point of OpenFunnel's runtime: a funnel is just a small JS module +
+      one stylesheet, so first paint is effectively instant.
+
+      Run it with:  npm run demo   (serves this folder at http://localhost:4321)
+    -->
+    <link rel="stylesheet" href="../packages/engine/src/styles.css" />
+    <style>
+      body { margin: 0; }
+      /* Little dev toolbar to switch example funnels + watch events. */
+      .of-devbar {
+        position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 50;
+        display: flex; gap: 8px; align-items: center; padding: 6px 8px;
+        background: rgba(17, 24, 39, 0.85); color: #fff; border-radius: 999px;
+        font: 13px/1 system-ui, sans-serif; backdrop-filter: blur(6px);
+      }
+      .of-devbar select, .of-devbar button {
+        font: inherit; border: 0; border-radius: 999px; padding: 6px 10px; cursor: pointer;
+      }
+      .of-devbar button { background: #4f46e5; color: #fff; }
+      @media print { .of-devbar { display: none; } }
+    </style>
+  </head>
+  <body>
+    <div class="of-devbar">
+      <label>Funnel:&nbsp;
+        <select id="picker">
+          <option value="lead-gen">Lead Gen</option>
+          <option value="fitness">Fitness</option>
+          <option value="real-estate">Real Estate</option>
+        </select>
+      </label>
+      <button id="reset" title="Clear saved progress and restart">Restart</button>
+    </div>
+
+    <main class="of-stage">
+      <div id="app" class="of-root"></div>
+    </main>
+
+    <script type="module">
+      import { createFunnel } from "../packages/engine/src/index.js";
+
+      const app = document.getElementById("app");
+      const picker = /** @type {HTMLSelectElement} */ (document.getElementById("picker"));
+      let controller = null;
+
+      async function load(slug) {
+        if (controller) controller.destroy();
+        // In production this JSON comes from your database / edge cache.
+        const funnel = await fetch(`../examples/${slug}.json`).then((r) => r.json());
+        controller = createFunnel(app, funnel, {
+          // Local dev: don't POST anywhere, just log every event to the console
+          // so you can see exactly what would hit your backend + pixels.
+          trackEvents: false,
+          onEvent: (e) => console.log("%c[event]", "color:#4f46e5", e.type, e),
+        });
+      }
+
+      picker.addEventListener("change", () => load(picker.value));
+      document.getElementById("reset").addEventListener("click", () => {
+        localStorage.clear();
+        load(picker.value);
+      });
+
+      load(picker.value);
+    </script>
+  </body>
+</html>

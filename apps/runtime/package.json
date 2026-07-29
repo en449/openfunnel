@@ -1,0 +1,15 @@
+{
+  "name": "@openfunnel/runtime",
+  "version": "0.1.0",
+  "description": "OpenFunnel public runtime — an ultralight Bun server that renders published funnels at /f/:slug and ingests leads + analytics events.",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "dev": "bun --watch server.js",
+    "start": "bun server.js"
+  },
+  "dependencies": {
+    "@openfunnel/engine": "workspace:*"
+  }
+}

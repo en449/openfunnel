@@ -1,0 +1,21 @@
+{
+  "id": "funnel-mrw1iawr",
+  "slug": "funnel-mrw1iawr",
+  "name": "Custom Mobile Funnel",
+  "theme": {
+    "primary": "#3b82f6",
+    "mode": "dark",
+    "radius": "18px"
+  },
+  "steps": [
+    {
+      "id": "start",
+      "type": "choice",
+      "headline": "What is your main goal?",
+      "options": [
+        { "id": "o1", "label": "Option one" },
+        { "id": "o2", "label": "Option two" }
+      ]
+    }
+  ]
+}

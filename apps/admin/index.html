@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpenFunnel — Admin Dashboard & Lead Inbox</title>
+    <link rel="stylesheet" href="/_admin/admin.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  </head>
+  <body class="of-admin-body">
+    <!-- Navigation Bar -->
+    <header class="of-admin-nav">
+      <div class="of-nav-brand">
+        <span class="of-brand-icon">⚡</span>
+        <span class="of-brand-name">OpenFunnel <span class="of-admin-badge">Admin</span></span>
+      </div>
+      <nav class="of-nav-tabs">
+        <button class="of-tab-btn active" data-tab="leads">📥 Leads Inbox</button>
+        <button class="of-tab-btn" data-tab="analytics">📊 Funnel Analytics</button>
+      </nav>
+      <div class="of-nav-actions">
+        <a href="/builder" class="of-btn of-btn-primary">⚡ Open Visual Builder</a>
+      </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="of-admin-container">
+      <!-- LEADS TAB -->
+      <section id="leadsTab" class="of-tab-page active">
+        <div class="of-page-header">
+          <div>
+            <h2>Lead Submissions</h2>
+            <p class="of-subtext">View, search, and export captured lead data.</p>
+          </div>
+          <div class="of-header-actions">
+            <input type="text" id="leadSearchInput" class="of-search-input" placeholder="Search by email or name..." />
+            <button id="exportCsvBtn" class="of-btn of-btn-secondary">⬇️ Export CSV</button>
+          </div>
+        </div>
+
+        <div class="of-table-card">
+          <table class="of-table">
+            <thead>
+              <tr>
+                <th>Date / Time</th>
+                <th>Funnel Slug</th>
+                <th>Email / Contact</th>
+                <th>Captured Answers</th>
+                <th>IP / Source</th>
+              </tr>
+            </thead>
+            <tbody id="leadsTableBody">
+              <tr><td colspan="5" class="of-loading-td">Loading lead submissions...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ANALYTICS TAB -->
+      <section id="analyticsTab" class="of-tab-page">
+        <div class="of-page-header">
+          <div>
+            <h2>Conversion Funnel Analytics</h2>
+            <p class="of-subtext">Real-time visitor step views, lead captures, and drop-off rates.</p>
+          </div>
+        </div>
+
+        <div class="of-stats-grid">
+          <div class="of-stat-card">
+            <span class="of-stat-label">Total Funnel Starts</span>
+            <span class="of-stat-value" id="statStarts">0</span>
+          </div>
+          <div class="of-stat-card">
+            <span class="of-stat-label">Total Step Views</span>
+            <span class="of-stat-value" id="statStepViews">0</span>
+          </div>
+          <div class="of-stat-card">
+            <span class="of-stat-label">Captured Leads</span>
+            <span class="of-stat-value" id="statLeads">0</span>
+          </div>
+          <div class="of-stat-card">
+            <span class="of-stat-label">Funnel Completes</span>
+            <span class="of-stat-value" id="statCompletes">0</span>
+          </div>
+        </div>
+
+        <div class="of-chart-card">
+          <h3>Step Drop-off Breakdown</h3>
+          <div id="dropoffChart" class="of-dropoff-chart"></div>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="/_admin/admin.js"></script>
+  </body>
+</html>

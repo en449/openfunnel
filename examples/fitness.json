@@ -1,0 +1,57 @@
+{
+  "id": "fitness",
+  "name": "Body Goal Quiz",
+  "slug": "fitness",
+  "theme": { "primary": "#16a34a", "mode": "dark", "radius": "20px" },
+  "settings": { "showProgress": true, "transition": "slide" },
+  "steps": [
+    {
+      "id": "goal",
+      "type": "choice",
+      "headline": "What's your #1 goal right now?",
+      "options": [
+        { "id": "lose", "label": "Lose weight", "icon": "🔥" },
+        { "id": "build", "label": "Build muscle", "icon": "💪" },
+        { "id": "tone", "label": "Tone & stay fit", "icon": "✨" }
+      ]
+    },
+    {
+      "id": "frequency",
+      "type": "choice",
+      "headline": "How often do you train today?",
+      "options": [
+        { "id": "0", "label": "Rarely / never", "icon": "🛋️" },
+        { "id": "1-2", "label": "1–2x per week", "icon": "🚶" },
+        { "id": "3+", "label": "3+ times per week", "icon": "🏃" }
+      ]
+    },
+    {
+      "id": "building",
+      "type": "loader",
+      "headline": "Creating your plan",
+      "items": ["Analysing your goal", "Calibrating intensity", "Selecting your workouts"],
+      "durationMs": 2600,
+      "progress": false
+    },
+    {
+      "id": "contact",
+      "type": "form",
+      "headline": "Your custom plan is ready",
+      "subtext": "Enter your email to unlock it.",
+      "submitLabel": "Unlock my plan",
+      "fields": [
+        { "name": "name", "type": "name", "label": "First name", "required": true },
+        { "name": "email", "type": "email", "label": "Email", "required": true }
+      ]
+    },
+    {
+      "id": "done",
+      "type": "success",
+      "headline": "Let's go, {{name}}! 💥",
+      "subtext": "Your plan is unlocked. Start your first workout now.",
+      "buttonLabel": "Open my plan",
+      "redirectUrl": "https://example.com/plan",
+      "progress": false
+    }
+  ]
+}
