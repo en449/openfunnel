@@ -1,177 +1,198 @@
-# OpenFunnel
+# OpenFunnel 🚀
 
-An open-source, mobile-first quiz/lead funnel platform — a self-hostable alternative to Perspective.co.
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
+[![Runtime: Bun](https://img.shields.io/badge/Runtime-Bun-black?logo=bun)](https://bun.sh)
+[![Engine: Zero Dependencies](https://img.shields.io/badge/Engine-Zero_Dependencies-success.svg)](#-for-developers--self-hosters)
 
-A funnel is just a JSON document. The engine turns it into a fast, swipe-through mobile experience with branching logic, form capture, answer piping, and pixel tracking. No bundler, no framework, no runtime dependencies.
+> **An open-source, mobile-first quiz & lead funnel builder.**  
+> Create high-converting interactive funnels in minutes — an open, self-hostable alternative to Perspective.co, Typeform, and Outgrow.
+
+---
+
+## 🤔 What is OpenFunnel?
+
+OpenFunnel is an interactive mobile funnel software designed to turn website visitors into qualified leads and sales. 
+
+Instead of sending paid ad traffic (from Facebook, TikTok, Instagram, or Google) to a boring static landing page, OpenFunnel lets you guide visitors through a **fast, swipeable, step-by-step quiz experience** directly on their mobile phones.
+
+### Why use OpenFunnel?
+- 📱 **Blazing Fast on Mobile Phones**: Opens instantly even on slow 3G/4G connections.
+- 🎯 **Higher Conversion Rates**: Interactive questions feel like a quiz, keeping visitors engaged until they submit their contact info.
+- 🔀 **Smart Branching**: Show different questions based on what visitors answer (e.g. ask business owners about budget, but individuals about goals).
+- 💬 **Personalized Copy (Answer Piping)**: Automatically insert a visitor's name or choices into subsequent steps (*"Great news, Sarah! Here is your custom plan..."*).
+- 📊 **Built-in Lead Inbox & Analytics**: View captured leads, names, emails, and drop-off rates directly inside your dashboard.
+- 💵 **100% Free & Open Source**: No monthly subscriptions, no lead caps, no platform fees.
+
+---
+
+## 🎨 How to Use OpenFunnel (5 Easy Steps)
+
+You don't need to write code to create and publish funnels with OpenFunnel.
 
 ```
-packages/engine   the funnel runtime — zero dependencies, ~1.8k lines, framework-agnostic
-apps/app          the console — build, preview, measure and read leads in one place
-apps/runtime      single-file Bun server serving funnels, the console, and ingest
-apps/builder      superseded by apps/app; kept only under /_builder/
-apps/admin        superseded by apps/app; kept only under /_admin/
-examples/         complete funnel documents (lead-gen, fitness, real-estate)
-demo/             zero-build browser demo of the engine
+┌─────────────────┐     ┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
+│  1. Launch App  │ ──► │  2. Pick Template│ ──► │ 3. Edit Questions│ ──► │ 4. Share Funnel  │
+└─────────────────┘     └──────────────────┘     └──────────────────┘     └──────────────────┘
+                                                                                   │
+                                                                                   ▼
+                                                                          ┌──────────────────┐
+                                                                          │ 5. Collect Leads │
+                                                                          └──────────────────┘
 ```
 
-## Quick start
+### Step 1: Launch the App Console
+Start OpenFunnel on your computer or server and open the console in your browser (`http://localhost:3000`).
 
-```bash
-bun install
+### Step 2: Choose a Ready-to-Use Template
+Go to **Templates** and pick a starter funnel built for your industry:
+- 📈 **Lead Generation**: Perfect for agencies, consultants, and service businesses.
+- 🏋️ **Fitness & Wellness**: Qualify coaching clients and calculate custom plans.
+- 🏡 **Real Estate**: Capture homebuyers and seller criteria effortlessly.
 
-bun run dev     # http://localhost:3000 — launch OpenFunnel
-bun test        # 33 tests across 3 suites
-```
+### Step 3: Customize Questions in the Visual Builder
+Open the **Builder** tab to edit your funnel:
+- **Left Panel**: Add or rearrange your sequence of steps (Question 1, Question 2, Contact Form, Thank You Page).
+- **Middle Screen**: Live mobile preview that updates immediately as you type.
+- **Right Panel**: Edit headlines, button text, icons, colors, and branching rules.
 
-- **Visual Funnel Builder**: [http://localhost:3000/builder](http://localhost:3000/builder)
-- **Lead Inbox & Analytics**: [http://localhost:3000/admin](http://localhost:3000/admin)
-- **Live Mobile Funnel**: [http://localhost:3000/f/lead-gen](http://localhost:3000/f/lead-gen)
+### Step 4: Add Your Pixels & Branding
+- **Theme**: Pick your brand color, dark/light mode, and rounded button styles.
+- **Tracking Pixels**: Paste your Meta (Facebook) Pixel ID, Google Tag Manager (GTM), GA4, or TikTok Pixel to track conversions automatically.
 
-## How a funnel works
+### Step 5: Publish & Collect Leads
+Save your funnel and share your live link (`http://localhost:3000/f/your-funnel-name`).
+Whenever visitors complete your funnel, their submissions appear instantly in your **Lead Inbox** (`/leads`), complete with answers, contact details, and timestamp.
 
-Everything is data. A step declares its type and content; the engine handles rendering, transitions, validation, persistence, and analytics.
+---
 
-```json
-{
-  "id": "lead-gen",
-  "slug": "lead-gen",
-  "theme": { "primary": "#4f46e5", "mode": "light", "radius": "18px" },
-  "steps": [
-    {
-      "id": "goal",
-      "type": "choice",
-      "headline": "What are you looking for?",
-      "options": [
-        { "id": "grow", "label": "Grow my business", "icon": "📈" },
-        { "id": "advice", "label": "Get expert advice", "icon": "🧭", "next": "budget" }
-      ]
-    },
-    {
-      "id": "contact",
-      "type": "form",
-      "headline": "Your plan is ready!",
-      "fields": [{ "name": "email", "type": "email", "label": "Email", "required": true }]
-    },
-    { "id": "done", "type": "success", "headline": "You're all set, {{name}}! 🎉" }
-  ]
-}
-```
+## 🛠️ Step Types Included
 
-**Step types** — `content`, `choice`, `multiselect`, `form`, `loader`, `success`.
+OpenFunnel comes out of the box with 6 interactive screen types:
 
-**Branching** — any option (or step) can set `next` to a step id; otherwise the funnel falls through in order.
+1. **Single Choice**: Visitors tap one option to advance (e.g. *"What is your goal?"*).
+2. **Multi-Select**: Visitors select all options that apply before clicking Next.
+3. **Lead Form**: Capture names, emails, phone numbers, or custom fields with automatic validation.
+4. **Content / Info**: Display headlines, images, subheadings, or custom calls-to-action.
+5. **Interactive Loader**: An animated calculation screen that builds excitement (*"Analyzing your answers..."*).
+6. **Success / Thank You**: Confirm submission, show personalized results, or redirect to a calendar/booking page.
 
-**Piping** — `{{name}}` in any headline interpolates an earlier answer or form value.
+---
 
-**Theming** — every color, radius, and font in `styles.css` reads from an `--of-*` custom property, so a funnel is fully re-skinnable from its `theme` block alone. The runtime inlines those variables on `<html>` so the first paint is already branded.
+## 💻 For Developers & Self-Hosters
 
-Full type definitions live in [packages/engine/src/types.js](packages/engine/src/types.js).
+If you want to host OpenFunnel on your own server or embed the engine into an existing codebase, here is how to get started:
 
-## Embedding the engine
+### Quick Start (Local Setup)
 
-The engine mounts into any element and mutates nothing outside it, so it drops into an existing React/Vue/Astro page as easily as a bare HTML file.
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/luispdoesai/openFunnel.git
+   cd openFunnel
+   ```
 
-```js
-import { createFunnel } from "@openfunnel/engine";
-import "@openfunnel/engine/styles.css";
-
-const funnel = createFunnel(document.getElementById("app"), config, {
-  onEvent: (e) => console.log(e),
-  leadEndpoint: "/api/lead",
-});
-```
-
-## The runtime
-
-[apps/runtime/server.js](apps/runtime/server.js) is one dependency-free file:
-
-| Route | Purpose |
-| --- | --- |
-| `GET /f/:slug` | the funnel page — HTML shell with the config inlined |
-| `GET /api/funnels` | every funnel with its name, colour and step count |
-| `GET /api/funnels/:slug` | raw funnel JSON |
-| `POST /api/builder/save` | write a funnel document back to `FUNNELS_DIR` |
-| `POST /api/lead` | lead capture |
-| `POST /api/events` | analytics ingest |
-| `GET /api/admin/leads` | captured leads, newest first |
-| `GET /api/admin/stats` | totals plus distinct visitors per step; `?funnel=<slug>` to scope |
-| `GET /_of/*` | the engine's ES modules and stylesheet, served raw |
-| `GET /healthz` | liveness probe |
-
-The console itself is served at `/`, and each of its views (`/builder`, `/leads`,
-`/analytics`, `/templates`, `/settings`) resolves to the same shell so links and
-refreshes work.
-
-Because the engine is zero-dependency ESM, the browser imports it directly — the critical path is one HTML document, one stylesheet, and a handful of small modules. Put a CDN in front of `/f/:slug` and `/_of/*` and there is nothing left to build.
-
-**Configuration** (all optional):
-
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `PORT` | `3000` | listen port |
-| `FUNNELS_DIR` | `examples/` | directory of `<slug>.json` funnel documents |
-| `DATA_DIR` | `.data/` | where `leads.jsonl` and `events.jsonl` are appended |
-| `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` | — | also insert leads/events into Supabase |
-
-Ingest is best-effort by design: writes happen off the response path and failures are logged, never surfaced. A visitor's funnel must never break because an analytics call failed.
-
-## Analytics and pixels
-
-Two independent sinks, on purpose:
-
-- **Your backend** — `POST /api/lead` and `/api/events`, using `sendBeacon` so events survive a redirect or unload.
-- **Ad platforms** — Meta Pixel, GTM `dataLayer`, and GA4 are wired in [analytics.js](packages/engine/src/analytics.js), which maps internal events (`funnel_start`, `step_view`, `lead`, `complete`) to each vendor's names. Each vendor block is self-contained — delete the ones you don't use.
-
-Server-side Conversions API is intentionally *not* implemented client-side; keep the access token in your own edge function and forward from there.
-
-## Building your first funnel
-
-1. **Install and start**
-
+2. **Install dependencies with [Bun](https://bun.sh):**
    ```bash
    bun install
+   ```
+
+3. **Start the local server:**
+   ```bash
    bun run dev
    ```
 
-   The console is at [http://localhost:3000](http://localhost:3000).
+4. **Access the endpoints:**
+   - **Unified App Console**: `http://localhost:3000/app`
+   - **Visual Builder**: `http://localhost:3000/builder`
+   - **Lead Inbox**: `http://localhost:3000/leads`
+   - **Analytics Dashboard**: `http://localhost:3000/analytics`
+   - **Live Mobile Funnel Example**: `http://localhost:3000/f/lead-gen`
 
-2. **Start from something that works** — open **Templates** and pick one, or hit
-   **New funnel** for a blank three-step draft.
-
-3. **Edit in the builder.** The left rail is the funnel's step sequence; the
-   inspector on the right edits the selected step. The phone in the middle
-   re-renders as you type, before you save anything.
-
-4. **Wire up tracking.** **Pixels** takes your Meta, GTM, GA4 or TikTok IDs and a
-   webhook URL. **Theme** sets the colour and shape visitors see — the console
-   picks up that same colour to mark everything belonging to the funnel.
-
-5. **Save**, then open the live URL shown in the top-right of the tab bar. Once
-   real visitors move through it, **Analytics** shows how many distinct people
-   reached each step and where they left.
-
-Press `⌘K` for the command palette, or `1`–`6` to jump between views.
+5. **Run automated test suite:**
+   ```bash
+   bun test
+   ```
 
 ---
 
-## 🔒 Security Best Practices & Self-Hosting Protection
+### Repository Architecture
 
-OpenFunnel is built with local-first security and path-traversal protection. When deploying to production, follow these recommended guidelines to ensure your instance stays protected:
-
-1. **Environment & Access Controls**
-   - Keep your runtime server behind a secure reverse proxy (like Nginx, Caddy, or Cloudflare).
-   - If hosting publicly, protect administrative endpoints (`/api/builder/save`, `/api/admin/*`) behind an authentication layer or IP whitelist.
-
-2. **API Keys & Secrets**
-   - Do **NOT** expose server secrets or `SUPABASE_SERVICE_ROLE_KEY` in frontend client code.
-   - The **Settings** view keeps an API key in that browser's `localStorage` only — convenient for a single operator, but it is readable by any script on the page. On a shared or public instance, set the key as a server environment variable instead.
-
-3. **Input Sanitization & Data Protection**
-   - OpenFunnel validates all funnel slugs (`SLUG_RE`) and normalizes file paths (`targetPath.startsWith(FUNNELS_DIR)`) to strictly prevent Directory Traversal attacks.
-   - All lead submissions and CRM records are automatically escaped to prevent Cross-Site Scripting (XSS) when viewing the Lead Inbox.
+```
+openFunnel/
+├── packages/engine/   The zero-dependency funnel engine (~1.8k lines of vanilla ESM)
+├── apps/app/          The unified web console (Builder, Templates, Leads, Analytics)
+├── apps/runtime/      Single-file Bun server serving funnels & handling lead ingestion
+├── examples/          Pre-configured funnel JSON documents
+└── demo/              Zero-build browser playground for testing the engine
+```
 
 ---
 
-## License
+### Embedding the Engine in Existing Sites
 
-AGPL-3.0-or-later. See [LICENSE](LICENSE).
+The `@openfunnel/engine` package is framework-agnostic. You can mount it directly inside any React, Vue, Astro, or vanilla HTML page:
+
+```html
+<div id="funnel-container"></div>
+
+<script type="module">
+  import { createFunnel } from "./packages/engine/src/index.js";
+  
+  const config = {
+    id: "my-funnel",
+    slug: "my-funnel",
+    theme: { primary: "#4f46e5", mode: "light" },
+    steps: [
+      {
+        id: "q1",
+        type: "choice",
+        headline: "What is your main goal?",
+        options: [{ id: "opt1", label: "Grow Sales", icon: "🚀" }]
+      }
+    ]
+  };
+
+  createFunnel(document.getElementById("funnel-container"), config, {
+    leadEndpoint: "/api/lead",
+    onEvent: (e) => console.log("Funnel Event:", e)
+  });
+</script>
+```
+
+---
+
+### Server Environment Configuration (`.env`)
+
+Copy `.env.example` to `.env.local` to customize runtime options:
+
+```env
+PORT=3000
+FUNNELS_DIR=examples/
+DATA_DIR=.data/
+
+# Optional: Supabase Database Sync
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
+
+# Optional: Server-side Meta CAPI & Pixel Tracking
+NEXT_PUBLIC_META_PIXEL_ID=
+META_CAPI_ACCESS_TOKEN=
+NEXT_PUBLIC_GTM_ID=
+NEXT_PUBLIC_GA4_MEASUREMENT_ID=
+```
+
+---
+
+## 🔒 Security & Privacy
+
+- **Local-First Storage**: Leads and analytics events append locally to `.data/leads.jsonl` and `.data/events.jsonl` — your user data never leaves your server unless you explicitly configure external tools.
+- **Sanitized Inputs**: Built-in protection against Directory Traversal attacks and XSS output escaping in the Lead Inbox.
+- **No Third-Party Cookies Required**: Track funnel conversions natively without violating GDPR / privacy regulations.
+
+---
+
+## 📜 License
+
+This project is licensed under the **GNU Affero General Public License v3.0** ([AGPL-3.0](LICENSE)).
+
+AGPL v3 ensures OpenFunnel remains free and open-source forever. Anyone hosting a modified version as a public service must release their source code back to the community.
