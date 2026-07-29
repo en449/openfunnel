@@ -4,34 +4,62 @@
 [![Runtime: Bun](https://img.shields.io/badge/Runtime-Bun-black?logo=bun)](https://bun.sh)
 [![Engine: Zero Dependencies](https://img.shields.io/badge/Engine-Zero_Dependencies-success.svg)](#-for-developers--self-hosters)
 
-> **An open-source, mobile-first quiz & lead funnel builder.**  
-> Create high-converting interactive funnels in minutes — an open, self-hostable alternative to Perspective.co, Typeform, and Outgrow.
+> **The open-source, self-hostable alternative to Perspective.co, Typeform, and Outgrow.**  
+> Build mobile-first, high-converting interactive quiz funnels designed specifically for paid traffic (Facebook, Instagram, TikTok, Google Ads).
 
 ---
 
-## 🤔 What is OpenFunnel?
+## ⚡ OpenFunnel vs. Perspective.co
 
-OpenFunnel is an interactive mobile funnel software designed to turn website visitors into qualified leads and sales. 
-
-Instead of sending paid ad traffic (from Facebook, TikTok, Instagram, or Google) to a boring static landing page, OpenFunnel lets you guide visitors through a **fast, swipeable, step-by-step quiz experience** directly on their mobile phones.
-
-### Why use OpenFunnel?
-- 📱 **Blazing Fast on Mobile Phones**: Opens instantly even on slow 3G/4G connections.
-- 🎯 **Higher Conversion Rates**: Interactive questions feel like a quiz, keeping visitors engaged until they submit their contact info.
-- 🔀 **Smart Branching**: Show different questions based on what visitors answer (e.g. ask business owners about budget, but individuals about goals).
-- 💬 **Personalized Copy (Answer Piping)**: Automatically insert a visitor's name or choices into subsequent steps (*"Great news, Sarah! Here is your custom plan..."*).
-- 📊 **Built-in Lead Inbox & Analytics**: View captured leads, names, emails, and drop-off rates directly inside your dashboard.
-- 💵 **100% Free & Open Source**: No monthly subscriptions, no lead caps, no platform fees.
+| Feature | Perspective.co ($99+/mo) | OpenFunnel (Free & Open Source) |
+| :--- | :---: | :---: |
+| **Mobile-First Quiz Engine** | ✅ Yes | ✅ Yes (Swipe transitions, <100ms response) |
+| **Interactive Screen Types** | ✅ Yes | ✅ Yes (Single-choice, Multi-select, Form, Loader, Content, Success) |
+| **Smart Branching & Logic** | ✅ Yes | ✅ Yes (Target steps by answer ID) |
+| **Dynamic Answer Piping** | ✅ Yes | ✅ Yes (Inject `{{name}}`, `{{goal}}` into any headline) |
+| **Automatic UTM & Ad Tracking** | ⚠️ Limited | ✅ **Full** (`utm_source`, `utm_campaign`, `gclid`, `fbclid`, `ttclid`, etc.) |
+| **Zapier, Make & CRM Webhooks** | ✅ Yes | ✅ **Full** (Server-side + Client-side Webhook forwarding) |
+| **Meta Pixel, CAPI, GTM, GA4** | ✅ Yes | ✅ **Built-in** (Pre-wired event mapping) |
+| **Monthly Lead Limits** | ❌ Tiered Caps | ✅ **Unlimited Leads** |
+| **Data Privacy & Self-Hosting** | ❌ Vendor Lock-in | ✅ **100% Local / Self-Hostable** (JSONL files or Supabase) |
+| **Price** | ~$1,200+/year | **$0 / Free Forever** |
 
 ---
 
-## 🎨 How to Use OpenFunnel (5 Easy Steps)
+## 📈 Real Marketing & Attribution Capabilities
 
-You don't need to write code to create and publish funnels with OpenFunnel.
+OpenFunnel is engineered from the ground up for growth marketers, performance media buyers, and agencies running paid ad campaigns:
+
+### 1. Automatic UTM & Ad Click Attribution
+Every visitor who enters your funnel brings their ad parameters with them. OpenFunnel automatically captures and attaches these details to every lead submission:
+- `utm_source` (e.g. `facebook`, `google`, `tiktok`, `newsletter`)
+- `utm_medium` (e.g. `cpc`, `paid_social`, `email`)
+- `utm_campaign` (e.g. `summer_promo_2026`)
+- `utm_content` & `utm_term`
+- `gclid` (Google Ads Click ID)
+- `fbclid` (Facebook Ads Click ID)
+- `ttclid` (TikTok Ads Click ID)
+- `ref` (Custom Referral Code)
+
+### 2. Multi-Channel Lead Integrations
+Send your leads anywhere automatically:
+- **Webhooks (Zapier, Make.com, GoHighLevel, HubSpot, n8n)**: Forward leads directly via server-side or client-side POST requests.
+- **CSV Export with Attribution**: Export leads in one click with full UTM columns for direct import into Google Sheets or CRMs.
+- **Supabase Cloud Sync**: Sync lead records and analytics directly into your PostgreSQL database.
+- **Local JSONL Storage**: Zero-database setup storing leads locally in `.data/leads.jsonl`.
+
+### 3. Native Ad Pixels & Conversions API
+- **Meta (Facebook) Pixel & CAPI**: Pre-mapped `Lead`, `ViewContent`, and `CompleteRegistration` events.
+- **Google Tag Manager & GA4**: Automatically populates `dataLayer` on step views and form submissions.
+- **TikTok Pixel**: Track mobile conversion events seamlessly.
+
+---
+
+## 🎨 How to Build & Launch Your Funnel
 
 ```
 ┌─────────────────┐     ┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
-│  1. Launch App  │ ──► │  2. Pick Template│ ──► │ 3. Edit Questions│ ──► │ 4. Share Funnel  │
+│  1. Launch App  │ ──► │  2. Pick Template│ ──► │ 3. Edit Questions│ ──► │ 4. Set Integrations│
 └─────────────────┘     └──────────────────┘     └──────────────────┘     └──────────────────┘
                                                                                    │
                                                                                    ▼
@@ -40,47 +68,32 @@ You don't need to write code to create and publish funnels with OpenFunnel.
                                                                           └──────────────────┘
 ```
 
-### Step 1: Launch the App Console
-Start OpenFunnel on your computer or server and open the console in your browser (`http://localhost:3000`).
+### Step 1: Open the Console
+Start OpenFunnel locally or on your server and navigate to `http://localhost:3000`.
 
-### Step 2: Choose a Ready-to-Use Template
-Go to **Templates** and pick a starter funnel built for your industry:
-- 📈 **Lead Generation**: Perfect for agencies, consultants, and service businesses.
-- 🏋️ **Fitness & Wellness**: Qualify coaching clients and calculate custom plans.
-- 🏡 **Real Estate**: Capture homebuyers and seller criteria effortlessly.
+### Step 2: Pick a Proven Industry Template
+Choose from pre-built funnel templates optimized for high conversion:
+- 📈 **Lead Generation**: Agency & service business client qualification.
+- 🏋️ **Fitness & Wellness**: Calorie/plan calculation quizzes.
+- 🏡 **Real Estate**: Homebuyer and seller criteria capture.
 
-### Step 3: Customize Questions in the Visual Builder
-Open the **Builder** tab to edit your funnel:
-- **Left Panel**: Add or rearrange your sequence of steps (Question 1, Question 2, Contact Form, Thank You Page).
-- **Middle Screen**: Live mobile preview that updates immediately as you type.
-- **Right Panel**: Edit headlines, button text, icons, colors, and branching rules.
+### Step 3: Edit Steps in the Visual Builder
+Use the live mobile editor (`/builder`) to customize:
+- **Question Steps**: Single-choice options with icons (`📈`, `🧭`, `💡`).
+- **Multi-Select**: Allow users to pick multiple preferences.
+- **Interactive Loader**: Show an animated *"Calculating your customized results..."* screen to build anticipation.
+- **Form Capture**: Collect name, email, phone number with instant validation.
+- **Dynamic Piping**: Insert previous answers into headlines like `"Great news, {{name}}! Here is your custom plan"`.
 
-### Step 4: Add Your Pixels & Branding
-- **Theme**: Pick your brand color, dark/light mode, and rounded button styles.
-- **Tracking Pixels**: Paste your Meta (Facebook) Pixel ID, Google Tag Manager (GTM), GA4, or TikTok Pixel to track conversions automatically.
+### Step 4: Configure Webhooks & Pixels
+In the **Pixels & Tracking** tab, paste your Webhook URL (Zapier/Make/GoHighLevel) and your Meta/GTM Pixel IDs.
 
 ### Step 5: Publish & Collect Leads
-Save your funnel and share your live link (`http://localhost:3000/f/your-funnel-name`).
-Whenever visitors complete your funnel, their submissions appear instantly in your **Lead Inbox** (`/leads`), complete with answers, contact details, and timestamp.
-
----
-
-## 🛠️ Step Types Included
-
-OpenFunnel comes out of the box with 6 interactive screen types:
-
-1. **Single Choice**: Visitors tap one option to advance (e.g. *"What is your goal?"*).
-2. **Multi-Select**: Visitors select all options that apply before clicking Next.
-3. **Lead Form**: Capture names, emails, phone numbers, or custom fields with automatic validation.
-4. **Content / Info**: Display headlines, images, subheadings, or custom calls-to-action.
-5. **Interactive Loader**: An animated calculation screen that builds excitement (*"Analyzing your answers..."*).
-6. **Success / Thank You**: Confirm submission, show personalized results, or redirect to a calendar/booking page.
+Share your live funnel URL (`http://localhost:3000/f/your-slug`). Review submitted leads in your **Lead Inbox** (`/leads`) or download them via **Export CSV**.
 
 ---
 
 ## 💻 For Developers & Self-Hosters
-
-If you want to host OpenFunnel on your own server or embed the engine into an existing codebase, here is how to get started:
 
 ### Quick Start (Local Setup)
 
@@ -95,86 +108,57 @@ If you want to host OpenFunnel on your own server or embed the engine into an ex
    bun install
    ```
 
-3. **Start the local server:**
+3. **Start the local runtime server:**
    ```bash
    bun run dev
    ```
 
-4. **Access the endpoints:**
+4. **Explore the Console:**
    - **Unified App Console**: `http://localhost:3000/app`
    - **Visual Builder**: `http://localhost:3000/builder`
    - **Lead Inbox**: `http://localhost:3000/leads`
    - **Analytics Dashboard**: `http://localhost:3000/analytics`
-   - **Live Mobile Funnel Example**: `http://localhost:3000/f/lead-gen`
+   - **Live Mobile Demo**: `http://localhost:3000/f/lead-gen`
 
-5. **Run automated test suite:**
+5. **Run test suite:**
    ```bash
    bun test
    ```
 
 ---
 
-### Repository Architecture
+### Connecting External Tools via Webhooks
 
+To forward leads to **Zapier**, **Make.com**, **GoHighLevel**, **HubSpot**, or a custom CRM, you can set the webhook URL globally via environment variables:
+
+```bash
+# In your .env.local file
+WEBHOOK_URL="https://hooks.zapier.com/hooks/catch/123456/abcdef"
 ```
-openFunnel/
-├── packages/engine/   The zero-dependency funnel engine (~1.8k lines of vanilla ESM)
-├── apps/app/          The unified web console (Builder, Templates, Leads, Analytics)
-├── apps/runtime/      Single-file Bun server serving funnels & handling lead ingestion
-├── examples/          Pre-configured funnel JSON documents
-└── demo/              Zero-build browser playground for testing the engine
-```
+
+Or configure it per-funnel directly in the Visual Builder under **Pixels & Tracking → Webhook URL**.
 
 ---
 
-### Embedding the Engine in Existing Sites
+### Environment Variables Reference
 
-The `@openfunnel/engine` package is framework-agnostic. You can mount it directly inside any React, Vue, Astro, or vanilla HTML page:
-
-```html
-<div id="funnel-container"></div>
-
-<script type="module">
-  import { createFunnel } from "./packages/engine/src/index.js";
-  
-  const config = {
-    id: "my-funnel",
-    slug: "my-funnel",
-    theme: { primary: "#4f46e5", mode: "light" },
-    steps: [
-      {
-        id: "q1",
-        type: "choice",
-        headline: "What is your main goal?",
-        options: [{ id: "opt1", label: "Grow Sales", icon: "🚀" }]
-      }
-    ]
-  };
-
-  createFunnel(document.getElementById("funnel-container"), config, {
-    leadEndpoint: "/api/lead",
-    onEvent: (e) => console.log("Funnel Event:", e)
-  });
-</script>
-```
-
----
-
-### Server Environment Configuration (`.env`)
-
-Copy `.env.example` to `.env.local` to customize runtime options:
+Copy `.env.example` to `.env.local`:
 
 ```env
+# Runtime Configuration
 PORT=3000
 FUNNELS_DIR=examples/
 DATA_DIR=.data/
 
-# Optional: Supabase Database Sync
-NEXT_PUBLIC_SUPABASE_URL=
-NEXT_PUBLIC_SUPABASE_ANON_KEY=
-SUPABASE_SERVICE_ROLE_KEY=
+# Global Webhook Forwarding (Zapier, Make, GoHighLevel, CRMs)
+WEBHOOK_URL=https://hooks.zapier.com/hooks/catch/...
 
-# Optional: Server-side Meta CAPI & Pixel Tracking
+# Supabase Sync (Optional)
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+
+# Tracking Pixels (Optional)
 NEXT_PUBLIC_META_PIXEL_ID=
 META_CAPI_ACCESS_TOKEN=
 NEXT_PUBLIC_GTM_ID=
@@ -183,11 +167,47 @@ NEXT_PUBLIC_GA4_MEASUREMENT_ID=
 
 ---
 
+### Embedding the Engine in External Applications
+
+The core engine (`packages/engine`) has **zero dependencies** and can be mounted into any HTML page, React, Vue, Next.js, or Astro project:
+
+```html
+<div id="funnel-container"></div>
+
+<script type="module">
+  import { createFunnel } from "./packages/engine/src/index.js";
+  
+  const funnelConfig = {
+    id: "lead-gen",
+    slug: "lead-gen",
+    theme: { primary: "#4f46e5", mode: "light" },
+    steps: [
+      {
+        id: "q1",
+        type: "choice",
+        headline: "What is your main business goal?",
+        options: [
+          { id: "grow", label: "Increase Sales", icon: "📈" },
+          { id: "leads", label: "Get More Leads", icon: "🎯" }
+        ]
+      }
+    ]
+  };
+
+  createFunnel(document.getElementById("funnel-container"), funnelConfig, {
+    leadEndpoint: "/api/lead",
+    onEvent: (event) => console.log("Funnel Event:", event),
+  });
+</script>
+```
+
+---
+
 ## 🔒 Security & Privacy
 
-- **Local-First Storage**: Leads and analytics events append locally to `.data/leads.jsonl` and `.data/events.jsonl` — your user data never leaves your server unless you explicitly configure external tools.
-- **Sanitized Inputs**: Built-in protection against Directory Traversal attacks and XSS output escaping in the Lead Inbox.
-- **No Third-Party Cookies Required**: Track funnel conversions natively without violating GDPR / privacy regulations.
+- **Local Data Ownership**: Leads and events remain on your server inside `.data/leads.jsonl` unless explicitly routed outward.
+- **Sanitized Outputs**: XSS protection for Lead Inbox views and path-traversal validation (`SLUG_RE`) for all funnel document loads.
+- **GDPR Compliant**: Collect zero invasive third-party tracking cookies by default.
 
 ---
 
@@ -195,4 +215,4 @@ NEXT_PUBLIC_GA4_MEASUREMENT_ID=
 
 This project is licensed under the **GNU Affero General Public License v3.0** ([AGPL-3.0](LICENSE)).
 
-AGPL v3 ensures OpenFunnel remains free and open-source forever. Anyone hosting a modified version as a public service must release their source code back to the community.
+AGPL v3 ensures OpenFunnel remains free and open-source forever. Anyone hosting a modified version as a public service must release their source code back to the open-source community.
