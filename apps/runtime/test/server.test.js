@@ -8,7 +8,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -18,16 +18,27 @@ const SERVER = resolve(import.meta.dir, "../server.js");
 let proc;
 let base = "";
 let dataDir = "";
+let funnelsDir = "";
 
 beforeAll(async () => {
   const tmpParent = resolve(import.meta.dir, "../../../.tmp");
   await mkdir(tmpParent, { recursive: true });
   dataDir = await mkdtemp(join(tmpParent, "openfunnel-test-"));
+
+  // Serve funnels from a throwaway copy of examples/. The builder tests write
+  // real files into FUNNELS_DIR, so pointing it at the repo left their scratch
+  // funnels behind as untracked changes after every run.
+  funnelsDir = await mkdtemp(join(tmpParent, "openfunnel-funnels-"));
+  const sourceDir = resolve(import.meta.dir, "../../../examples");
+  for (const name of await readdir(sourceDir)) {
+    if (name.endsWith(".json")) await copyFile(join(sourceDir, name), join(funnelsDir, name));
+  }
+
   const port = 4000 + Math.floor(Math.random() * 1000);
   base = `http://localhost:${port}`;
 
   proc = Bun.spawn(["bun", SERVER], {
-    env: { ...process.env, PORT: String(port), DATA_DIR: dataDir, FUNNELS_DIR: resolve(import.meta.dir, "../../../examples") },
+    env: { ...process.env, PORT: String(port), DATA_DIR: dataDir, FUNNELS_DIR: funnelsDir },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -268,6 +279,33 @@ describe("privileged route protection", () => {
     expect(settings.notifyEmail).toBe("ops@example.com");
     expect(settings).not.toHaveProperty("nonsense");
     expect(settings).not.toHaveProperty("relayUrl");
+  });
+
+  test("never ships webhook credentials to the browser", async () => {
+    // The whole funnel document is inlined into the page, so anything left in
+    // integrations is readable with View Source.
+    await fetch(`${base}/api/builder/save`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        slug: "leaky",
+        name: "Leaky",
+        integrations: { webhookUrl: "https://hooks.example/catch/abc", webhookSecret: "whsec_topsecret" },
+        steps: [{ id: "a", type: "content", headline: "Hi" }],
+      }),
+    });
+
+    const page = await (await fetch(`${base}/f/leaky`)).text();
+    expect(page).not.toContain("whsec_topsecret");
+    expect(page).not.toContain("hooks.example");
+
+    const publicJson = await (await fetch(`${base}/api/funnels/leaky`)).text();
+    expect(publicJson).not.toContain("whsec_topsecret");
+    expect(publicJson).not.toContain("hooks.example");
+
+    // The builder still needs the real values, or saving would blank them.
+    const editing = await (await fetch(`${base}/api/builder/funnel/leaky`)).json();
+    expect(editing.integrations.webhookSecret).toBe("whsec_topsecret");
   });
 
   test("ignores a webhook target supplied in the lead body", async () => {

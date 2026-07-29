@@ -16,11 +16,12 @@
 | **Mobile-First Quiz Engine** | ✅ Yes | ✅ Yes (Swipe transitions, <100ms response) |
 | **Interactive Screen Types** | ✅ Yes | ✅ Yes (Single-choice, Multi-select, Form, Loader, Content, Success) |
 | **Option Image Cards & Media** | ✅ Yes | ✅ **Full** (Image cards, grid layout & step hero media) |
-| **Email Alerts & Autoresponders** | ✅ Paid Addon | ✅ **Built-in** (Resend API & SMTP relay HTML alerts) |
+| **Email Alerts & Autoresponders** | ✅ Paid Addon | ✅ **Built-in** (HTML alerts via Resend or an HTTP relay) |
+| **Email Verification (OTP)** | ✅ Yes | ✅ **Built-in** (6-digit code, verified server-side) |
 | **Smart Branching & Logic** | ✅ Yes | ✅ Yes (Target steps by answer ID) |
 | **Dynamic Answer Piping** | ✅ Yes | ✅ Yes (Inject `{{name}}`, `{{goal}}` into any headline) |
 | **Automatic UTM & Ad Tracking** | ⚠️ Limited | ✅ **Full** (`utm_source`, `utm_campaign`, `gclid`, `fbclid`, `ttclid`, etc.) |
-| **Zapier, Make & CRM Webhooks** | ✅ Yes | ✅ **Full** (Server-side + Client-side Webhook forwarding) |
+| **Zapier, Make & CRM Webhooks** | ✅ Yes | ✅ **Full** (Signed server-side forwarding, endpoint never exposed) |
 | **Meta Pixel, CAPI, GTM, GA4** | ✅ Yes | ✅ **Built-in** (Pre-wired event mapping) |
 | **Monthly Lead Limits** | ❌ Tiered Caps | ✅ **Unlimited Leads** |
 | **Data Privacy & Self-Hosting** | ❌ Vendor Lock-in | ✅ **100% Local / Self-Hostable** (JSONL files or Supabase) |
@@ -45,8 +46,8 @@ Every visitor who enters your funnel brings their ad parameters with them. OpenF
 
 ### 2. Multi-Channel Lead Integrations
 Send your leads anywhere automatically:
-- **Instant Email Alerts & Autoresponders**: Send formatted HTML email alerts to the business owner (`NOTIFY_EMAIL`) with full lead answers & UTM parameters, plus personalized welcome emails to leads via **Resend API** or **SMTP Relay**.
-- **Webhooks (Zapier, Make.com, GoHighLevel, HubSpot, n8n)**: Forward leads directly via server-side or client-side POST requests.
+- **Instant Email Alerts & Autoresponders**: Send formatted HTML email alerts to the business owner (`NOTIFY_EMAIL`) with full lead answers & UTM parameters, plus personalized welcome emails to leads. Delivery goes through the **Resend API** or an **HTTP relay** (`SMTP_RELAY_URL`) — direct SMTP is not implemented yet.
+- **Webhooks (Zapier, Make.com, GoHighLevel, HubSpot, n8n)**: Every lead is forwarded server-side, optionally signed with an `X-Webhook-Secret` header. Your endpoint is never exposed to visitors.
 - **CSV Export with Attribution**: Export leads in one click with full UTM columns for direct import into Google Sheets or CRMs.
 - **Supabase Cloud Sync**: Sync lead records and analytics directly into your PostgreSQL database.
 - **Local JSONL Storage**: Zero-database setup storing leads locally in `.data/leads.jsonl`.
@@ -74,6 +75,7 @@ OpenFunnel is designed to run in two modes depending on your workflow:
   - **VPS Hosting:** AWS, Hetzner, Linode, Vultr running Ubuntu + Bun
 - **How it works:** Point your custom domain (e.g., `https://quiz.yourdomain.com`) to your server.
 - **Live Tool Sync:** Operates 24/7 without needing your personal computer open. Automatically pushes leads to Zapier, GoHighLevel, HubSpot, and Supabase.
+- **⚠️ Required before going live:** set `ADMIN_TOKEN` in your server environment, or the console APIs stay locked to localhost and you will not be able to reach your lead inbox remotely. See [Security & Privacy](#-security--privacy).
 
 ---
 
@@ -109,7 +111,11 @@ Use the live mobile editor (`/builder`) to customize:
 - **Dynamic Piping**: Insert previous answers into headlines like `"Great news, {{name}}! Here is your custom plan"`.
 
 ### Step 4: Configure Email Alerts & Webhooks
-In **Settings**, configure your admin notification email (`NOTIFY_EMAIL`) and Resend API or SMTP credentials to receive instant HTML lead alerts and trigger personalized lead autoresponders. In **Pixels & Tracking**, paste your Webhook URL (Zapier/Make/GoHighLevel) and Meta/GTM Pixel IDs.
+In **Settings**, set your admin notification email (`NOTIFY_EMAIL`) and a Resend API key to receive instant HTML lead alerts and trigger personalized autoresponders. In **Pixels & Tracking**, paste your Webhook URL (Zapier/Make/GoHighLevel), an optional webhook secret, and your Meta/GTM Pixel IDs.
+
+Webhook delivery is server-side, so your endpoint and secret are never exposed in the funnel page. If you set a secret, each delivery carries it as an `X-Webhook-Secret` header for your automation to check.
+
+Optionally enable **email verification** on a form step (`"verifyEmail": true`). The visitor receives a 6-digit code and the funnel only records `email_verified: true` once the server confirms it — a fake address cannot claim to be verified.
 
 ### Step 5: Publish & Collect Leads
 Share your live funnel link (`/f/your-funnel-slug`). Review submitted leads in your **Lead Inbox** (`/leads`) or download them via **Export CSV**.
@@ -145,8 +151,13 @@ Share your live funnel link (`/f/your-funnel-slug`). Review submitted leads in y
 
 5. **Run test suite:**
    ```bash
-   bun test
+   bun test          # engine + runtime, including security regression tests
+   bun run typecheck # JSDoc types across the engine
    ```
+
+Running locally needs no configuration: the console APIs accept callers on
+`localhost` without a token. Setting `ADMIN_TOKEN` becomes necessary the moment
+the server is reachable from anywhere else.
 
 ---
 
@@ -161,6 +172,8 @@ WEBHOOK_URL="https://hooks.zapier.com/hooks/catch/123456/abcdef"
 
 Or configure it per-funnel directly in the Visual Builder under **Pixels & Tracking → Webhook URL**.
 
+Set `WEBHOOK_SECRET` (or the per-funnel secret) and every delivery carries it as an `X-Webhook-Secret` header — compare it on your side before trusting a payload. Forwarding runs on the server, so neither the URL nor the secret ever appears in the funnel page, and OpenFunnel refuses to POST to loopback, private-network or cloud-metadata addresses.
+
 ---
 
 ### Environment Variables Reference
@@ -173,11 +186,24 @@ PORT=3000
 FUNNELS_DIR=examples/
 DATA_DIR=.data/
 
-# Email Notifications & Autoresponders (Resend / SMTP)
+# Admin access — REQUIRED once this server is reachable off-host.
+# Guards the lead inbox, the funnel editor and your mail credentials.
+# Generate with: openssl rand -hex 32
+# Leave blank and those routes accept localhost only (fine for local dev).
+ADMIN_TOKEN=
+
+# Email Notifications & Autoresponders
 NOTIFY_EMAIL=owner@yourdomain.com
 EMAIL_PROVIDER=resend
 RESEND_API_KEY=re_123456789...
 RESEND_FROM="OpenFunnel Leads <leads@yourdomain.com>"
+
+# Optional HTTP-to-SMTP relay. Every message is POSTed here as JSON.
+# Env-only by design: a relay URL settable through the API would let an
+# attacker redirect every lead notification to themselves.
+SMTP_RELAY_URL=
+
+# Stored for a future direct-SMTP transport. Setting only these sends nothing.
 SMTP_HOST=
 SMTP_PORT=587
 SMTP_USER=
@@ -186,6 +212,8 @@ SMTP_FROM="OpenFunnel <noreply@yourdomain.com>"
 
 # Global Webhook Forwarding (Zapier, Make, GoHighLevel, CRMs)
 WEBHOOK_URL=https://hooks.zapier.com/hooks/catch/...
+# Sent as the X-Webhook-Secret header so your automation can verify the sender.
+WEBHOOK_SECRET=
 
 # Supabase Sync (Optional)
 NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co

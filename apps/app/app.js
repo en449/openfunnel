@@ -258,7 +258,8 @@ function renderSwitcher() {
 
 async function openFunnel(slug) {
   try {
-    const res = await fetch(`/api/funnels/${encodeURIComponent(slug)}`);
+    // The editing copy, not the public one — see /api/builder/funnel/:slug.
+    const res = await apiFetch(`/api/builder/funnel/${encodeURIComponent(slug)}`);
     if (!res.ok) throw new Error("not found");
     setWorkingFunnel(await res.json());
     markDirty(false);

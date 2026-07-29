@@ -88,16 +88,15 @@ export function firePixel(eventName, payload, integrations = {}) {
   }
 
   // --- Webhook Forwarding ---------------------------------------------------
-  if (integrations.webhookUrl && eventName === "lead") {
-    try {
-      fetch(integrations.webhookUrl, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ event: eventName, payload, timestamp: new Date().toISOString() }),
-        mode: "no-cors"
-      }).catch(() => {});
-    } catch {}
-  }
+  // Intentionally absent. Webhook delivery happens server-side in the runtime's
+  // `forwardWebhook`, which can sign the request and keep the endpoint private.
+  //
+  // Doing it from the browser required shipping `integrations.webhookUrl` in the
+  // funnel document, where any visitor could read it — a Zapier catch hook is a
+  // capability URL, so publishing it lets a stranger post fabricated leads into
+  // the operator's CRM. It also delivered every lead twice. The runtime now
+  // strips webhook fields before the document reaches the page; if you re-add a
+  // client-side path, it must not depend on a secret being present here.
 }
 
 /**

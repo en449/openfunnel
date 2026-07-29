@@ -739,6 +739,33 @@ function themeVars(theme = {}) {
  *
  * @param {any} funnel
  */
+/**
+ * Server-only fields, stripped before a funnel document reaches a browser.
+ *
+ * The whole document is inlined into the funnel page, so anything left in
+ * `integrations` is readable with View Source by every visitor.
+ *
+ * `webhookSecret` exists so the receiving automation can prove a delivery came
+ * from this server — publishing it would defeat the entire point.
+ *
+ * `webhookUrl` goes too. A Zapier/Make catch hook is a capability URL: whoever
+ * holds it can post fabricated leads straight into the operator's CRM. The
+ * server already forwards every lead in `persist()`, so nothing is lost by
+ * keeping the endpoint private — and it stops the same lead being delivered
+ * twice, once from the browser and once from here.
+ */
+// `leadEndpoint` deliberately stays: it is a plain path the engine needs in
+// order to know where to POST, and it carries no secret.
+const SERVER_ONLY_INTEGRATIONS = ["webhookUrl", "webhook", "webhookSecret"];
+
+/** @param {any} funnel @returns {any} a copy safe to hand to a browser. */
+function publicFunnel(funnel) {
+  if (!funnel?.integrations) return funnel;
+  const integrations = { ...funnel.integrations };
+  for (const key of SERVER_ONLY_INTEGRATIONS) delete integrations[key];
+  return { ...funnel, integrations };
+}
+
 function funnelPage(funnel) {
   const first = funnel.steps[0] || {};
   const title = funnel.name || first.headline || "Get started";
@@ -763,7 +790,7 @@ function funnelPage(funnel) {
   <body>
     <main class="of-stage"><div id="app" class="of-root"></div></main>
 
-    <script id="of-funnel" type="application/json">${jsonScript(funnel)}</script>
+    <script id="of-funnel" type="application/json">${jsonScript(publicFunnel(funnel))}</script>
     <script type="module">
       import { createFunnel } from "/_of/index.js";
       const mount = document.getElementById("app");
@@ -996,7 +1023,11 @@ const server = Bun.serve({
     if (path.startsWith("/api/funnels/")) {
       const funnel = await loadFunnel(path.slice("/api/funnels/".length));
       if (!funnel) return json({ error: "not_found" }, 404);
-      return json(funnel, 200, { "cache-control": DEV ? "no-store" : "public, max-age=60" });
+      // Public route: the builder fetches the full document through the
+      // authenticated /api/builder surface instead.
+      return json(publicFunnel(funnel), 200, {
+        "cache-control": DEV ? "no-store" : "public, max-age=60",
+      });
     }
 
     // --- Privileged surface -------------------------------------------------
@@ -1014,6 +1045,16 @@ const server = Bun.serve({
     }
 
     // --- Builder API --------------------------------------------------------
+
+    // The unredacted document, for editing. The public /api/funnels/:slug strips
+    // the webhook URL and secret, so the builder has to read them from here —
+    // otherwise saving would silently blank out whatever it could not see.
+    if (path.startsWith("/api/builder/funnel/") && req.method === "GET") {
+      const funnel = await loadFunnel(path.slice("/api/builder/funnel/".length));
+      if (!funnel) return json({ error: "not_found" }, 404);
+      return json(funnel, 200, { "cache-control": "no-store" });
+    }
+
     if (path === "/api/builder/save" && req.method === "POST") {
       const body = await readJson(req);
       if (!body || !body.slug || !Array.isArray(body.steps)) {
