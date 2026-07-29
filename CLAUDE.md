@@ -70,17 +70,23 @@ The engine mounts into any container in any framework and mutates nothing else.
 
 One file, `Bun.serve`, no framework. Routes:
 
-| Route | Purpose |
-| --- | --- |
-| `GET /f/:slug` | funnel page — HTML shell with the funnel JSON inlined |
-| `GET /_of/*` | engine source served raw, mirroring `packages/engine/src` |
-| `GET /_app/*`, `/`, `/builder`, `/leads`, … | console shell (see `APP_ROUTES`) |
-| `GET /api/funnels`, `/api/funnels/:slug` | funnel list / document |
-| `POST /api/builder/save\|delete\|duplicate` | writes JSON into `FUNNELS_DIR` |
-| `GET /api/admin/leads`, `/api/admin/stats` | console data, preview-filtered |
-| `POST /api/ai/generate`, `/api/ai/improve-copy` | copilot (OpenAI optional) |
-| `POST /api/lead`, `/api/events` | ingest → JSONL + Supabase + webhook |
-| `GET /healthz` | liveness |
+| Route | Auth | Purpose |
+| --- | --- | --- |
+| `GET /f/:slug` | public | funnel page — HTML shell with the funnel JSON inlined |
+| `GET /_of/*` | public | engine source served raw, mirroring `packages/engine/src` |
+| `GET /_app/*`, `/`, `/builder`, `/leads`, … | public | console shell (see `APP_ROUTES`) |
+| `GET /api/funnels`, `/api/funnels/:slug` | public | funnel list / document |
+| `POST /api/lead`, `/api/events` | public, rate-limited | ingest → JSONL + Supabase + webhook |
+| `POST /api/otp/send`, `/api/otp/verify` | public, rate-limited | email verification challenge |
+| `GET /healthz` | public | liveness |
+| `POST /api/builder/save\|delete\|duplicate` | **admin** | writes JSON into `FUNNELS_DIR` |
+| `GET /api/admin/leads`, `/api/admin/stats` | **admin** | console data, preview-filtered |
+| `GET\|POST /api/admin/email-settings` | **admin** | mail config; secrets never returned |
+| `POST /api/admin/test-email` | **admin** | send a test message |
+| `POST /api/ai/generate`, `/api/ai/improve-copy` | **admin** | copilot (OpenAI optional) |
+
+Only the console shell is public; every API behind it is not. The `/f/:slug`
+page and the ingest endpoints are the entire public API surface.
 
 ### apps/app
 
@@ -112,6 +118,30 @@ fetch fallback and swallows errors.
 new code needs both: `Controller._emit()` bails when `isPreview` or
 `?preview=1` / `?admin=1`, and the server's `isPreviewRecord()` filters records
 out of `/api/admin/*`. The builder iframe depends on this.
+
+**Privileged routes are gated in one place.** A single prefix check in the
+router runs `requireAdmin` for `/api/admin/*`, `/api/builder/*` and `/api/ai/*`
+before any handler sees the request, so a new endpoint under those prefixes is
+protected the moment it exists. Do not add a privileged route outside them, and
+do not weaken the gate: with `ADMIN_TOKEN` set it requires a bearer token, and
+without one it allows only direct loopback callers. A request carrying
+`x-forwarded-for` is never treated as loopback — otherwise anyone reaching a
+reverse-proxied deployment would inherit localhost's privileges.
+
+**Never trust the client for anything that matters.** Two live examples worth
+copying: `email_verified` arrives in the lead payload but is re-derived from
+the server's own `verifiedEmails` record before being stored, and the webhook
+destination is read only from the environment or the funnel document — never
+from the request body, because `/api/lead` is public. Outbound URLs go through
+`isSafeWebhookTarget`, which blocks loopback, private ranges and the cloud
+metadata address.
+
+**Secrets never travel outward.** `GET /api/admin/email-settings` runs
+`redactEmailSettings`, which strips `resendApiKey` / `smtpPass` and replaces
+them with `…Set` booleans; writes go through an allowlist (`WRITABLE_EMAIL_KEYS`)
+so an unexpected key cannot be persisted, and a blank secret means "keep the
+existing value" rather than wiping it. The HTTP relay URL is env-only and never
+settable through the API.
 
 **Path traversal.** Any route that reads or writes a file validates against
 `SLUG_RE` *and* checks the resolved path still `startsWith` its root dir. Copy
@@ -172,10 +202,12 @@ TODOs, not working features:
 - `integrations.googleAdsId`, `googleAdsLabel`, `linkedinTagId`,
   `pinterestPixelId` — not in the `FunnelIntegrations` typedef and not handled
   by `analytics.js`.
-- `integrations.webhookSecret` — the UI promises an `X-Webhook-Secret` header,
-  but `forwardWebhook()` in `server.js` sends only `content-type`.
 - `of.globalCode`, `of.notifyEmail`, `of.gdpr.enabled`, `of.currency`,
   `of.language`, `of.branding.hidden` — stored in localStorage, never read back.
+  `of.globalCode` is the one to be careful with: it is described in the UI as
+  injected into every published funnel, so wiring it means injecting operator
+  HTML into the funnel page. Do that server-side from the funnel document, not
+  from a per-browser localStorage value.
 - `of.ai.brandVoice` and `of.ai.provider` are saved but never sent;
   `generateFunnel()` still posts a stale `of.ai.tone` key that the settings UI
   no longer writes.
@@ -192,6 +224,13 @@ TODOs, not working features:
 - `/api/ai/generate` only calls OpenAI, and only when the key starts with `sk-`;
   anything else falls through to a hardcoded built-in generator that always
   returns the same 5-step funnel. A "success" response does not mean a model ran.
+- Direct SMTP is **not implemented**. `RESEND_API_KEY` or `SMTP_RELAY_URL` are
+  the two working transports; setting only `SMTP_*` logs a warning and sends
+  nothing. `sendEmail` reports `ok: false` in that case rather than claiming
+  success, so don't "fix" a failing send by making it return true.
+- Rate limits and the OTP store are in-memory, so they are per-process and
+  reset on restart. Behind more than one instance you need an edge rate limit
+  and a shared store.
 - Supabase and webhook forwarding are opt-in via env; with nothing configured
   everything still works against local JSONL files.
 - `apps/builder` and `apps/admin` are the older standalone UIs still mounted at

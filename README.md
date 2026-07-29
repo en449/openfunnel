@@ -239,9 +239,45 @@ The core engine (`packages/engine`) has **zero dependencies** and can be mounted
 
 ## 🔒 Security & Privacy
 
-- **Local Data Ownership**: Leads and events remain on your server inside `.data/leads.jsonl` unless explicitly routed outward.
-- **Sanitized Outputs**: XSS protection for Lead Inbox views and path-traversal validation (`SLUG_RE`) for all funnel document loads.
-- **GDPR Compliant**: Collect zero invasive third-party tracking cookies by default.
+### ⚠️ Set `ADMIN_TOKEN` before you put this on the internet
+
+Your console reads real people's names, emails and phone numbers. Every console
+API — the lead inbox, the funnel editor, and your mail credentials — is
+protected by a single shared secret:
+
+```bash
+# generate one
+openssl rand -hex 32
+
+# then set it in your server environment
+ADMIN_TOKEN=<the value you generated>
+```
+
+Paste the same value into the console under **Settings → Admin API token**.
+
+**If you leave it blank**, the server still refuses those routes to everyone
+except callers on `localhost` — so `bun run dev` works with no setup, and a
+public deployment fails closed instead of quietly exposing your leads. A request
+arriving through a proxy is never treated as local, so putting nginx or a CDN in
+front does not accidentally grant access.
+
+### What the runtime does for you
+
+- **Local data ownership**: leads and events stay in `.data/leads.jsonl` unless you route them outward.
+- **Credentials are never echoed back**: the settings API reports *whether* a Resend or SMTP secret is set, never its value.
+- **Outbound destinations are operator-owned**: webhook targets come from your environment or your funnel document, never from a visitor's request, and loopback / private / cloud-metadata addresses are refused.
+- **Signed webhooks**: set a webhook secret and every delivery carries an `X-Webhook-Secret` header your automation can check.
+- **Email verification that actually verifies**: six-digit codes from a CSPRNG, five attempts, ten-minute expiry, never returned to the browser — and the server re-derives `email_verified` rather than believing the client.
+- **Abuse limits**: the ingest, OTP and mail endpoints are rate-limited per address and per caller.
+- **Escaped output**: lead data is escaped into notification emails, the lead inbox, and the funnel HTML shell.
+- **Path-traversal validation** (`SLUG_RE` plus a resolved-path check) on every route that touches a file.
+- **GDPR-friendly**: no third-party tracking cookies by default.
+
+> **Scope note.** Rate limits and OTP state live in memory, so they are
+> per-process — run more than one instance and you want an edge rate limit and a
+> shared store. The console has no multi-user accounts or audit log; the admin
+> token is all-or-nothing access. Direct SMTP is not implemented — use Resend or
+> an HTTP relay via `SMTP_RELAY_URL`.
 
 ---
 

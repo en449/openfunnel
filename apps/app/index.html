@@ -193,6 +193,8 @@
                 New funnel
               </button>
             </div>
+          </div>
+
           <div class="card" style="margin-bottom:20px;background:linear-gradient(135deg, rgba(79,70,229,0.06) 0%, rgba(147,51,234,0.06) 100%);border:1px solid color-mix(in srgb, var(--accent) 30%, transparent);">
             <div class="card-pad" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px;">
               <div>
@@ -468,6 +470,11 @@
                   <label for="setDomain">Custom domain</label>
                   <input id="setDomain" class="input input-mono" type="text" placeholder="funnels.yourcompany.com" />
                   <p class="field-hint">Point a CNAME at this server, then serve funnels from your own domain.</p>
+                </div>
+                <div class="field">
+                  <label for="setAdminToken">Admin API token</label>
+                  <input id="setAdminToken" class="input input-mono" type="password" placeholder="matches ADMIN_TOKEN on the server" autocomplete="off" />
+                  <p class="field-hint">Required once this console is reachable from outside this machine. Set <code>ADMIN_TOKEN</code> in the server environment and paste the same value here — it authorises reading leads, saving funnels, and changing email settings. Leave blank when running locally.</p>
                 </div>
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
                   <div class="field">
@@ -805,8 +812,13 @@
                 <option value="Inter">Inter (Clean modern sans)</option>
                 <option value="Plus Jakarta Sans">Plus Jakarta Sans (SaaS display)</option>
                 <option value="Outfit">Outfit (Tech bold)</option>
+                <option value="Poppins">Poppins (Friendly sans)</option>
                 <option value="Playfair Display">Playfair Display (Luxury editorial)</option>
                 <option value="Space Grotesk">Space Grotesk (Modern brutalist)</option>
+                <option value="Montserrat">Montserrat (Corporate display)</option>
+                <option value="Lora">Lora (Classic serif)</option>
+                <option value="Syne">Syne (Creative agency)</option>
+                <option value="JetBrains Mono">JetBrains Mono (Developer mono)</option>
               </select>
               <span class="select-caret"><svg width="14" height="14"><use href="#i-chevron" /></svg></span>
             </span>
@@ -815,9 +827,9 @@
             <label for="thBtnStyle">Button Shadow & Style</label>
             <span class="select-wrap">
               <select id="thBtnStyle" class="select">
-                <option value="flat">Flat clean</option>
                 <option value="glow">Subtle accent glow</option>
                 <option value="pressable-3d">3D Pressable depth</option>
+                <option value="flat">Flat clean</option>
               </select>
               <span class="select-caret"><svg width="14" height="14"><use href="#i-chevron" /></svg></span>
             </span>
@@ -845,6 +857,27 @@
           </div>
         </div>
         <div class="modal-foot"><button class="btn btn-primary" data-close>Done</button></div>
+      </div>
+    </div>
+
+    <div id="symbolPickerOverlay" class="overlay" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="symbolTitle" style="max-width:440px">
+        <div class="modal-head">
+          <span class="modal-title" id="symbolTitle">Pick a Symbol / Icon</span>
+          <button class="btn btn-ghost btn-icon btn-sm" data-close aria-label="Close">
+            <svg width="14" height="14"><use href="#i-close" /></svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <div class="field">
+            <input id="symbolSearch" class="input" type="search" placeholder="Filter symbols..." />
+          </div>
+          <div id="symbolGrid" class="symbol-grid"></div>
+        </div>
+        <div class="modal-foot" style="justify-content:space-between">
+          <button id="clearSymbolBtn" class="btn btn-ghost btn-sm btn-danger">Clear symbol</button>
+          <button class="btn btn-primary btn-sm" data-close>Done</button>
+        </div>
       </div>
     </div>
 

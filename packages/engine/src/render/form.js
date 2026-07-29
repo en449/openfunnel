@@ -61,13 +61,23 @@ export function renderForm(step, ctrl) {
         if (ctaBtn) ctaBtn.setAttribute("disabled", "true");
 
         try {
-          await fetch("/api/otp/send", {
+          const sendRes = await fetch("/api/otp/send", {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify({ email: targetEmail }),
           });
+          const sendData = await sendRes.json().catch(() => ({}));
 
-          // Render 4-digit OTP Verification UI overlay
+          // If no code actually went out, showing the code screen would strand
+          // the visitor on a step they cannot clear. Submit instead — the
+          // server records email_verified as false either way.
+          if (!sendRes.ok || !sendData.ok) {
+            if (ctaBtn) ctaBtn.removeAttribute("disabled");
+            ctrl.submitForm(values);
+            return;
+          }
+
+          // Render the code-entry overlay.
           if (!otpCard) {
             let otpVal = "";
             const otpError = el("span", { class: "of-field-error", role: "alert" });
@@ -75,7 +85,7 @@ export function renderForm(step, ctrl) {
             const otpInput = el("input", {
               type: "text",
               class: "of-input of-otp-input",
-              placeholder: "1234",
+              placeholder: "123456",
               maxLength: 6,
               inputmode: "numeric",
               autocomplete: "one-time-code",
@@ -87,7 +97,7 @@ export function renderForm(step, ctrl) {
 
             otpCard = el("div", { class: "of-otp-card" }, [
               el("div", { class: "of-otp-title", text: "✉️ Verify your email" }),
-              el("div", { class: "of-otp-sub", text: `We sent a 4-digit verification code to ${targetEmail}` }),
+              el("div", { class: "of-otp-sub", text: `We sent a 6-digit verification code to ${targetEmail}` }),
               el("label", { class: "of-field", style: { marginTop: "12px" } }, [otpInput, otpError]),
               el("div", { class: "of-actions", style: { display: "flex", gap: "8px" } }, [
                 el("button", {
@@ -95,8 +105,8 @@ export function renderForm(step, ctrl) {
                   class: "of-cta",
                   text: "Verify & Submit",
                   onclick: async () => {
-                    if (!otpVal || otpVal.length < 4) {
-                      otpError.textContent = "Please enter the 4-digit code";
+                    if (!/^\d{6}$/.test(otpVal)) {
+                      otpError.textContent = "Please enter the 6-digit code";
                       return;
                     }
                     try {

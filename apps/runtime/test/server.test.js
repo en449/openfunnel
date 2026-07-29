@@ -156,26 +156,149 @@ describe("ingest", () => {
     expect(res.headers.get("access-control-allow-origin")).toBe("*");
   });
 
-  test("sends and verifies email OTP codes to block fake leads", async () => {
-    const sendRes = await fetch(`${base}/api/otp/send`, {
+  test("never returns the OTP code to the caller", async () => {
+    const res = await fetch(`${base}/api/otp/send`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ email: "lead@example.com" }),
     });
-    expect(sendRes.status).toBe(200);
-    const sendData = await sendRes.json();
-    expect(sendData.ok).toBe(true);
+    const body = await res.text();
 
-    const code = sendData.code;
-    if (code) {
-      const vRes = await fetch(`${base}/api/otp/verify`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email: "lead@example.com", code }),
-      });
-      expect(vRes.status).toBe(200);
-      expect((await vRes.json()).ok).toBe(true);
-    }
+    // The code must never reach the client on any path. It used to be included
+    // whenever NODE_ENV !== "production" — which is the default — so a deploy
+    // that forgot to set it handed out the answer.
+    expect(body).not.toMatch(/"code"\s*:\s*"?\d{4,6}/);
+    // No transport is configured under test, so the send reports failure
+    // rather than pretending a mail went out.
+    expect(res.status).toBe(502);
+    expect(JSON.parse(body).ok).toBe(false);
+  });
+
+  test("rejects a malformed OTP recipient", async () => {
+    const res = await fetch(`${base}/api/otp/send`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "not-an-email" }),
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("invalid_email");
+  });
+
+  test("refuses a verification attempt for an address with no live code", async () => {
+    const res = await fetch(`${base}/api/otp/verify`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "nobody@example.com", code: "123456" }),
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json()).valid).toBe(false);
+  });
+
+  test("does not trust a browser-supplied email_verified flag", async () => {
+    await fetch(`${base}/api/lead`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        funnelId: "lead-gen",
+        lead: { email: "forged@example.com", email_verified: true },
+      }),
+    });
+
+    await Bun.sleep(120);
+    const written = await readFile(join(dataDir, "leads.jsonl"), "utf8");
+    const forged = written
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l))
+      .find((r) => r.lead?.email === "forged@example.com");
+
+    expect(forged).toBeDefined();
+    // Nobody passed a challenge for this address, so the stored record must say so.
+    expect(forged.lead.email_verified).toBe(false);
+  });
+});
+
+describe("privileged route protection", () => {
+  // With no ADMIN_TOKEN configured the server falls back to loopback-only. A
+  // forwarded header means the request came through a proxy, so it must not
+  // inherit localhost's privileges no matter what the socket address says.
+  const proxied = { "x-forwarded-for": "203.0.113.7" };
+
+  test("refuses lead export to a proxied caller", async () => {
+    const res = await fetch(`${base}/api/admin/leads`, { headers: proxied });
+    expect(res.status).toBe(401);
+    expect((await res.json()).error).toBe("admin_token_required");
+  });
+
+  test("refuses funnel writes to a proxied caller", async () => {
+    const res = await fetch(`${base}/api/builder/save`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...proxied },
+      body: JSON.stringify({ slug: "pwned", steps: [{ id: "a", type: "content" }] }),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  test("refuses mail settings to a proxied caller", async () => {
+    const res = await fetch(`${base}/api/admin/email-settings`, { headers: proxied });
+    expect(res.status).toBe(401);
+  });
+
+  test("never discloses mail credentials, even to an allowed caller", async () => {
+    const res = await fetch(`${base}/api/admin/email-settings`);
+    expect(res.status).toBe(200);
+    const { settings } = await res.json();
+
+    expect(settings).not.toHaveProperty("resendApiKey");
+    expect(settings).not.toHaveProperty("smtpPass");
+    expect(settings).not.toHaveProperty("relayUrl");
+    // The console still needs to know whether a key is configured.
+    expect(settings).toHaveProperty("resendApiKeySet");
+    expect(typeof settings.resendApiKeySet).toBe("boolean");
+  });
+
+  test("drops unknown keys instead of persisting them", async () => {
+    const res = await fetch(`${base}/api/admin/email-settings`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ notifyEmail: "ops@example.com", relayUrl: "https://attacker.example", nonsense: 1 }),
+    });
+    expect(res.status).toBe(200);
+    const { settings } = await res.json();
+    expect(settings.notifyEmail).toBe("ops@example.com");
+    expect(settings).not.toHaveProperty("nonsense");
+    expect(settings).not.toHaveProperty("relayUrl");
+  });
+
+  test("ignores a webhook target supplied in the lead body", async () => {
+    // /api/lead is public. Honouring a body-supplied webhookUrl would let any
+    // caller aim the server at a host they control, or probe internal ones.
+    let hit = false;
+    const sink = Bun.serve({ port: 0, fetch: () => ((hit = true), new Response("ok")) });
+
+    await fetch(`${base}/api/lead`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        funnelId: "ssrf-probe",
+        webhookUrl: `http://localhost:${sink.port}/steal`,
+        lead: { email: "victim@example.com" },
+      }),
+    });
+
+    await Bun.sleep(200);
+    sink.stop(true);
+    expect(hit).toBe(false);
+  });
+
+  test("rejects a URL smuggled into smtpHost", async () => {
+    const res = await fetch(`${base}/api/admin/email-settings`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ smtpHost: "https://attacker.example/collect" }),
+    });
+    const { settings } = await res.json();
+    expect(settings.smtpHost).not.toContain("attacker.example");
   });
 });
 

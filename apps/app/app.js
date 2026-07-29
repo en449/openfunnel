@@ -48,6 +48,23 @@ const FIELD_TYPES = ["text", "email", "tel"];
 const $ = (id) => document.getElementById(id);
 const qsa = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
+/**
+ * fetch for the console's own APIs, which the server treats as privileged.
+ *
+ * On a remote deployment the server requires ADMIN_TOKEN; paste the same value
+ * into Settings → Admin API token and it travels as a bearer header. Running
+ * locally the server accepts loopback callers, so this is a no-op there.
+ *
+ * @param {string} url
+ * @param {RequestInit} [options]
+ */
+function apiFetch(url, options = {}) {
+  const token = localStorage.getItem("of.adminToken") || "";
+  const headers = { ...(options.headers || {}) };
+  if (token) headers.authorization = `Bearer ${token}`;
+  return fetch(url, { ...options, headers });
+}
+
 function esc(value) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -342,7 +359,7 @@ async function saveFunnel() {
   btn.disabled = true;
   label.textContent = "Saving";
   try {
-    const res = await fetch("/api/builder/save", {
+    const res = await apiFetch("/api/builder/save", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(state.funnel),
@@ -376,9 +393,9 @@ async function saveFunnel() {
 async function refreshData() {
   const scope = state.funnel?.slug ? `?funnel=${encodeURIComponent(state.funnel.slug)}` : "";
   const [leadsRes, statsRes, globalRes] = await Promise.allSettled([
-    fetch("/api/admin/leads"),
-    fetch(`/api/admin/stats${scope}`),
-    fetch("/api/admin/stats"),
+    apiFetch("/api/admin/leads"),
+    apiFetch(`/api/admin/stats${scope}`),
+    apiFetch("/api/admin/stats"),
   ]);
 
   if (leadsRes.status === "fulfilled" && leadsRes.value.ok) {
@@ -431,7 +448,7 @@ function renderDashboard() {
 async function deleteFunnel(slug) {
   if (!confirm(`Are you sure you want to delete '${slug}'? This action cannot be undone.`)) return;
   try {
-    const res = await fetch("/api/builder/delete", {
+    const res = await apiFetch("/api/builder/delete", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ slug }),
@@ -451,7 +468,7 @@ async function deleteFunnel(slug) {
 
 async function duplicateFunnel(slug) {
   try {
-    const res = await fetch("/api/builder/duplicate", {
+    const res = await apiFetch("/api/builder/duplicate", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ slug }),
@@ -601,7 +618,8 @@ function renderSpine() {
       const branches = branchTargets(step)
         .map((t) => `<span class="branch">${icon("right", 9)}${esc(t)}</span>`)
         .join("");
-      return `<div class="spine-row${i === state.stepIndex ? " is-active" : ""}" data-step="${i}" role="button" tabindex="0">
+      return `<div class="spine-row${i === state.stepIndex ? " is-active" : ""}" data-step="${i}" draggable="true" role="button" tabindex="0">
+        <span class="drag-handle" title="Drag to reorder step">${icon("grid", 12)}</span>
         <span class="spine-index">${String(i + 1).padStart(2, "0")}</span>
         <span class="spine-body">
           <span class="spine-title">${esc(stepTitle(step))}</span>
@@ -625,6 +643,7 @@ function renderSpine() {
       </div>`;
     })
     .join("");
+  bindSpineDragAndDrop();
 }
 
 function selectStep(index) {
@@ -755,14 +774,19 @@ function renderStepBody(step) {
   if (step.type === "choice" || step.type === "multiselect") {
     const options = (step.options || [])
       .map(
-        (opt, i) => `<div class="repeat">
+        (opt, i) => `<div class="repeat option-edit-card" draggable="true" data-opt-index="${i}">
           <div class="repeat-head">
+            <span class="drag-handle" title="Drag to reorder option">${icon("grid", 12)}</span>
             <span class="repeat-num">${String(i + 1).padStart(2, "0")}</span>
-            <button class="btn btn-ghost btn-icon btn-sm" data-del-opt="${i}" title="Remove option" aria-label="Remove option">${icon("close", 12)}</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-pick-symbol="${i}" title="Pick symbol / icon" style="margin-left:auto">
+              <span style="font-size:14px;line-height:1">${esc(opt.icon || "⚡")}</span>
+              <span style="font-size:11.5px">Symbol</span>
+            </button>
+            <button type="button" class="btn btn-ghost btn-icon btn-sm" data-del-opt="${i}" title="Remove option" aria-label="Remove option">${icon("close", 12)}</button>
           </div>
           <div class="repeat-grid">
             <input class="input" type="text" data-opt-label="${i}" value="${esc(opt.label || "")}" placeholder="Label" />
-            <input class="input" type="text" data-opt-icon="${i}" value="${esc(opt.icon || "")}" placeholder="Icon (emoji)" />
+            <input class="input" type="text" data-opt-icon="${i}" value="${esc(opt.icon || "")}" placeholder="Icon (emoji/symbol)" />
           </div>
           <div class="repeat-row">
             <input class="input input-mono" type="text" data-opt-image="${i}" value="${esc(opt.image || "")}" placeholder="Image URL (optional photo card)" />
@@ -933,6 +957,19 @@ function bindInspector(step) {
     const btn = e.target.closest("button");
     if (!btn) return;
 
+    if (btn.dataset.pickSymbol !== undefined) {
+      const idx = +btn.dataset.pickSymbol;
+      const current = step.options?.[idx]?.icon || "";
+      openSymbolPicker(current, (selected) => {
+        if (step.options?.[idx]) {
+          step.options[idx].icon = selected || undefined;
+          renderInspector();
+          onEdit();
+        }
+      });
+      return;
+    }
+
     if (btn.id === "addOptBtn") {
       step.options ||= [];
       step.options.push({ id: `opt_${Date.now().toString(36).slice(-4)}`, label: "New option" });
@@ -951,6 +988,8 @@ function bindInspector(step) {
     renderSpine();
     onEdit();
   });
+
+  bindOptionDragAndDrop();
 }
 
 /** Offer alternatives rather than silently overwriting what the user wrote. */
@@ -964,7 +1003,7 @@ async function suggestHeadlines() {
   btn.innerHTML = `${icon("ai", 13)} Writing…`;
 
   try {
-    const res = await fetch("/api/ai/improve-copy", {
+    const res = await apiFetch("/api/ai/improve-copy", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ headline: step.headline || "", tone: localStorage.getItem("of.ai.tone") || "direct" }),
@@ -1399,7 +1438,7 @@ async function generateFunnel() {
   btn.innerHTML = `${icon("ai", 14)} Generating…`;
 
   try {
-    const res = await fetch("/api/ai/generate", {
+    const res = await apiFetch("/api/ai/generate", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -1512,6 +1551,7 @@ function openPalette() {
 const SETTINGS = [
   ["setWorkspace", "of.workspace", "My workspace"],
   ["setDomain", "of.domain", ""],
+  ["setAdminToken", "of.adminToken", ""],
   ["setCurrency", "of.currency", "USD"],
   ["setLanguage", "of.language", "en"],
   ["setNotifyEmail", "of.notifyEmail", ""],
@@ -1544,7 +1584,7 @@ function saveSettings() {
 
 async function loadEmailSettings() {
   try {
-    const res = await fetch("/api/admin/email-settings");
+    const res = await apiFetch("/api/admin/email-settings");
     if (!res.ok) return;
     const data = await res.json();
     const cfg = data.settings || {};
@@ -1595,7 +1635,7 @@ async function saveEmailSettingsFromUI() {
   };
 
   try {
-    const res = await fetch("/api/admin/email-settings", {
+    const res = await apiFetch("/api/admin/email-settings", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(payload),
@@ -1621,7 +1661,7 @@ async function sendTestEmailFromUI() {
   }
 
   try {
-    const res = await fetch("/api/admin/test-email", {
+    const res = await apiFetch("/api/admin/test-email", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ email }),
@@ -1911,6 +1951,170 @@ function bindKeys() {
 }
 
 /* ========================================================================== *
+ *  Drag & Drop + Symbol Picker Engine
+ * ========================================================================== */
+
+let draggedSpineIndex = null;
+
+function bindSpineDragAndDrop() {
+  const host = $("stepSpine");
+  if (!host || host.dataset.dragBound) return;
+  host.dataset.dragBound = "true";
+
+  host.addEventListener("dragstart", (e) => {
+    const row = e.target.closest(".spine-row");
+    if (!row) return;
+    draggedSpineIndex = Number(row.dataset.step);
+    row.classList.add("is-dragging");
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", String(draggedSpineIndex));
+  });
+
+  host.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    const row = e.target.closest(".spine-row");
+    if (!row) return;
+    qsa(".spine-row", host).forEach((r) => r.classList.remove("drag-over"));
+    row.classList.add("drag-over");
+  });
+
+  host.addEventListener("dragleave", (e) => {
+    const row = e.target.closest(".spine-row");
+    if (row) row.classList.remove("drag-over");
+  });
+
+  host.addEventListener("drop", (e) => {
+    e.preventDefault();
+    qsa(".spine-row", host).forEach((r) => r.classList.remove("drag-over", "is-dragging"));
+    const row = e.target.closest(".spine-row");
+    if (!row || draggedSpineIndex === null) return;
+    const targetIndex = Number(row.dataset.step);
+    if (draggedSpineIndex !== targetIndex && state.funnel) {
+      const steps = state.funnel.steps;
+      const [moved] = steps.splice(draggedSpineIndex, 1);
+      steps.splice(targetIndex, 0, moved);
+      state.stepIndex = targetIndex;
+      renderSpine();
+      renderInspector();
+      onFunnelEdited();
+    }
+    draggedSpineIndex = null;
+  });
+
+  host.addEventListener("dragend", () => {
+    qsa(".spine-row", host).forEach((r) => r.classList.remove("is-dragging", "drag-over"));
+    draggedSpineIndex = null;
+  });
+}
+
+let draggedOptIndex = null;
+
+function bindOptionDragAndDrop() {
+  const host = $("inspector");
+  if (!host || host.dataset.optDragBound) return;
+  host.dataset.optDragBound = "true";
+
+  host.addEventListener("dragstart", (e) => {
+    const card = e.target.closest(".option-edit-card");
+    if (!card) return;
+    draggedOptIndex = Number(card.dataset.optIndex);
+    card.classList.add("is-dragging");
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", String(draggedOptIndex));
+  });
+
+  host.addEventListener("dragover", (e) => {
+    const card = e.target.closest(".option-edit-card");
+    if (!card) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    qsa(".option-edit-card", host).forEach((c) => c.classList.remove("drag-over"));
+    card.classList.add("drag-over");
+  });
+
+  host.addEventListener("dragleave", (e) => {
+    const card = e.target.closest(".option-edit-card");
+    if (card) card.classList.remove("drag-over");
+  });
+
+  host.addEventListener("drop", (e) => {
+    e.preventDefault();
+    qsa(".option-edit-card", host).forEach((c) => c.classList.remove("drag-over", "is-dragging"));
+    const card = e.target.closest(".option-edit-card");
+    if (!card || draggedOptIndex === null) return;
+    const targetIndex = Number(card.dataset.optIndex);
+    const step = state.funnel?.steps[state.stepIndex];
+    if (step && (step.type === "choice" || step.type === "multiselect") && step.options) {
+      if (draggedOptIndex !== targetIndex) {
+        const [moved] = step.options.splice(draggedOptIndex, 1);
+        step.options.splice(targetIndex, 0, moved);
+        renderInspector();
+        onFunnelEdited();
+      }
+    }
+    draggedOptIndex = null;
+  });
+
+  host.addEventListener("dragend", () => {
+    qsa(".option-edit-card", host).forEach((c) => c.classList.remove("is-dragging", "drag-over"));
+    draggedOptIndex = null;
+  });
+}
+
+const POPULAR_SYMBOLS = [
+  "⚡", "🔥", "🎯", "💎", "🚀", "💡", "⭐", "🏆", "📦", "💼",
+  "📱", "✉️", "👤", "🔒", "🎨", "📈", "📍", "🎁", "🌟", "✨",
+  "🥇", "👑", "🧠", "💪", "🏃", "🥗", "🍎", "🧘", "🚗", "🏡",
+  "💰", "💳", "🛒", "🔑", "⏰", "📅", "💬", "🌐", "✈️", "📷",
+  "🟢", "🔴", "🟡", "🔵", "🟣", "⬛", "⬜", "🔺", "🔻", "🔘", "✅", "❌"
+];
+
+let activeSymbolCallback = null;
+
+function initSymbolPicker() {
+  const grid = $("symbolGrid");
+  const searchInput = $("symbolSearch");
+  const clearBtn = $("clearSymbolBtn");
+  if (!grid) return;
+
+  function renderGrid(filter = "") {
+    const term = filter.toLowerCase().trim();
+    const matches = POPULAR_SYMBOLS.filter((s) => !term || s.includes(term));
+    grid.innerHTML = matches
+      .map((sym) => `<button type="button" class="symbol-btn" data-symbol="${esc(sym)}">${esc(sym)}</button>`)
+      .join("");
+  }
+
+  grid.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-symbol]");
+    if (!btn) return;
+    const symbol = btn.dataset.symbol;
+    if (activeSymbolCallback) activeSymbolCallback(symbol);
+    closeModal("symbolPickerOverlay");
+  });
+
+  if (clearBtn) {
+    clearBtn.addEventListener("click", () => {
+      if (activeSymbolCallback) activeSymbolCallback("");
+      closeModal("symbolPickerOverlay");
+    });
+  }
+
+  if (searchInput) {
+    searchInput.addEventListener("input", (e) => renderGrid(e.target.value));
+  }
+
+  renderGrid();
+}
+
+function openSymbolPicker(currentSymbol, onSelect) {
+  activeSymbolCallback = onSelect;
+  openModal("symbolPickerOverlay");
+  if ($("symbolSearch")) $("symbolSearch").value = "";
+}
+
+/* ========================================================================== *
  *  Boot
  * ========================================================================== */
 
@@ -1923,6 +2127,7 @@ async function init() {
   bindLeads();
   bindModals();
   bindKeys();
+  initSymbolPicker();
   renderTemplates();
 
   await loadFunnelList();

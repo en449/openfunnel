@@ -135,8 +135,29 @@ export const THEME_PRESETS = {
 };
 
 /**
+ * Dynamic loader for Google Fonts so customized font selections in theme render properly.
+ * @param {string} fontStr
+ */
+function ensureGoogleFontLoaded(fontStr) {
+  if (!fontStr || typeof document === "undefined") return;
+  const match = fontStr.match(/'([^']+)'|"([^"]+)"|([A-Za-z0-9\s]+)/);
+  const fontName = (match?.[1] || match?.[2] || match?.[3] || "").trim();
+  if (!fontName || fontName.startsWith("ui-") || fontName.includes("system-ui")) return;
+
+  const fontId = `of-font-${fontName.toLowerCase().replace(/[^a-z0-9]/g, "-")}`;
+  if (document.getElementById(fontId)) return;
+
+  const link = document.createElement("link");
+  link.id = fontId;
+  link.rel = "stylesheet";
+  const fontParam = encodeURIComponent(fontName).replace(/%20/g, "+");
+  link.href = `https://fonts.googleapis.com/css2?family=${fontParam}:wght@400;500;600;700;800&display=swap`;
+  document.head.appendChild(link);
+}
+
+/**
  * @param {HTMLElement} root
- * @param {import('./types.js').FunnelTheme & { preset?: string }} [theme]
+ * @param {import('./types.js').FunnelTheme & { preset?: string, btnStyle?: string }} [theme]
  */
 export function applyTheme(root, theme = {}) {
   const presetsMap = /** @type {Record<string, any>} */ (THEME_PRESETS);
@@ -144,6 +165,14 @@ export function applyTheme(root, theme = {}) {
   const mergedTheme = { ...presetTheme, ...theme };
   const base = mergedTheme.mode === "dark" ? { ...LIGHT, ...DARK } : LIGHT;
   const merged = { ...base, ...mergedTheme };
+
+  if (merged.font) {
+    ensureGoogleFontLoaded(merged.font);
+  }
+
+  const btnStyle = merged.btnStyle || "glow";
+  root.setAttribute("data-btn-style", btnStyle);
+
   /** @type {Record<string,string>} */
   const vars = {
     "--of-primary": merged.primary,
@@ -155,7 +184,9 @@ export function applyTheme(root, theme = {}) {
     "--of-border": merged.border,
     "--of-radius": merged.radius,
     "--of-font": merged.font,
+    "--of-btn-style": btnStyle,
   };
   for (const [k, v] of Object.entries(vars)) if (v) root.style.setProperty(k, v);
 }
+
 

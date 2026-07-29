@@ -28,6 +28,7 @@
 
 import { mkdir, readdir, readFile, writeFile, appendFile, unlink } from "node:fs/promises";
 import { extname, join, normalize, resolve } from "node:path";
+import { randomInt, timingSafeEqual } from "node:crypto";
 
 /* ========================================================================== *
  *  Config
@@ -48,6 +49,14 @@ const SUPABASE_URL = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABAS
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 const SUPABASE_ON = Boolean(SUPABASE_URL && SUPABASE_KEY);
 
+/**
+ * Shared secret guarding every privileged route (the console's own APIs).
+ * When unset the server still refuses privileged requests from anywhere but
+ * loopback, so `bun run dev` needs no configuration while a public deploy
+ * cannot be driven by a stranger. See `requireAdmin`.
+ */
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
+
 /** Slugs are user-facing URL segments — keep them boring so path joins are safe. */
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/i;
 
@@ -61,6 +70,102 @@ const APP_ROUTES = new Set([
   "/templates",
   "/settings",
 ]);
+
+/* ========================================================================== *
+ *  Access control & abuse limits
+ *
+ *  Everything the console can do — reading leads, rewriting funnels, changing
+ *  mail credentials, sending mail — is privileged. These helpers are the only
+ *  thing standing between those routes and the open internet, so they fail
+ *  closed: an unrecognised caller is refused rather than allowed.
+ * ========================================================================== */
+
+/** Constant-time string compare, so a wrong token leaks no timing signal. */
+function safeEqual(a, b) {
+  const ab = Buffer.from(String(a ?? ""), "utf8");
+  const bb = Buffer.from(String(b ?? ""), "utf8");
+  if (ab.length !== bb.length || ab.length === 0) return false;
+  return timingSafeEqual(ab, bb);
+}
+
+/**
+ * True only for a request that arrived directly on the loopback interface.
+ *
+ * A forwarded header means the request crossed a proxy, so the socket address
+ * belongs to that proxy and says nothing about who is calling. We refuse to
+ * infer "local" in that case — otherwise anyone on the internet reaching a
+ * reverse-proxied deployment would inherit localhost's privileges.
+ */
+function isLoopbackRequest(req, server) {
+  if (req.headers.get("x-forwarded-for") || req.headers.get("forwarded")) return false;
+  const addr = server.requestIP(req)?.address || "";
+  return addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1";
+}
+
+/**
+ * Gate a privileged route.
+ *
+ * With ADMIN_TOKEN set, callers must present it as `Authorization: Bearer …`
+ * or `X-Admin-Token`. Without it, only loopback callers pass — so local
+ * development needs no setup, but the same binary exposed on a public
+ * interface refuses to hand out leads or credentials.
+ *
+ * @returns {Response|null} null when the caller may proceed.
+ */
+function requireAdmin(req, server) {
+  if (ADMIN_TOKEN) {
+    const header = req.headers.get("authorization") || "";
+    const provided = header.startsWith("Bearer ")
+      ? header.slice(7).trim()
+      : req.headers.get("x-admin-token") || "";
+    if (safeEqual(provided, ADMIN_TOKEN)) return null;
+    return json({ error: "unauthorized" }, 401);
+  }
+  if (isLoopbackRequest(req, server)) return null;
+  return json(
+    {
+      error: "admin_token_required",
+      hint: "This server is reachable off-host. Set ADMIN_TOKEN in the environment and send it as 'Authorization: Bearer <token>'.",
+    },
+    401,
+  );
+}
+
+/** @type {Map<string, number[]>} sliding windows keyed by action + subject. */
+const rateBuckets = new Map();
+
+/**
+ * Fixed-cost sliding-window limiter. In-memory and therefore per-process —
+ * enough to stop scripted abuse of the mail and OTP endpoints, not a
+ * substitute for an edge rate limit on a multi-instance deploy.
+ *
+ * @returns {boolean} true when the call is allowed.
+ */
+function rateLimit(key, max, windowMs) {
+  const now = Date.now();
+  const hits = (rateBuckets.get(key) || []).filter((t) => now - t < windowMs);
+  if (hits.length >= max) {
+    rateBuckets.set(key, hits);
+    return false;
+  }
+  hits.push(now);
+  rateBuckets.set(key, hits);
+
+  // Opportunistic prune so a long-running server cannot grow this unbounded.
+  if (rateBuckets.size > 5000) {
+    for (const [k, v] of rateBuckets) {
+      if (!v.length || now - v[v.length - 1] > windowMs) rateBuckets.delete(k);
+    }
+  }
+  return true;
+}
+
+const tooMany = () => json({ error: "rate_limited" }, 429, CORS);
+
+/** Collapse to a single line — a CR/LF in a subject is a header-injection try. */
+function oneLine(value, max = 200) {
+  return String(value ?? "").replace(/[\r\n]+/g, " ").trim().slice(0, max);
+}
 
 /* ========================================================================== *
  *  Funnel store
@@ -155,23 +260,64 @@ async function supabaseInsert(table, row) {
  *
  * @param {Record<string, unknown>} record
  */
-async function forwardWebhook(record) {
-  let webhookUrl =
-    process.env.WEBHOOK_URL ||
-    process.env.ZAPIER_WEBHOOK_URL ||
-    record.webhookUrl ||
-    record.meta?.webhookUrl;
+/** Hosts a webhook must never resolve to — cloud metadata and the local network. */
+const BLOCKED_HOST_RE =
+  /^(localhost$|127\.|0\.0\.0\.0$|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|\[?::1\]?$|\[?f[cd][0-9a-f]{2}:|.*\.internal$|.*\.local$)/i;
 
-  if (!webhookUrl && record.funnelId) {
+/**
+ * Is this a destination we are willing to POST lead data to?
+ *
+ * Blocks non-HTTP schemes and anything addressed at the loopback interface,
+ * the private ranges, or the cloud metadata endpoint. This is a literal-address
+ * check: it does not defeat a hostname that resolves to a private IP (DNS
+ * rebinding), which needs resolution-time filtering to close properly.
+ */
+function isSafeWebhookTarget(raw) {
+  let url;
+  try {
+    url = new URL(String(raw));
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return false;
+  return !BLOCKED_HOST_RE.test(url.hostname);
+}
+
+async function forwardWebhook(record) {
+  // Deliberately NOT read from the record. /api/lead is public, so honouring a
+  // webhookUrl from the request body let any caller aim the server at a host of
+  // their choosing — both an open redirector for lead data and an SSRF probe
+  // against whatever the server can reach. The destination is operator-owned:
+  // the environment, or the funnel document (written through the admin API).
+  let webhookUrl = process.env.WEBHOOK_URL || process.env.ZAPIER_WEBHOOK_URL || "";
+  let webhookSecret = process.env.WEBHOOK_SECRET || "";
+
+  if (record.funnelId) {
     const funnel = await loadFunnel(record.funnelId);
-    webhookUrl = funnel?.integrations?.webhookUrl || funnel?.integrations?.webhook;
+    if (!webhookUrl) {
+      webhookUrl = funnel?.integrations?.webhookUrl || funnel?.integrations?.webhook || "";
+    }
+    webhookSecret ||= funnel?.integrations?.webhookSecret || "";
   }
   if (!webhookUrl) return;
+
+  if (!isSafeWebhookTarget(webhookUrl)) {
+    console.warn(`[runtime] refusing webhook to blocked target: ${webhookUrl}`);
+    return;
+  }
+
   try {
+    /** @type {Record<string,string>} */
+    const headers = { "content-type": "application/json" };
+    // The console advertises this header, so send it: it lets the receiving
+    // automation prove the delivery came from this server.
+    if (webhookSecret) headers["x-webhook-secret"] = oneLine(webhookSecret, 512);
+
     const res = await fetch(webhookUrl, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers,
       body: JSON.stringify(record),
+      redirect: "manual", // a 302 would sidestep the target check above
     });
     if (!res.ok) console.warn(`[runtime] webhook dispatch HTTP ${res.status}`);
   } catch (err) {
@@ -183,11 +329,32 @@ async function forwardWebhook(record) {
  *  Email Delivery Engine (Resend & SMTP)
  * ========================================================================== */
 
+/** Keys the console may write. Anything else in the body is discarded. */
+const WRITABLE_EMAIL_KEYS = new Set([
+  "provider",
+  "resendApiKey",
+  "resendFrom",
+  "smtpHost",
+  "smtpPort",
+  "smtpUser",
+  "smtpPass",
+  "smtpFrom",
+  "notifyEmail",
+  "notifyEnabled",
+  "autoresponderEnabled",
+  "autoresponderSubject",
+  "autoresponderBody",
+]);
+
+/** Secrets are never echoed back; the console sees only whether they are set. */
+const SECRET_EMAIL_KEYS = ["resendApiKey", "smtpPass"];
+
 async function getEmailSettings() {
   const settingsFile = join(DATA_DIR, "email_settings.json");
   let stored = {};
   try {
-    stored = JSON.parse(await readFile(settingsFile, "utf8"));
+    const parsed = JSON.parse(await readFile(settingsFile, "utf8"));
+    if (parsed && typeof parsed === "object") stored = parsed;
   } catch {}
 
   return {
@@ -204,16 +371,76 @@ async function getEmailSettings() {
     autoresponderEnabled: Boolean(stored.autoresponderEnabled),
     autoresponderSubject: stored.autoresponderSubject || "Thank you for completing our quiz!",
     autoresponderBody: stored.autoresponderBody || "Hi {{name}},\n\nThank you for reaching out! We received your responses and our team will get back to you shortly.\n\nBest regards,\nOpenFunnel Team",
+    // Deliberately env-only: an HTTP relay receives every lead notification, so
+    // it must not be settable through the API. Even with the admin gate in
+    // front, a stored relay URL would be a one-request exfiltration channel.
+    relayUrl: process.env.SMTP_RELAY_URL || "",
   };
 }
 
-async function saveEmailSettings(newSettings) {
-  await mkdir(DATA_DIR, { recursive: true });
-  const settingsFile = join(DATA_DIR, "email_settings.json");
+/** Strip secrets before the settings ever leave the process. */
+function redactEmailSettings(cfg) {
+  const safe = { ...cfg };
+  for (const key of SECRET_EMAIL_KEYS) {
+    safe[`${key}Set`] = Boolean(safe[key]);
+    delete safe[key];
+  }
+  delete safe.relayUrl;
+  return safe;
+}
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * Merge a validated subset of `patch` into the stored settings.
+ * Unknown keys are dropped, blank secrets keep the existing value (so the
+ * redacted GET can be round-tripped without wiping the key), and every field
+ * is range-checked before it reaches disk.
+ */
+async function saveEmailSettings(patch) {
   const existing = await getEmailSettings();
-  const merged = { ...existing, ...newSettings };
-  await writeFile(settingsFile, JSON.stringify(merged, null, 2), "utf8");
-  return merged;
+  const next = { ...existing };
+
+  for (const [key, value] of Object.entries(patch || {})) {
+    if (!WRITABLE_EMAIL_KEYS.has(key)) continue;
+
+    if (SECRET_EMAIL_KEYS.includes(key)) {
+      // Empty means "leave it alone", not "delete it".
+      if (typeof value === "string" && value.trim()) next[key] = value.trim();
+      continue;
+    }
+    if (key === "provider") {
+      if (["resend", "smtp", "none"].includes(value)) next[key] = value;
+      continue;
+    }
+    if (key === "smtpPort") {
+      const port = Number(value);
+      if (Number.isInteger(port) && port > 0 && port <= 65535) next[key] = port;
+      continue;
+    }
+    if (key === "notifyEnabled" || key === "autoresponderEnabled") {
+      next[key] = Boolean(value);
+      continue;
+    }
+    if (key === "notifyEmail") {
+      const email = String(value || "").trim();
+      if (!email || EMAIL_RE.test(email)) next[key] = email;
+      continue;
+    }
+    if (key === "smtpHost") {
+      // A bare hostname only. Rejecting URLs keeps this field from being
+      // repurposed into the HTTP relay that SMTP_RELAY_URL owns.
+      const host = String(value || "").trim();
+      if (!host || /^[a-z0-9.-]+$/i.test(host)) next[key] = host;
+      continue;
+    }
+    if (typeof value === "string") next[key] = value.slice(0, 5000);
+  }
+
+  await mkdir(DATA_DIR, { recursive: true });
+  const { relayUrl: _ignored, ...persistable } = next;
+  await writeFile(join(DATA_DIR, "email_settings.json"), JSON.stringify(persistable, null, 2), "utf8");
+  return next;
 }
 
 async function sendEmail({ to, subject, html, text }) {
@@ -233,7 +460,7 @@ async function sendEmail({ to, subject, html, text }) {
           to: Array.isArray(to) ? to : [to],
           subject,
           html,
-          text: text || html.replace(/<[^>]+>/g, " "),
+          text: text || String(html || "").replace(/<[^>]+>/g, " "),
         }),
       });
       if (res.ok) return { ok: true, provider: "resend" };
@@ -246,37 +473,60 @@ async function sendEmail({ to, subject, html, text }) {
     }
   }
 
-  if (cfg.smtpHost) {
+  // Optional HTTP relay for operators who front their own mailer. Env-only, so
+  // it can never be pointed somewhere else through the API.
+  if (cfg.relayUrl) {
     try {
-      if (cfg.smtpHost.startsWith("http://") || cfg.smtpHost.startsWith("https://")) {
-        const res = await fetch(cfg.smtpHost, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ to, subject, html, text }),
-        });
-        return { ok: res.ok, provider: "http_relay" };
-      }
-      console.log(`[email] SMTP alert prepared for ${to}: "${subject}"`);
-      return { ok: true, provider: "smtp" };
+      const res = await fetch(cfg.relayUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ to, subject, html, text }),
+      });
+      return { ok: res.ok, provider: "http_relay" };
     } catch (err) {
-      return { ok: false, error: String(err) };
+      console.warn("[email] relay error:", err);
+      return { ok: false, error: "relay_failed" };
     }
   }
 
-  console.log(`[email] Logged lead email to ${to}: "${subject}" (Configure Resend or SMTP in Settings for live inbox delivery)`);
-  return { ok: true, provider: "logged" };
+  // No transport is wired up. Report that honestly — claiming success here
+  // would let an operator believe lead alerts are going out when they are not.
+  if (cfg.smtpHost) {
+    console.warn(
+      `[email] SMTP host ${cfg.smtpHost} is configured but direct SMTP is not implemented. ` +
+        `Set RESEND_API_KEY, or SMTP_RELAY_URL pointing at an HTTP-to-SMTP relay.`,
+    );
+    return { ok: false, error: "smtp_not_implemented" };
+  }
+
+  console.log(`[email] No transport configured — would send to ${to}: "${subject}"`);
+  return { ok: false, error: "no_transport" };
 }
 
-/** @type {Map<string, { code: string, expires: number }>} */
+/** @type {Map<string, { code: string, expires: number, attempts: number }>} */
 const otpStore = new Map();
 
-async function sendOtpCode(email) {
-  if (!email || !email.includes("@")) return { ok: false, error: "invalid_email" };
-  const normalized = email.toLowerCase().trim();
+/**
+ * Emails that have actually completed a challenge, with an expiry. The browser
+ * can claim `email_verified` in a lead payload, but only this map decides
+ * whether the claim is true — see `isEmailVerified`.
+ *
+ * @type {Map<string, number>}
+ */
+const verifiedEmails = new Map();
 
-  // Generate 4-digit code
-  const code = String(Math.floor(1000 + Math.random() * 9000));
-  otpStore.set(normalized, { code, expires: Date.now() + 10 * 60 * 1000 });
+const OTP_TTL_MS = 10 * 60 * 1000;
+const OTP_MAX_ATTEMPTS = 5;
+const VERIFIED_TTL_MS = 30 * 60 * 1000;
+
+async function sendOtpCode(email) {
+  if (!email || !EMAIL_RE.test(String(email).trim())) return { ok: false, error: "invalid_email" };
+  const normalized = String(email).toLowerCase().trim();
+
+  // Six digits from a CSPRNG. Math.random is predictable from prior outputs,
+  // which would let an attacker derive a victim's code instead of guessing it.
+  const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
+  otpStore.set(normalized, { code, expires: Date.now() + OTP_TTL_MS, attempts: 0 });
 
   const html = `
     <div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;max-width:480px;margin:0 auto;padding:24px;border:1px solid #e5e7eb;border-radius:16px;background:#ffffff;text-align:center;">
@@ -293,23 +543,53 @@ async function sendOtpCode(email) {
     html,
   });
 
-  return { ok: true, provider: res.provider, code: DEV ? code : undefined };
+  // The code is never returned to the caller — not even in development. It
+  // previously was, gated on NODE_ENV !== "production", which is the default:
+  // any deploy that forgot to set NODE_ENV handed the code to the client.
+  if (!res.ok) {
+    otpStore.delete(normalized);
+    return { ok: false, error: "send_failed" };
+  }
+  return { ok: true };
 }
 
 function verifyOtpCode(email, code) {
   if (!email || !code) return false;
-  const normalized = email.toLowerCase().trim();
+  const normalized = String(email).toLowerCase().trim();
   const stored = otpStore.get(normalized);
   if (!stored) return false;
   if (Date.now() > stored.expires) {
     otpStore.delete(normalized);
     return false;
   }
-  if (stored.code === String(code).trim()) {
+
+  // Burn an attempt before comparing. Without this a six-digit code is a
+  // million guesses away from free, and nothing stopped a script from making
+  // them; five wrong answers now invalidate the code entirely.
+  stored.attempts += 1;
+  if (stored.attempts > OTP_MAX_ATTEMPTS) {
     otpStore.delete(normalized);
+    return false;
+  }
+
+  if (safeEqual(stored.code, String(code).trim())) {
+    otpStore.delete(normalized);
+    verifiedEmails.set(normalized, Date.now() + VERIFIED_TTL_MS);
     return true;
   }
   return false;
+}
+
+/** Did this address actually pass a challenge recently? */
+function isEmailVerified(email) {
+  const normalized = String(email || "").toLowerCase().trim();
+  const until = verifiedEmails.get(normalized);
+  if (!until) return false;
+  if (Date.now() > until) {
+    verifiedEmails.delete(normalized);
+    return false;
+  }
+  return true;
 }
 
 async function processLeadEmailNotifications(record) {
@@ -322,26 +602,29 @@ async function processLeadEmailNotifications(record) {
     const leadEmail = lead.email;
 
     if (cfg.notifyEnabled && cfg.notifyEmail) {
+      // Everything below originates with the visitor, so every interpolation
+      // is escaped. An unescaped name field would let a lead inject markup
+      // into the operator's inbox — a phishing link in a trusted alert.
       const answersHtml = Object.entries(answers)
-        .map(([q, a]) => `<tr><td style="padding:8px;border-bottom:1px solid #eee;font-weight:600;">${q}</td><td style="padding:8px;border-bottom:1px solid #eee;">${Array.isArray(a) ? a.join(", ") : a}</td></tr>`)
+        .map(([q, a]) => `<tr><td style="padding:8px;border-bottom:1px solid #eee;font-weight:600;">${esc(q)}</td><td style="padding:8px;border-bottom:1px solid #eee;">${esc(Array.isArray(a) ? a.join(", ") : a)}</td></tr>`)
         .join("");
 
       const utmHtml = Object.entries(record.utm || record)
         .filter(([k]) => k.startsWith("utm_") || k === "gclid" || k === "fbclid" || k === "ttclid" || k === "ref")
-        .map(([k, v]) => `<li><b>${k}:</b> ${v}</li>`)
+        .map(([k, v]) => `<li><b>${esc(k)}:</b> ${esc(v)}</li>`)
         .join("");
 
       const html = `
         <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:600px;margin:0 auto;padding:24px;border:1px solid #e5e7eb;border-radius:16px;background:#ffffff;">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
             <h2 style="margin:0;color:#111827;font-size:22px;">🚀 New Lead Captured</h2>
-            <span style="padding:4px 10px;background:#e0e7ff;color:#3730a3;border-radius:999px;font-size:12px;font-weight:600;">${funnelId}</span>
+            <span style="padding:4px 10px;background:#e0e7ff;color:#3730a3;border-radius:999px;font-size:12px;font-weight:600;">${esc(funnelId)}</span>
           </div>
           <div style="background:#f9fafb;padding:16px;border-radius:12px;margin-bottom:20px;">
             <p style="margin:0 0 6px 0;font-size:16px;font-weight:600;color:#111827;">Contact Details:</p>
-            <p style="margin:2px 0;color:#374151;">👤 <b>Name:</b> ${leadName}</p>
-            <p style="margin:2px 0;color:#374151;">✉️ <b>Email:</b> <a href="mailto:${leadEmail}">${leadEmail || "N/A"}</a></p>
-            ${lead.phone ? `<p style="margin:2px 0;color:#374151;">📞 <b>Phone:</b> ${lead.phone}</p>` : ""}
+            <p style="margin:2px 0;color:#374151;">👤 <b>Name:</b> ${esc(leadName)}</p>
+            <p style="margin:2px 0;color:#374151;">✉️ <b>Email:</b> <a href="mailto:${encodeURIComponent(String(leadEmail || ""))}">${esc(leadEmail || "N/A")}</a></p>
+            ${lead.phone ? `<p style="margin:2px 0;color:#374151;">📞 <b>Phone:</b> ${esc(lead.phone)}</p>` : ""}
           </div>
           <h3 style="color:#111827;font-size:16px;margin-bottom:10px;">Quiz Responses</h3>
           <table style="width:100%;border-collapse:collapse;margin-bottom:20px;font-size:14px;">
@@ -353,22 +636,31 @@ async function processLeadEmailNotifications(record) {
 
       await sendEmail({
         to: cfg.notifyEmail,
-        subject: `🚀 New Lead: ${leadName} (${funnelId})`,
+        subject: oneLine(`🚀 New Lead: ${leadName} (${funnelId})`),
         html,
       });
     }
 
-    if (cfg.autoresponderEnabled && leadEmail) {
-      const bodyText = cfg.autoresponderBody.replace(/\{\{name\}\}/g, leadName);
+    if (cfg.autoresponderEnabled && leadEmail && EMAIL_RE.test(String(leadEmail).trim())) {
+      // The autoresponder mails whoever the lead payload names, and /api/lead is
+      // public by necessity. Cap it per recipient so the funnel cannot be driven
+      // as a spam cannon against a third party from the operator's domain.
+      const recipient = String(leadEmail).toLowerCase().trim();
+      if (!rateLimit(`autoresponder:${recipient}`, 3, 60 * 60 * 1000)) {
+        console.warn(`[email] autoresponder rate limit hit for ${recipient}`);
+        return;
+      }
+
+      const bodyText = String(cfg.autoresponderBody).replace(/\{\{name\}\}/g, String(leadName));
       const html = `
         <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:600px;margin:0 auto;padding:24px;border:1px solid #e5e7eb;border-radius:16px;background:#ffffff;">
-          <h2 style="margin:0 0 16px 0;color:#111827;">${cfg.autoresponderSubject}</h2>
-          <div style="color:#374151;font-size:15px;line-height:1.6;white-space:pre-wrap;">${bodyText}</div>
+          <h2 style="margin:0 0 16px 0;color:#111827;">${esc(cfg.autoresponderSubject)}</h2>
+          <div style="color:#374151;font-size:15px;line-height:1.6;white-space:pre-wrap;">${esc(bodyText)}</div>
         </div>
       `;
       await sendEmail({
-        to: leadEmail,
-        subject: cfg.autoresponderSubject,
+        to: recipient,
+        subject: oneLine(cfg.autoresponderSubject),
         html,
         text: bodyText,
       });
@@ -707,6 +999,20 @@ const server = Bun.serve({
       return json(funnel, 200, { "cache-control": DEV ? "no-store" : "public, max-age=60" });
     }
 
+    // --- Privileged surface -------------------------------------------------
+    // Every console-only route sits behind one gate rather than each remembering
+    // to check for itself, so a new /api/admin/* or /api/builder/* endpoint is
+    // protected the moment it exists. Everything above this line is public:
+    // funnel pages, the engine assets, and the two ingest endpoints.
+    if (
+      path.startsWith("/api/admin/") ||
+      path.startsWith("/api/builder/") ||
+      path.startsWith("/api/ai/")
+    ) {
+      const denied = requireAdmin(req, server);
+      if (denied) return denied;
+    }
+
     // --- Builder API --------------------------------------------------------
     if (path === "/api/builder/save" && req.method === "POST") {
       const body = await readJson(req);
@@ -828,19 +1134,23 @@ const server = Bun.serve({
 
     if (path === "/api/admin/email-settings" && req.method === "GET") {
       const cfg = await getEmailSettings();
-      return json({ settings: cfg });
+      return json({ settings: redactEmailSettings(cfg) });
     }
 
     if (path === "/api/admin/email-settings" && req.method === "POST") {
       const body = await readJson(req);
       const updated = await saveEmailSettings(body || {});
-      return json({ ok: true, settings: updated });
+      return json({ ok: true, settings: redactEmailSettings(updated) });
     }
 
     if (path === "/api/admin/test-email" && req.method === "POST") {
       const body = await readJson(req);
-      const targetEmail = body?.email || (await getEmailSettings()).notifyEmail;
+      const targetEmail = String(body?.email || (await getEmailSettings()).notifyEmail || "").trim();
       if (!targetEmail) return json({ error: "No recipient email specified" }, 400);
+      if (!EMAIL_RE.test(targetEmail)) return json({ error: "invalid_email" }, 400);
+      // Authenticated, but still capped: a leaked token should not turn the
+      // operator's mail domain into a spam source.
+      if (!rateLimit(`test-email:${clientIp(req, server) || "unknown"}`, 10, 60 * 60 * 1000)) return tooMany();
 
       const res = await sendEmail({
         to: targetEmail,
@@ -848,26 +1158,41 @@ const server = Bun.serve({
         html: `<div style="font-family:sans-serif;padding:20px;border-radius:12px;border:1px solid #e2e8f0;">
           <h2>OpenFunnel Email Verification</h2>
           <p>Your email notification settings are working correctly!</p>
-          <p style="color:#64748b;font-size:13px;">Timestamp: ${new Date().toISOString()}</p>
+          <p style="color:#64748b;font-size:13px;">Timestamp: ${esc(new Date().toISOString())}</p>
         </div>`,
       });
       return json(res);
     }
 
+    // OTP endpoints are public — a visitor mid-funnel has no credentials. They
+    // are instead bounded on every axis: per address, per caller, and by the
+    // attempt cap inside verifyOtpCode.
     if (path === "/api/otp/send" && req.method === "POST") {
       const body = await readJson(req);
-      const email = body?.email;
-      if (!email) return json({ error: "missing_email" }, 400);
+      const email = String(body?.email || "").trim().toLowerCase();
+      if (!email) return json({ error: "missing_email" }, 400, CORS);
+      if (!EMAIL_RE.test(email)) return json({ error: "invalid_email" }, 400, CORS);
+
+      const ip = clientIp(req, server) || "unknown";
+      // One code per address per minute, a handful per hour, and a ceiling per
+      // caller so one host cannot mail every address it can think of.
+      if (!rateLimit(`otp-send:${email}`, 1, 60 * 1000)) return tooMany();
+      if (!rateLimit(`otp-send-hourly:${email}`, 5, 60 * 60 * 1000)) return tooMany();
+      if (!rateLimit(`otp-send-ip:${ip}`, 20, 60 * 60 * 1000)) return tooMany();
+
       const res = await sendOtpCode(email);
-      return json(res);
+      return json(res, res.ok ? 200 : 502, CORS);
     }
 
     if (path === "/api/otp/verify" && req.method === "POST") {
       const body = await readJson(req);
-      const email = body?.email;
+      const email = String(body?.email || "").trim().toLowerCase();
       const code = body?.code;
+      const ip = clientIp(req, server) || "unknown";
+      if (!rateLimit(`otp-verify:${ip}`, 30, 10 * 60 * 1000)) return tooMany();
+
       const valid = verifyOtpCode(email, code);
-      return json({ ok: valid, valid });
+      return json({ ok: valid, valid }, 200, CORS);
     }
 
     // --- AI Funnel Copilot API ----------------------------------------------
@@ -992,13 +1317,32 @@ const server = Bun.serve({
         return json({ ok: true, preview: true }, 202, CORS);
       }
 
+      const ip = clientIp(req, server);
+      // Public endpoints: bound them so a script cannot flood the JSONL sink,
+      // the webhook, and the autoresponder in a loop.
+      if (!rateLimit(`ingest:${ip || "unknown"}`, path === "/api/lead" ? 30 : 300, 60 * 1000)) {
+        return tooMany();
+      }
+
       const record = {
         ...body,
         received_at: new Date().toISOString(),
-        ip: clientIp(req, server),
+        ip,
         user_agent: req.headers.get("user-agent"),
         referer: req.headers.get("referer"),
       };
+
+      // `email_verified` arrives from the browser, which the visitor controls.
+      // Re-derive it from the server's own record of who passed a challenge so
+      // the stored lead reflects what actually happened, not what was claimed.
+      if (path === "/api/lead" && record.lead && typeof record.lead === "object") {
+        const claimed = Boolean(record.lead.email_verified);
+        const actual = claimed && isEmailVerified(record.lead.email);
+        record.lead = { ...record.lead, email_verified: actual };
+        if (claimed && !actual) {
+          console.warn(`[runtime] unverified lead claimed email_verified: ${record.lead.email}`);
+        }
+      }
 
       // Respond immediately; the visitor is mid-funnel and must not wait on I/O.
       void persist(path === "/api/lead" ? "leads" : "events", record);
