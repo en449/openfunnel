@@ -55,6 +55,25 @@ Send your leads anywhere automatically:
 
 ---
 
+## 🌐 How to Use OpenFunnel: Local vs. Cloud Deployment
+
+OpenFunnel is designed to run in two modes depending on your workflow:
+
+### 💻 1. Local Mode (Designing, Building & Testing)
+- **Best for:** Designing new funnels, testing question logic, trying templates offline, and local development.
+- **How it works:** You run `bun run dev` on your computer. Access the console locally at `localhost:3000/app`.
+- **Integrations:** Even while running locally on your laptop, submitting a lead will forward data to external webhooks (Zapier/Make) if your computer is connected to the internet.
+
+### ☁️ 2. Cloud Production Mode (24/7 Live Marketing & CRM Sync)
+- **Best for:** Running live paid ad traffic (Facebook, TikTok, Google Ads), capturing real leads 24/7, and streaming data into your CRM.
+- **Where to host:** Deploy on any cloud platform or VPS:
+  - **PaaS Hosts:** [Render](https://render.com), [Railway](https://railway.app), [Fly.io](https://fly.io), [DigitalOcean App Platform](https://www.digitalocean.com/products/app-platform)
+  - **VPS Hosting:** AWS, Hetzner, Linode, Vultr running Ubuntu + Bun
+- **How it works:** Point your custom domain (e.g., `https://quiz.yourdomain.com`) to your server.
+- **Live Tool Sync:** Operates 24/7 without needing your personal computer open. Automatically pushes leads to Zapier, GoHighLevel, HubSpot, and Supabase.
+
+---
+
 ## 🎨 How to Build & Launch Your Funnel
 
 ```
