@@ -69,7 +69,7 @@ Send your leads anywhere automatically:
 ```
 
 ### Step 1: Open the Console
-Start OpenFunnel locally or on your server and navigate to `http://localhost:3000`.
+Start OpenFunnel on your server or local environment and open your admin console at `/app`.
 
 ### Step 2: Pick a Proven Industry Template
 Choose from pre-built funnel templates optimized for high conversion:
@@ -89,13 +89,13 @@ Use the live mobile editor (`/builder`) to customize:
 In the **Pixels & Tracking** tab, paste your Webhook URL (Zapier/Make/GoHighLevel) and your Meta/GTM Pixel IDs.
 
 ### Step 5: Publish & Collect Leads
-Share your live funnel URL (`http://localhost:3000/f/your-slug`). Review submitted leads in your **Lead Inbox** (`/leads`) or download them via **Export CSV**.
+Share your live funnel link (`/f/your-funnel-slug`). Review submitted leads in your **Lead Inbox** (`/leads`) or download them via **Export CSV**.
 
 ---
 
 ## 💻 For Developers & Self-Hosters
 
-### Quick Start (Local Setup)
+### Quick Start (Local Development)
 
 1. **Clone the repository:**
    ```bash
@@ -108,17 +108,17 @@ Share your live funnel URL (`http://localhost:3000/f/your-slug`). Review submitt
    bun install
    ```
 
-3. **Start the local runtime server:**
+3. **Start the local server:**
    ```bash
    bun run dev
    ```
 
-4. **Explore the Console:**
-   - **Unified App Console**: `http://localhost:3000/app`
-   - **Visual Builder**: `http://localhost:3000/builder`
-   - **Lead Inbox**: `http://localhost:3000/leads`
-   - **Analytics Dashboard**: `http://localhost:3000/analytics`
-   - **Live Mobile Demo**: `http://localhost:3000/f/lead-gen`
+4. **Explore local routes (default port `3000`):**
+   - **Unified App Console**: `/app`
+   - **Visual Builder**: `/builder`
+   - **Lead Inbox**: `/leads`
+   - **Analytics Dashboard**: `/analytics`
+   - **Live Mobile Demo**: `/f/lead-gen`
 
 5. **Run test suite:**
    ```bash
@@ -129,7 +129,7 @@ Share your live funnel URL (`http://localhost:3000/f/your-slug`). Review submitt
 
 ### Connecting External Tools via Webhooks
 
-To forward leads to **Zapier**, **Make.com**, **GoHighLevel**, **HubSpot**, or a custom CRM, you can set the webhook URL globally via environment variables:
+To forward leads to **Zapier**, **Make.com**, **GoHighLevel**, **HubSpot**, or a custom CRM, set your webhook URL in your environment:
 
 ```bash
 # In your .env.local file
