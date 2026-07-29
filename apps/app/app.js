@@ -1317,11 +1317,13 @@ function closeTopModal() {
 function renderThemeModal() {
   const theme = state.funnel?.theme || {};
   const color = funnelColor(state.funnel);
-  $("thPreset").value = theme.preset || "";
-  $("thPrimary").value = color;
-  $("thPrimaryHex").value = color;
-  $("thMode").value = theme.mode || "light";
-  $("thRadius").value = theme.radius || "18px";
+  if ($("thPreset")) $("thPreset").value = theme.preset || "";
+  if ($("thFont")) $("thFont").value = theme.font || "Inter";
+  if ($("thBtnStyle")) $("thBtnStyle").value = theme.btnStyle || "flat";
+  if ($("thPrimary")) $("thPrimary").value = color;
+  if ($("thPrimaryHex")) $("thPrimaryHex").value = color;
+  if ($("thMode")) $("thMode").value = theme.mode || "light";
+  if ($("thRadius")) $("thRadius").value = theme.radius || "18px";
 }
 
 function patchTheme(patch) {
@@ -1334,11 +1336,16 @@ function patchTheme(patch) {
 
 function renderPixelsModal() {
   const i = state.funnel?.integrations || {};
-  $("pxMeta").value = i.metaPixelId || "";
-  $("pxGtm").value = i.gtmId || "";
-  $("pxGa4").value = i.ga4Id || "";
-  $("pxTiktok").value = i.tiktokPixelId || "";
-  $("pxWebhook").value = i.webhookUrl || "";
+  if ($("pxMeta")) $("pxMeta").value = i.metaPixelId || "";
+  if ($("pxGtm")) $("pxGtm").value = i.gtmId || "";
+  if ($("pxGa4")) $("pxGa4").value = i.ga4Id || "";
+  if ($("pxGoogleAds")) $("pxGoogleAds").value = i.googleAdsId || "";
+  if ($("pxGoogleLabel")) $("pxGoogleLabel").value = i.googleAdsLabel || "";
+  if ($("pxTiktok")) $("pxTiktok").value = i.tiktokPixelId || "";
+  if ($("pxLinkedin")) $("pxLinkedin").value = i.linkedinTagId || "";
+  if ($("pxPinterest")) $("pxPinterest").value = i.pinterestPixelId || "";
+  if ($("pxWebhook")) $("pxWebhook").value = i.webhookUrl || "";
+  if ($("pxWebhookSecret")) $("pxWebhookSecret").value = i.webhookSecret || "";
 }
 
 function patchIntegrations(patch) {
@@ -1472,10 +1479,14 @@ function openPalette() {
 const SETTINGS = [
   ["setWorkspace", "of.workspace", "My workspace"],
   ["setDomain", "of.domain", ""],
+  ["setCurrency", "of.currency", "USD"],
+  ["setLanguage", "of.language", "en"],
+  ["setNotifyEmail", "of.notifyEmail", ""],
+  ["setGlobalCode", "of.globalCode", ""],
+  ["setBrandVoice", "of.ai.brandVoice", ""],
   ["setProvider", "of.ai.provider", "builtin"],
   ["setModel", "of.ai.model", "claude-opus-4-5"],
   ["setApiKey", "of.ai.key", ""],
-  ["setTone", "of.ai.tone", "direct"],
 ];
 
 function loadSettings() {
@@ -1483,7 +1494,8 @@ function loadSettings() {
     const el = $(id);
     if (el) el.value = localStorage.getItem(key) ?? fallback;
   });
-  $("setBranding").checked = localStorage.getItem("of.branding.hidden") === "true";
+  if ($("setGdpr")) $("setGdpr").checked = localStorage.getItem("of.gdpr.enabled") === "true";
+  if ($("setBranding")) $("setBranding").checked = localStorage.getItem("of.branding.hidden") === "true";
 }
 
 function saveSettings() {
@@ -1491,7 +1503,8 @@ function saveSettings() {
     const el = $(id);
     if (el) localStorage.setItem(key, el.value);
   });
-  localStorage.setItem("of.branding.hidden", String($("setBranding").checked));
+  if ($("setGdpr")) localStorage.setItem("of.gdpr.enabled", String($("setGdpr").checked));
+  if ($("setBranding")) localStorage.setItem("of.branding.hidden", String($("setBranding").checked));
   toast("Settings saved");
 }
 
@@ -1681,6 +1694,8 @@ function bindModals() {
     $("thPrimary").value = hex;
     patchTheme({ primary: hex });
   });
+  $("thFont")?.addEventListener("change", (e) => patchTheme({ font: e.target.value }));
+  $("thBtnStyle")?.addEventListener("change", (e) => patchTheme({ btnStyle: e.target.value }));
   $("thMode").addEventListener("change", (e) => patchTheme({ mode: e.target.value }));
   $("thRadius").addEventListener("input", (e) => patchTheme({ radius: e.target.value || undefined }));
 
@@ -1688,11 +1703,16 @@ function bindModals() {
     ["pxMeta", "metaPixelId"],
     ["pxGtm", "gtmId"],
     ["pxGa4", "ga4Id"],
+    ["pxGoogleAds", "googleAdsId"],
+    ["pxGoogleLabel", "googleAdsLabel"],
     ["pxTiktok", "tiktokPixelId"],
+    ["pxLinkedin", "linkedinTagId"],
+    ["pxPinterest", "pinterestPixelId"],
     ["pxWebhook", "webhookUrl"],
+    ["pxWebhookSecret", "webhookSecret"],
   ];
   pixelFields.forEach(([id, key]) =>
-    $(id).addEventListener("input", (e) => patchIntegrations({ [key]: e.target.value.trim() || undefined }))
+    $(id)?.addEventListener("input", (e) => patchIntegrations({ [key]: e.target.value.trim() || undefined }))
   );
 
   $("copyJsonBtn").addEventListener("click", async () => {

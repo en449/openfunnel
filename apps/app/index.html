@@ -453,7 +453,50 @@
                   <input id="setDomain" class="input input-mono" type="text" placeholder="funnels.yourcompany.com" />
                   <p class="field-hint">Point a CNAME at this server, then serve funnels from your own domain.</p>
                 </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                  <div class="field">
+                    <label for="setCurrency">Default Currency</label>
+                    <span class="select-wrap">
+                      <select id="setCurrency" class="select">
+                        <option value="USD">$ USD</option>
+                        <option value="EUR">€ EUR</option>
+                        <option value="GBP">£ GBP</option>
+                        <option value="CAD">C$ CAD</option>
+                        <option value="AUD">A$ AUD</option>
+                      </select>
+                      <span class="select-caret"><svg width="14" height="14"><use href="#i-chevron" /></svg></span>
+                    </span>
+                  </div>
+                  <div class="field">
+                    <label for="setLanguage">Default Language</label>
+                    <span class="select-wrap">
+                      <select id="setLanguage" class="select">
+                        <option value="en">English (US)</option>
+                        <option value="es">Spanish (Español)</option>
+                        <option value="de">German (Deutsch)</option>
+                        <option value="fr">French (Français)</option>
+                        <option value="pt">Portuguese (Português)</option>
+                      </select>
+                      <span class="select-caret"><svg width="14" height="14"><use href="#i-chevron" /></svg></span>
+                    </span>
+                  </div>
+                </div>
+                <div class="field">
+                  <label for="setNotifyEmail">Lead Notification Email</label>
+                  <input id="setNotifyEmail" class="input" type="email" placeholder="leads@yourcompany.com" />
+                  <p class="field-hint">Receive instant email alerts whenever a new lead completes a funnel.</p>
+                </div>
                 <div class="field row-between">
+                  <div>
+                    <div style="font-weight: 600">GDPR & Privacy Consent Bar</div>
+                    <p class="field-hint">Show privacy consent footer bar on published funnels.</p>
+                  </div>
+                  <label class="switch">
+                    <input id="setGdpr" type="checkbox" aria-label="Show GDPR banner" />
+                    <span class="switch-track"></span>
+                  </label>
+                </div>
+                <div class="field row-between" style="margin-top:10px">
                   <div>
                     <div style="font-weight: 600">Hide the OpenFunnel badge</div>
                     <p class="field-hint">Removes “Powered by OpenFunnel” from the bottom of every funnel.</p>
@@ -467,10 +510,10 @@
             </div>
 
             <div class="card">
-              <div class="card-head"><span class="card-title">AI copilot</span></div>
+              <div class="card-head"><span class="card-title">AI & Global Injection</span></div>
               <div class="card-pad">
                 <div class="field">
-                  <label for="setProvider">Provider</label>
+                  <label for="setProvider">AI Provider</label>
                   <span class="select-wrap">
                     <select id="setProvider" class="select">
                       <option value="builtin">Built-in generator — no key needed</option>
@@ -492,20 +535,17 @@
                   </span>
                 </div>
                 <div class="field">
-                  <label for="setApiKey">API key</label>
+                  <label for="setApiKey">API Key</label>
                   <input id="setApiKey" class="input input-mono" type="password" placeholder="sk-…" autocomplete="off" />
-                  <p class="field-hint">Kept in this browser only. For a shared server, set the key as an environment variable instead.</p>
                 </div>
                 <div class="field">
-                  <label for="setTone">Copy tone</label>
-                  <span class="select-wrap">
-                    <select id="setTone" class="select">
-                      <option value="direct">Direct response</option>
-                      <option value="quiz">Conversational quiz</option>
-                      <option value="professional">Formal</option>
-                    </select>
-                    <span class="select-caret"><svg width="14" height="14"><use href="#i-chevron" /></svg></span>
-                  </span>
+                  <label for="setBrandVoice">Brand Voice / Custom AI Instructions</label>
+                  <textarea id="setBrandVoice" class="textarea" rows="2" placeholder="e.g. High-end luxury coaching brand; keep copy punchy and encouraging."></textarea>
+                </div>
+                <div class="field">
+                  <label for="setGlobalCode">Global Custom Head / CSS Code</label>
+                  <textarea id="setGlobalCode" class="textarea input-mono" rows="2" placeholder="<script>/* Crisp / Intercom chat widget */</script>"></textarea>
+                  <p class="field-hint">Injected globally across all published funnels.</p>
                 </div>
               </div>
             </div>
@@ -593,14 +633,34 @@
             <label for="pxGa4">GA4 measurement ID</label>
             <input id="pxGa4" class="input input-mono" type="text" placeholder="G-XXXXXXXXXX" />
           </div>
-          <div class="field">
-            <label for="pxTiktok">TikTok pixel ID</label>
-            <input id="pxTiktok" class="input input-mono" type="text" placeholder="C1XXXXXXXXXXXXXXXXX" />
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div class="field">
+              <label for="pxGoogleAds">Google Ads Conv ID</label>
+              <input id="pxGoogleAds" class="input input-mono" type="text" placeholder="AW-XXXXXXXXX" />
+            </div>
+            <div class="field">
+              <label for="pxGoogleLabel">Event Label</label>
+              <input id="pxGoogleLabel" class="input input-mono" type="text" placeholder="abc_123" />
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div class="field">
+              <label for="pxTiktok">TikTok pixel ID</label>
+              <input id="pxTiktok" class="input input-mono" type="text" placeholder="C1XXXXXXXXXXXXXXXXX" />
+            </div>
+            <div class="field">
+              <label for="pxLinkedin">LinkedIn Tag ID</label>
+              <input id="pxLinkedin" class="input input-mono" type="text" placeholder="1234567" />
+            </div>
           </div>
           <div class="field">
             <label for="pxWebhook">Webhook URL</label>
             <input id="pxWebhook" class="input input-mono" type="text" placeholder="https://hooks.zapier.com/…" />
-            <p class="field-hint">Every captured lead is posted here as JSON. Save the funnel to apply.</p>
+          </div>
+          <div class="field">
+            <label for="pxWebhookSecret">Webhook Secret Token (Header: X-Webhook-Secret)</label>
+            <input id="pxWebhookSecret" class="input input-mono" type="text" placeholder="whsec_xxxxxxxxxxxx" />
+            <p class="field-hint">Secures lead data posted to Zapier / Make / n8n.</p>
           </div>
         </div>
         <div class="modal-foot"><button class="btn btn-primary" data-close>Done</button></div>
@@ -629,6 +689,30 @@
                 <option value="clean-light">Clean light</option>
                 <option value="warm-editorial">Warm editorial</option>
                 <option value="neo-brutalist">High contrast</option>
+              </select>
+              <span class="select-caret"><svg width="14" height="14"><use href="#i-chevron" /></svg></span>
+            </span>
+          </div>
+          <div class="field">
+            <label for="thFont">Typography Font Family</label>
+            <span class="select-wrap">
+              <select id="thFont" class="select">
+                <option value="Inter">Inter (Clean modern sans)</option>
+                <option value="Plus Jakarta Sans">Plus Jakarta Sans (SaaS display)</option>
+                <option value="Outfit">Outfit (Tech bold)</option>
+                <option value="Playfair Display">Playfair Display (Luxury editorial)</option>
+                <option value="Space Grotesk">Space Grotesk (Modern brutalist)</option>
+              </select>
+              <span class="select-caret"><svg width="14" height="14"><use href="#i-chevron" /></svg></span>
+            </span>
+          </div>
+          <div class="field">
+            <label for="thBtnStyle">Button Shadow & Style</label>
+            <span class="select-wrap">
+              <select id="thBtnStyle" class="select">
+                <option value="flat">Flat clean</option>
+                <option value="glow">Subtle accent glow</option>
+                <option value="pressable-3d">3D Pressable depth</option>
               </select>
               <span class="select-caret"><svg width="14" height="14"><use href="#i-chevron" /></svg></span>
             </span>
