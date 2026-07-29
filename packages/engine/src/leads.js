@@ -13,6 +13,7 @@ function getUtmParams() {
   if (typeof location === "undefined" || !location.search) return {};
   try {
     const params = new URLSearchParams(location.search);
+    /** @type {Record<string, string>} */
     const utm = {};
     const keys = [
       "utm_source",
