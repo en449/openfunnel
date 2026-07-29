@@ -45,16 +45,26 @@ function getUtmParams() {
  * @returns {Promise<boolean>} Resolves true on a 2xx, false otherwise (never throws).
  */
 export async function submitLead(lead, answers, ctx = {}) {
+  const isPreview = Boolean(
+    ctx.meta?.preview ||
+    ctx.meta?.isPreview ||
+    (typeof window !== "undefined" && (
+      window.location.search.includes("preview=1") ||
+      window.location.search.includes("admin=1")
+    ))
+  );
   const endpoint = ctx.endpoint || "/api/lead"; // TODO: point at your deployment
   const body = {
     funnelId: ctx.funnelId,
     sessionId: ctx.sessionId,
     lead,
     answers,
+    preview: isPreview,
     meta: {
       url: typeof location !== "undefined" ? location.href : undefined,
       referrer: typeof document !== "undefined" ? document.referrer : undefined,
       utm: getUtmParams(),
+      preview: isPreview,
       ...ctx.meta,
     },
     ts: Date.now(),

@@ -1,77 +1,74 @@
 /* ==========================================================================
-   OpenFunnel console.
+   OpenFunnel console — Modern Design System.
 
-   ONE RULE GOVERNS COLOUR: colour is data, never decoration.
-   The chrome is achromatic — ink, graphite, paper, stone. The only saturated
-   pixels in the interface are (a) a funnel's own theme colour, which marks
-   everything scoped to that funnel, and (b) the positive/negative pair used
-   for conversion movement. If a colour is not carrying a fact, it is a bug.
-
-   Type is Archivo across two widths: normal for reading, expanded for the
-   small uppercase labels that structure the page. Mono is reserved for machine
-   strings — slugs, ids, timestamps, JSON — and never used for quantities.
+   Designed for clarity, deference, and depth.
+   Clean chrome, refined materials, Inter typography, and responsive workspace layout.
    ========================================================================== */
 
 /* ---- Tokens -------------------------------------------------------------- */
 :root {
   color-scheme: light;
 
-  --bg: #fafaf8;
+  --bg: #f8fafc;
   --surface: #ffffff;
-  --surface-2: #f4f4f1;
-  --surface-3: #ecece8;
-  --line: #e3e3dd;
-  --line-soft: #eeeee9;
+  --surface-2: #f1f5f9;
+  --surface-3: #e2e8f0;
+  --line: rgba(15, 23, 42, 0.08);
+  --line-soft: rgba(15, 23, 42, 0.04);
 
-  --text: #16181c;
-  --text-2: #676d75;
-  --text-3: #9298a0;
+  --text: #0f172a;
+  --text-2: #475569;
+  --text-3: #94a3b8;
 
-  /* Replaced at runtime with the active funnel's own theme colour. */
+  /* Replaced at runtime with the active funnel's own theme colour. Default: Indigo */
   --accent: #4f46e5;
   --accent-ink: #ffffff;
-  --accent-soft: color-mix(in srgb, var(--accent) 10%, transparent);
-  --accent-line: color-mix(in srgb, var(--accent) 32%, transparent);
+  --accent-soft: rgba(79, 70, 229, 0.08);
+  --accent-line: rgba(79, 70, 229, 0.28);
 
-  --pos: #15803d;
-  --neg: #b4232c;
+  --pos: #10b981;
+  --neg: #ef4444;
 
-  --shadow-1: 0 1px 2px rgba(20, 22, 26, 0.05);
-  --shadow-2: 0 12px 32px -12px rgba(20, 22, 26, 0.16), 0 2px 8px -4px rgba(20, 22, 26, 0.08);
-  --shadow-3: 0 32px 64px -24px rgba(20, 22, 26, 0.28), 0 4px 12px -6px rgba(20, 22, 26, 0.1);
+  --shadow-1: 0 1px 3px 0 rgba(0, 0, 0, 0.03), 0 1px 2px -1px rgba(0, 0, 0, 0.03);
+  --shadow-2: 0 4px 20px -2px rgba(0, 0, 0, 0.06), 0 2px 6px -1px rgba(0, 0, 0, 0.03);
+  --shadow-3: 0 20px 35px -10px rgba(0, 0, 0, 0.1), 0 8px 16px -4px rgba(0, 0, 0, 0.05);
 
   --r-sm: 6px;
-  --r: 10px;
-  --r-lg: 14px;
+  --r: 12px;
+  --r-lg: 16px;
 
-  --font: "Archivo", ui-sans-serif, system-ui, -apple-system, sans-serif;
-  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --font: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  --mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Monaco, Consolas, monospace;
 
   --bar-1: 56px;
   --bar-2: 45px;
-  --ease: cubic-bezier(0.2, 0.6, 0.2, 1);
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 [data-theme="dark"] {
   color-scheme: dark;
 
-  --bg: #0e1013;
-  --surface: #16191e;
-  --surface-2: #1c2027;
-  --surface-3: #242931;
-  --line: #282d35;
-  --line-soft: #1f242b;
+  --bg: #0b0f19;
+  --surface: #111827;
+  --surface-2: #1f2937;
+  --surface-3: #374151;
+  --line: rgba(255, 255, 255, 0.08);
+  --line-soft: rgba(255, 255, 255, 0.04);
 
-  --text: #edeef0;
-  --text-2: #98a0a9;
-  --text-3: #6b747e;
+  --text: #f8fafc;
+  --text-2: #94a3b8;
+  --text-3: #64748b;
 
-  --pos: #4ade80;
+  --accent: #6366f1;
+  --accent-soft: rgba(99, 102, 241, 0.15);
+  --accent-line: rgba(99, 102, 241, 0.35);
+
+  --pos: #34d399;
   --neg: #f87171;
 
-  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --shadow-2: 0 12px 32px -12px rgba(0, 0, 0, 0.6), 0 2px 8px -4px rgba(0, 0, 0, 0.4);
-  --shadow-3: 0 32px 64px -24px rgba(0, 0, 0, 0.7), 0 4px 12px -6px rgba(0, 0, 0, 0.5);
+  --shadow-1: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-2: 0 10px 25px -5px rgba(0, 0, 0, 0.4), 0 4px 10px -2px rgba(0, 0, 0, 0.2);
+  --shadow-3: 0 20px 40px -10px rgba(0, 0, 0, 0.6), 0 8px 16px -4px rgba(0, 0, 0, 0.3);
 }
 
 *,
@@ -86,8 +83,7 @@ body {
   color: var(--text);
   font-family: var(--font);
   font-size: 14px;
-  line-height: 1.5;
-  font-variant-numeric: tabular-nums;
+  line-height: 1.47059;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -99,35 +95,32 @@ a { color: inherit; }
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-  border-radius: 3px;
+  border-radius: 4px;
 }
 
 ::selection { background: var(--accent-soft); }
 
-/* Scrollbars: present, but not part of the composition. */
+/* Scrollbars: present, but subtle and non-intrusive. */
 * { scrollbar-width: thin; scrollbar-color: var(--surface-3) transparent; }
-*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
 *::-webkit-scrollbar-thumb {
   background: var(--surface-3);
   border-radius: 99px;
-  border: 3px solid transparent;
+  border: 2px solid transparent;
   background-clip: content-box;
 }
-*::-webkit-scrollbar-thumb:hover { background-clip: content-box; background-color: var(--text-3); }
+*::-webkit-scrollbar-thumb:hover { background-color: var(--text-3); }
 
 /* ---- Structural type ----------------------------------------------------- */
-/* The expanded width is the page's structural voice: it appears only on the
-   small uppercase labels that name a region, never on prose. */
 .eyebrow {
   font-size: 11px;
-  font-weight: 600;
-  font-stretch: 115%;
+  font-weight: 500;
   text-transform: uppercase;
-  letter-spacing: 0.09em;
+  letter-spacing: 0.03em;
   color: var(--text-3);
 }
 
-.mono { font-family: var(--mono); font-size: 12px; letter-spacing: -0.01em; }
+.mono { font-family: var(--mono); font-size: 12px; }
 
 /* ---- App bar (row 1: identity + context) --------------------------------- */
 .app-bar {
@@ -138,9 +131,15 @@ a { color: inherit; }
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 0 20px;
-  background: var(--surface);
+  padding: 0 32px;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
   border-bottom: 1px solid var(--line);
+}
+
+[data-theme="dark"] .app-bar {
+  background: rgba(28, 28, 30, 0.85);
 }
 
 .brand {
@@ -159,6 +158,17 @@ a { color: inherit; }
 /* The mark is the product's own idea: a funnel is a sequence that narrows. */
 .brand-mark { display: block; width: 22px; height: 22px; color: var(--text); }
 .brand-name { font-size: 14px; font-weight: 600; letter-spacing: -0.015em; }
+
+.pro-badge {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  padding: 1.5px 5px;
+  border-radius: 4px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid var(--accent-line);
+}
 
 .bar-divider { width: 1px; height: 20px; background: var(--line); flex: 0 0 auto; }
 
@@ -188,6 +198,26 @@ a { color: inherit; }
 .switcher select:hover { background: var(--surface-2); border-color: var(--text-3); }
 .switcher-caret { position: absolute; right: 9px; pointer-events: none; color: var(--text-3); display: flex; }
 
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 99px;
+  background: color-mix(in srgb, var(--pos) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--pos) 30%, transparent);
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--pos);
+}
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 99px;
+  background: var(--pos);
+  box-shadow: 0 0 8px var(--pos);
+}
+
 .bar-spacer { flex: 1; }
 .bar-actions { display: flex; align-items: center; gap: 8px; }
 
@@ -200,16 +230,24 @@ a { color: inherit; }
   display: flex;
   align-items: stretch;
   gap: 2px;
-  padding: 0 20px;
-  background: var(--surface);
+  padding: 0 32px;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
   border-bottom: 1px solid var(--line);
   overflow-x: auto;
   scrollbar-width: none;
+}
+[data-theme="dark"] .tab-bar {
+  background: rgba(28, 28, 30, 0.85);
 }
 .tab-bar::-webkit-scrollbar { display: none; }
 
 .tab {
   position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   background: none;
   border: 0;
   padding: 0 12px;
@@ -232,7 +270,48 @@ a { color: inherit; }
 }
 .tab:hover { color: var(--text); }
 .tab[aria-selected="true"] { color: var(--text); font-weight: 600; }
-.tab[aria-selected="true"]::after { background: var(--text); }
+.tab[aria-selected="true"]::after { background: var(--accent); }
+
+.tab-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 99px;
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+.tab[aria-selected="true"] .tab-badge {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.avatar-bubble {
+  width: 28px;
+  height: 28px;
+  border-radius: 99px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  border: 1px solid var(--accent-line);
+}
+
+.trend-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-left: 6px;
+}
+.trend-pos { background: color-mix(in srgb, var(--pos) 12%, transparent); color: var(--pos); }
+.trend-neg { background: color-mix(in srgb, var(--neg) 12%, transparent); color: var(--neg); }
 
 /* The live URL sits opposite the tabs: the funnel is always one click away. */
 .live-link {
@@ -258,8 +337,8 @@ a { color: inherit; }
   align-items: center;
   justify-content: center;
   gap: 6px;
-  height: 32px;
-  padding: 0 12px;
+  height: 34px;
+  padding: 0 14px;
   border-radius: var(--r-sm);
   border: 1px solid var(--line);
   background: var(--surface);
@@ -269,29 +348,35 @@ a { color: inherit; }
   cursor: pointer;
   white-space: nowrap;
   text-decoration: none;
-  transition: background 0.12s var(--ease), border-color 0.12s var(--ease), opacity 0.12s var(--ease);
+  transition: all 0.14s var(--ease);
+  box-shadow: var(--shadow-1);
 }
 .btn:hover { background: var(--surface-2); border-color: var(--text-3); }
-.btn:active { background: var(--surface-3); }
+.btn:active { transform: translateY(0) scale(0.98); }
 .btn[disabled] { opacity: 0.5; pointer-events: none; }
 
 .btn-primary {
-  background: var(--text);
-  border-color: var(--text);
-  color: var(--bg);
-  font-weight: 600;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 500;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
 }
-.btn-primary:hover { background: var(--text); border-color: var(--text); opacity: 0.88; }
+.btn-primary:hover {
+  opacity: 0.94;
+  box-shadow: 0 4px 12px rgba(79, 70, 229, 0.22);
+}
+.btn-primary:active { transform: scale(0.98); }
 
-.btn-ghost { border-color: transparent; background: transparent; }
+.btn-ghost { border-color: transparent; background: transparent; box-shadow: none; }
 .btn-ghost:hover { background: var(--surface-2); border-color: transparent; }
 
 .btn-danger { color: var(--neg); }
-.btn-danger:hover { background: color-mix(in srgb, var(--neg) 8%, transparent); border-color: color-mix(in srgb, var(--neg) 30%, transparent); }
+.btn-danger:hover { background: color-mix(in srgb, var(--neg) 10%, transparent); border-color: transparent; color: var(--neg); }
 
-.btn-sm { height: 26px; padding: 0 8px; font-size: 12px; gap: 5px; }
-.btn-icon { width: 32px; padding: 0; }
-.btn-icon.btn-sm { width: 26px; }
+.btn-sm { height: 28px; padding: 0 10px; font-size: 12px; gap: 5px; border-radius: 6px; }
+.btn-icon { width: 34px; padding: 0; }
+.btn-icon.btn-sm { width: 28px; }
 
 .btn svg, .tab svg, .live-link svg { flex: 0 0 auto; }
 
@@ -446,7 +531,7 @@ a { color: inherit; }
   to { opacity: 1; transform: none; }
 }
 
-.view-pad { padding: 28px 32px 56px; max-width: 1320px; }
+.view-pad { padding: 28px 32px 56px; max-width: 100%; margin-left: 0; margin-right: auto; }
 
 .page-head {
   display: flex;
@@ -470,39 +555,70 @@ a { color: inherit; }
 .section-head:first-of-type { margin-top: 0; }
 
 /* ---- Metric strip -------------------------------------------------------- */
-/* One rail, hairline-divided. No bars: a bar with no comparison is decoration,
-   and the previous version's were hardcoded percentages. */
 .metrics {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+.metric {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--r);
+  padding: 18px 20px;
   box-shadow: var(--shadow-1);
-  overflow: hidden;
+  transition: transform 0.14s var(--ease), box-shadow 0.14s var(--ease), border-color 0.14s var(--ease);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
 }
-.metric { padding: 16px 18px; border-left: 1px solid var(--line-soft); }
-.metric:first-child { border-left: 0; }
+.metric:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-2);
+  border-color: var(--accent-line);
+}
+.metric-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.metric-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line-soft);
+}
 .metric-value {
   font-size: 30px;
-  font-weight: 600;
+  font-weight: 700;
   letter-spacing: -0.03em;
   line-height: 1.1;
   margin-top: 10px;
+  color: var(--text);
 }
-.metric-note { font-size: 12px; color: var(--text-3); margin-top: 4px; }
+.metric-note {
+  font-size: 12px;
+  color: var(--text-2);
+  margin-top: 6px;
+}
 
 /* ---- Funnel cards -------------------------------------------------------- */
-/* The left rule is the funnel's own theme colour — the same hue a visitor sees
-   on the live funnel. It is the card's identity, not an accent. */
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(268px, 1fr)); gap: 12px; }
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
 
 .funnel-card {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 16px 16px 14px 19px;
+  gap: 12px;
+  padding: 16px 18px;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--r);
@@ -510,25 +626,80 @@ a { color: inherit; }
   cursor: pointer;
   text-align: left;
   transition: border-color 0.14s var(--ease), box-shadow 0.14s var(--ease), transform 0.14s var(--ease);
+  overflow: hidden;
 }
 .funnel-card::before {
   content: "";
   position: absolute;
+  top: 0;
   left: 0;
-  top: 12px;
-  bottom: 12px;
-  width: 3px;
-  border-radius: 0 3px 3px 0;
+  right: 0;
+  height: 3px;
   background: var(--accent);
+  opacity: 0.85;
+  transition: opacity 0.14s var(--ease);
 }
-.funnel-card:hover { border-color: var(--text-3); box-shadow: var(--shadow-2); transform: translateY(-1px); }
-.funnel-card.is-current { border-color: var(--accent-line); }
+.funnel-card:hover {
+  border-color: var(--accent-line);
+  box-shadow: var(--shadow-2);
+  transform: translateY(-2px);
+}
+.funnel-card:hover::before { opacity: 1; }
+.funnel-card.is-current { border-color: var(--accent-line); box-shadow: var(--shadow-2); }
 
-.funnel-name { font-size: 15px; font-weight: 600; letter-spacing: -0.015em; }
-.funnel-slug { font-family: var(--mono); font-size: 11.5px; color: var(--text-3); margin-top: 3px; }
-.funnel-stats { display: flex; align-items: center; gap: 14px; font-size: 12px; color: var(--text-2); }
+.funnel-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.funnel-card-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.funnel-name {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--text);
+  line-height: 1.25;
+}
+.funnel-slug {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-2);
+  background: var(--surface-2);
+  padding: 2px 6px;
+  border-radius: 5px;
+  border: 1px solid var(--line-soft);
+  width: fit-content;
+}
+
+.funnel-stats {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--text-2);
+  padding: 6px 10px;
+  background: var(--surface-2);
+  border-radius: 6px;
+  border: 1px solid var(--line-soft);
+}
 .funnel-stat b { font-weight: 600; color: var(--text); }
-.funnel-actions { display: flex; gap: 6px; margin-top: auto; }
+.stat-dot-sep { color: var(--text-3); font-size: 10px; }
+
+.funnel-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: auto;
+  padding-top: 4px;
+}
 
 /* ---- Capture feed & table ------------------------------------------------ */
 .feed { display: flex; flex-direction: column; }
@@ -552,10 +723,9 @@ a { color: inherit; }
   top: 0;
   text-align: left;
   font-size: 11px;
-  font-weight: 600;
-  font-stretch: 115%;
+  font-weight: 500;
   text-transform: uppercase;
-  letter-spacing: 0.09em;
+  letter-spacing: 0.03em;
   color: var(--text-3);
   background: var(--surface-2);
   padding: 9px 16px;
@@ -1146,6 +1316,105 @@ a { color: inherit; }
 .toast.is-leaving { animation: toast-out 0.18s var(--ease) forwards; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 @keyframes toast-out { to { opacity: 0; transform: translateY(6px); } }
+
+/* Category Pills */
+.category-pills {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.cat-pill {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text-2);
+  padding: 4px 12px;
+  border-radius: 99px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.12s var(--ease);
+}
+.cat-pill:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.cat-pill.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent-line);
+  font-weight: 600;
+}
+
+/* Answer Timeline for Lead Detail Drawer */
+.answer-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 14px;
+}
+.timeline-step {
+  position: relative;
+  padding: 12px 14px;
+  background: var(--surface-2);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.timeline-step-num {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.timeline-step-q {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.timeline-step-a {
+  font-size: 12.5px;
+  color: var(--text-2);
+  background: var(--surface);
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--line-soft);
+  margin-top: 4px;
+  font-weight: 500;
+}
+
+/* Visual Conversion Funnel Bars in Analytics */
+.analytics-bar-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+.analytics-bar-row:last-child { margin-bottom: 0; }
+.analytics-bar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12.5px;
+}
+.analytics-bar-title { font-weight: 600; color: var(--text); }
+.analytics-bar-count { font-family: var(--mono); font-size: 11.5px; color: var(--text-2); }
+.analytics-bar-track {
+  height: 10px;
+  background: var(--surface-3);
+  border-radius: 99px;
+  overflow: hidden;
+  position: relative;
+}
+.analytics-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 99px;
+  transition: width 0.4s var(--ease);
+}
 
 /* ---- Responsive ---------------------------------------------------------- */
 @media (max-width: 1180px) {

@@ -278,8 +278,8 @@ export class Controller {
    * @param {Record<string, unknown>} [meta]
    */
   _emit(type, meta) {
-    if (this.options.isPreview || (typeof window !== "undefined" && window.location.search.includes("preview=1"))) {
-      return; // Skip analytics tracking in preview mode inside the visual builder
+    if (this.options.isPreview || (typeof window !== "undefined" && (window.location.search.includes("preview=1") || window.location.search.includes("admin=1")))) {
+      return; // Skip analytics tracking for internal admin or preview views
     }
     /** @type {import('./types.js').FunnelEvent} */
     const event = {

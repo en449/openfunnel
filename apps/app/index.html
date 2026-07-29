@@ -13,12 +13,10 @@
         document.documentElement.dataset.theme = t;
       } catch (e) {}
     </script>
+
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..125,400..700&family=JetBrains+Mono:wght@400;500&display=swap"
-      rel="stylesheet"
-    />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/_app/app.css" />
   </head>
   <body>
@@ -126,6 +124,7 @@
       <button id="brandBtn" class="brand" title="Overview">
         <svg class="brand-mark" aria-hidden="true"><use href="#i-mark" /></svg>
         <span class="brand-name">OpenFunnel</span>
+        <span class="pro-badge">PRO</span>
       </button>
 
       <span class="bar-divider" aria-hidden="true"></span>
@@ -141,6 +140,10 @@
       <span class="bar-spacer"></span>
 
       <div class="bar-actions">
+        <button id="copyUrlBtn" class="btn btn-ghost btn-sm" title="Copy live funnel URL">
+          <svg width="13" height="13"><use href="#i-copy" /></svg>
+          <span>Copy Link</span>
+        </button>
         <button id="paletteBtn" class="btn btn-ghost btn-sm" title="Search and commands">
           <svg width="14" height="14"><use href="#i-search" /></svg>
           <span class="kbd">⌘K</span>
@@ -150,7 +153,7 @@
         </button>
         <button id="saveBtn" class="btn btn-primary">
           <svg width="14" height="14"><use href="#i-save" /></svg>
-          <span>Save</span>
+          <span>Save Changes</span>
         </button>
       </div>
     </header>
@@ -159,7 +162,9 @@
     <nav class="tab-bar" role="tablist" aria-label="Console sections">
       <button class="tab" role="tab" data-view="dashboard" aria-selected="true">Overview</button>
       <button class="tab" role="tab" data-view="builder" aria-selected="false">Builder</button>
-      <button class="tab" role="tab" data-view="leads" aria-selected="false">Leads</button>
+      <button class="tab" role="tab" data-view="leads" aria-selected="false">
+        Leads <span class="tab-badge" id="tabLeadBadge">0</span>
+      </button>
       <button class="tab" role="tab" data-view="analytics" aria-selected="false">Analytics</button>
       <button class="tab" role="tab" data-view="templates" aria-selected="false">Templates</button>
       <button class="tab" role="tab" data-view="settings" aria-selected="false">Settings</button>
@@ -183,10 +188,6 @@
                 <svg width="14" height="14"><use href="#i-search" /></svg>
                 <input id="funnelSearch" class="input" type="search" placeholder="Filter funnels" style="width: 190px" />
               </div>
-              <button id="aiGenerateBtn" class="btn">
-                <svg width="14" height="14"><use href="#i-ai" /></svg>
-                Generate with AI
-              </button>
               <button id="newFunnelBtn" class="btn btn-primary">
                 <svg width="14" height="14"><use href="#i-plus" /></svg>
                 New funnel
@@ -196,22 +197,34 @@
 
           <div class="metrics" id="dashMetrics">
             <div class="metric">
-              <div class="eyebrow">Starts</div>
+              <div class="metric-head">
+                <span class="eyebrow">Starts</span>
+                <div class="metric-icon"><svg width="15" height="15"><use href="#i-chart" /></svg></div>
+              </div>
               <div class="metric-value" id="mStarts">—</div>
               <div class="metric-note">Visitors who opened a funnel</div>
             </div>
             <div class="metric">
-              <div class="eyebrow">Leads</div>
+              <div class="metric-head">
+                <span class="eyebrow">Leads</span>
+                <div class="metric-icon"><svg width="15" height="15"><use href="#i-inbox" /></svg></div>
+              </div>
               <div class="metric-value" id="mLeads">—</div>
               <div class="metric-note">Contact details captured</div>
             </div>
             <div class="metric">
-              <div class="eyebrow">Lead rate</div>
+              <div class="metric-head">
+                <span class="eyebrow">Lead rate</span>
+                <div class="metric-icon"><svg width="15" height="15"><use href="#i-broadcast" /></svg></div>
+              </div>
               <div class="metric-value" id="mRate">—</div>
               <div class="metric-note" id="mRateNote">Leads per start</div>
             </div>
             <div class="metric">
-              <div class="eyebrow">Completed</div>
+              <div class="metric-head">
+                <span class="eyebrow">Completed</span>
+                <div class="metric-icon"><svg width="15" height="15"><use href="#i-check" /></svg></div>
+              </div>
               <div class="metric-value" id="mCompletes">—</div>
               <div class="metric-note">Reached the final step</div>
             </div>
@@ -225,10 +238,16 @@
 
           <div class="section-head">
             <span class="eyebrow">Recent captures</span>
-            <button id="allLeadsBtn" class="btn btn-ghost btn-sm">
-              Open leads
-              <svg width="13" height="13"><use href="#i-right" /></svg>
-            </button>
+            <div style="display:flex;gap:6px">
+              <button id="quickCsvBtn" class="btn btn-ghost btn-sm" title="Export leads as CSV">
+                <svg width="13" height="13"><use href="#i-download" /></svg>
+                Export CSV
+              </button>
+              <button id="allLeadsBtn" class="btn btn-ghost btn-sm">
+                Open leads
+                <svg width="13" height="13"><use href="#i-right" /></svg>
+              </button>
+            </div>
           </div>
           <div class="card"><div class="feed" id="captureFeed"></div></div>
         </div>
@@ -241,9 +260,6 @@
           <aside class="pane pane-left">
             <div class="pane-head">
               <span class="eyebrow">Steps <span id="stepCount"></span></span>
-              <button id="aiStepBtn" class="btn btn-ghost btn-sm" title="Generate a funnel with AI">
-                <svg width="13" height="13"><use href="#i-ai" /></svg>
-              </button>
             </div>
             <div class="pane-body"><div id="stepSpine" class="spine"></div></div>
             <div class="pane-foot">
@@ -262,6 +278,12 @@
                 <button data-chassis="desktop" aria-pressed="false"><svg width="13" height="13"><use href="#i-desktop" /></svg> Desktop</button>
               </div>
               <div class="page-actions">
+                <select id="zoomSelect" class="select select-sm" aria-label="Zoom scale" style="width: 76px; font-size: 11.5px; height: 28px; padding: 2px 20px 2px 8px">
+                  <option value="1">100%</option>
+                  <option value="0.85">85%</option>
+                  <option value="0.75">75%</option>
+                  <option value="0.5">50%</option>
+                </select>
                 <button id="reloadPreviewBtn" class="btn btn-sm" title="Restart the preview">
                   <svg width="13" height="13"><use href="#i-refresh" /></svg>
                   Restart
@@ -394,6 +416,12 @@
               <h1 class="page-title">Templates</h1>
               <p class="page-sub">Start from a funnel that already works, then edit every step.</p>
             </div>
+            <div id="templateCategories" class="category-pills">
+              <button class="cat-pill is-active" data-cat="all">All</button>
+              <button class="cat-pill" data-cat="lead-gen">Lead Gen</button>
+              <button class="cat-pill" data-cat="quiz">Quiz</button>
+              <button class="cat-pill" data-cat="booking">Booking</button>
+            </div>
           </div>
           <div id="templateGrid" class="grid"></div>
         </div>
@@ -487,6 +515,38 @@
     </main>
 
     <!-- ── Overlays ──────────────────────────────────────────────────────── -->
+    <div id="newFunnelOverlay" class="overlay" hidden>
+      <div class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="newFunnelTitle">
+        <div class="modal-head">
+          <span class="modal-title" id="newFunnelTitle">Create New Funnel</span>
+          <button class="btn btn-ghost btn-icon btn-sm" data-close aria-label="Close">
+            <svg width="14" height="14"><use href="#i-close" /></svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <p class="field-hint" style="margin-top:0;margin-bottom:16px">Choose a high-converting marketing blueprint or start from scratch.</p>
+          <div class="blueprint-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px">
+            <button class="card card-pad blueprint-card" data-blueprint="lead-gen" style="text-align:left;cursor:pointer">
+              <div style="font-weight:600;font-size:15px;margin-bottom:4px">🎯 Lead Gen Quiz</div>
+              <p class="field-hint" style="margin:0">Multi-step qualification with contact capture & instant piping.</p>
+            </button>
+            <button class="card card-pad blueprint-card" data-blueprint="fitness" style="text-align:left;cursor:pointer">
+              <div style="font-weight:600;font-size:15px;margin-bottom:4px">💪 Fitness Assessment</div>
+              <p class="field-hint" style="margin:0">Goal assessment, workout frequency, and custom recommendation.</p>
+            </button>
+            <button class="card card-pad blueprint-card" data-blueprint="real-estate" style="text-align:left;cursor:pointer">
+              <div style="font-weight:600;font-size:15px;margin-bottom:4px">🏡 Real Estate Qualifier</div>
+              <p class="field-hint" style="margin:0">Buyer timeline, budget qualification, and agent consultation.</p>
+            </button>
+            <button class="card card-pad blueprint-card" data-blueprint="blank" style="text-align:left;cursor:pointer">
+              <div style="font-weight:600;font-size:15px;margin-bottom:4px">⚡ Blank Funnel</div>
+              <p class="field-hint" style="margin:0">Clean 3-step sequence (Choice, Form, Success screen).</p>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div id="aiOverlay" class="overlay" hidden>
       <div class="modal" role="dialog" aria-modal="true" aria-labelledby="aiTitle">
         <div class="modal-head">

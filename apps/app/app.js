@@ -407,6 +407,9 @@ function renderDashboard() {
   const completes = stats.completes || 0;
   const rate = starts ? Math.round((leads / starts) * 100) : null;
 
+  const leadBadge = $("tabLeadBadge");
+  if (leadBadge) leadBadge.textContent = state.leads.length ? state.leads.length.toLocaleString() : "0";
+
   $("mStarts").textContent = starts.toLocaleString();
   $("mLeads").textContent = leads.toLocaleString();
   $("mRate").textContent = rate === null ? "—" : `${rate}%`;
@@ -423,6 +426,47 @@ function renderDashboard() {
 
   renderFunnelGrid();
   renderCaptureFeed();
+}
+
+async function deleteFunnel(slug) {
+  if (!confirm(`Are you sure you want to delete '${slug}'? This action cannot be undone.`)) return;
+  try {
+    const res = await fetch("/api/builder/delete", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ slug }),
+    });
+    if (!res.ok) throw new Error("delete_failed");
+    state.funnels = state.funnels.filter((f) => f.slug !== slug);
+    if (state.funnel?.slug === slug) {
+      state.funnel = null;
+    }
+    toast(`Deleted ${slug}`);
+    await loadFunnelList();
+    renderDashboard();
+  } catch {
+    toast("Could not delete funnel", "error");
+  }
+}
+
+async function duplicateFunnel(slug) {
+  try {
+    const res = await fetch("/api/builder/duplicate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ slug }),
+    });
+    if (!res.ok) throw new Error("duplicate_failed");
+    const data = await res.json();
+    if (data.funnel) {
+      setWorkingFunnel(data.funnel);
+      await loadFunnelList();
+      showView("builder");
+      toast(`Duplicated funnel as ${data.funnel.name}`);
+    }
+  } catch {
+    toast("Could not duplicate funnel", "error");
+  }
 }
 
 function renderFunnelGrid() {
@@ -461,25 +505,37 @@ function renderFunnelGrid() {
 
   grid.innerHTML = funnels
     .map((f) => {
-      const color = normalizeHex(f.primary) || "#4f46e5";
+      const color = normalizeHex(f.primary) || "#007aff";
       const s = perFunnel[f.slug] || {};
       const current = state.funnel?.slug === f.slug;
       return `<article class="funnel-card${current ? " is-current" : ""}" style="--accent:${esc(color)}" data-slug="${esc(f.slug)}" tabindex="0" role="button">
-        <div>
-          <div class="funnel-name">${esc(f.name)}</div>
-          <div class="funnel-slug">/f/${esc(f.slug)}</div>
+        <div class="funnel-card-head">
+          <div class="funnel-card-title-group">
+            <div class="funnel-name">${esc(f.name)}</div>
+            <div class="funnel-slug">/f/${esc(f.slug)}</div>
+          </div>
+          ${f.unsaved ? `<span class="tag tag-warning">unsaved</span>` : ""}
         </div>
         <div class="funnel-stats">
           <span class="funnel-stat"><b>${f.steps}</b> ${f.steps === 1 ? "step" : "steps"}</span>
+          <span class="stat-dot-sep">•</span>
           <span class="funnel-stat"><b>${s.starts || 0}</b> starts</span>
+          <span class="stat-dot-sep">•</span>
           <span class="funnel-stat"><b>${s.leads || 0}</b> leads</span>
         </div>
         <div class="funnel-actions">
-          <button class="btn btn-sm" data-edit="${esc(f.slug)}">Edit</button>
-          <a class="btn btn-sm" href="/f/${esc(f.slug)}" target="_blank" rel="noopener" data-open>
+          <button class="btn btn-sm btn-primary" data-edit="${esc(f.slug)}">
+            ${icon("code", 12)} Edit
+          </button>
+          <button class="btn btn-sm btn-ghost" data-duplicate="${esc(f.slug)}" title="Duplicate funnel">
+            ${icon("copy", 12)} Copy
+          </button>
+          <a class="btn btn-sm btn-ghost" href="/f/${esc(f.slug)}" target="_blank" rel="noopener" data-open title="Open funnel live view">
             ${icon("external", 12)} Open
           </a>
-          ${f.unsaved ? `<span class="tag" style="margin-left:auto">unsaved</span>` : ""}
+          <button class="btn btn-ghost btn-sm btn-danger" data-delete="${esc(f.slug)}" title="Delete funnel" style="margin-left:auto">
+            ${icon("trash", 12)}
+          </button>
         </div>
       </article>`;
     })
@@ -501,8 +557,12 @@ function renderCaptureFeed() {
   feed.innerHTML = recent
     .map((lead) => {
       const who = lead.lead?.email || lead.lead?.phone || lead.lead?.name || "Anonymous";
-      return `<div class="feed-row">
-        <span class="feed-who">${esc(who)}</span>
+      const initial = who.charAt(0).toUpperCase();
+      return `<div class="feed-row" style="cursor:pointer" data-lead-id="${esc(lead.id || "")}">
+        <div style="display:flex;align-items:center;gap:10px;overflow:hidden">
+          <span class="avatar-bubble">${esc(initial)}</span>
+          <span class="feed-who">${esc(who)}</span>
+        </div>
         <span class="tag">${esc(lead.funnelId || "unknown")}</span>
         <span class="feed-when">${esc(relativeTime(lead.received_at))}</span>
       </div>`;
@@ -1011,35 +1071,64 @@ function renderLeads() {
 function openLeadDrawer(lead) {
   const contact = lead.lead || {};
   const answers = lead.answers || {};
-  const rows = [
-    ["Captured", lead.received_at ? new Date(lead.received_at).toLocaleString() : "Unknown"],
-    ["Funnel", lead.funnelId || "unknown"],
-  ];
+  const who = contact.email || contact.phone || contact.name || "Anonymous Visitor";
 
-  const contactRows = Object.entries(contact)
+  const contactItems = Object.entries(contact)
     .filter(([, v]) => v)
-    .map(([k, v]) => `<div><strong>${esc(k)}</strong> — ${esc(v)}</div>`)
+    .map(([k, v]) => `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line-soft)"><span style="font-weight:600;color:var(--text-2);text-transform:capitalize">${esc(k)}</span><span style="font-weight:500">${esc(v)}</span></div>`)
+    .join("");
+
+  const answerItems = Object.entries(answers)
+    .map(([stepId, val], idx) => {
+      const displayVal = Array.isArray(val) ? val.join(", ") : val;
+      return `<div class="timeline-step">
+        <span class="timeline-step-num">Step ${String(idx + 1).padStart(2, "0")} · ${esc(stepId)}</span>
+        <div class="timeline-step-a">${esc(displayVal)}</div>
+      </div>`;
+    })
     .join("");
 
   $("drawerBody").innerHTML = `
-    ${rows
-      .map(
-        ([k, v]) => `<div class="kv"><div class="kv-key">${esc(k)}</div><div class="kv-val">${esc(v)}</div></div>`
-      )
-      .join("")}
-    <div class="kv">
-      <div class="kv-key">Contact</div>
-      <div class="kv-val">${contactRows || "Nothing captured"}</div>
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px">
+      <span class="avatar-bubble" style="width:40px;height:40px;font-size:16px">${esc(who.charAt(0).toUpperCase())}</span>
+      <div>
+        <div style="font-size:16px;font-weight:600;color:var(--text)">${esc(who)}</div>
+        <div style="font-size:12px;color:var(--text-2);margin-top:2px">Captured ${esc(relativeTime(lead.received_at))} in <span class="tag">${esc(lead.funnelId || "funnel")}</span></div>
+      </div>
     </div>
+
     <div class="kv">
-      <div class="kv-key">Answers</div>
-      <div class="kv-val"><pre>${esc(JSON.stringify(answers, null, 2))}</pre></div>
+      <div class="kv-key">Contact Details</div>
+      <div class="kv-val" style="margin-top:6px">${contactItems || "<span style='color:var(--text-3)'>No contact fields</span>"}</div>
     </div>
-    <div class="kv">
-      <div class="kv-key">Source</div>
-      <div class="kv-val" style="font-family:var(--mono);font-size:12px">${esc(lead.ip || "unknown")}</div>
+
+    <div class="kv" style="margin-top:16px">
+      <div class="kv-key">Submission Timeline (${Object.keys(answers).length} responses)</div>
+      <div class="answer-timeline">
+        ${answerItems || "<div style='color:var(--text-3);font-size:13px'>No quiz answers logged</div>"}
+      </div>
+    </div>
+
+    <div class="kv" style="margin-top:16px">
+      <div class="kv-key">Raw Submission Metadata</div>
+      <div class="kv-val"><pre>${esc(JSON.stringify({ id: lead.id, received_at: lead.received_at, funnelId: lead.funnelId, ip: lead.ip || "127.0.0.1" }, null, 2))}</pre></div>
+    </div>
+
+    <div style="margin-top:20px;padding-top:14px;border-top:1px solid var(--line);display:flex;gap:8px">
+      <button id="drawerExportBtn" class="btn btn-primary" style="flex:1">
+        ${icon("download", 13)} Export CSV
+      </button>
+      <button id="drawerCopyJsonBtn" class="btn btn-ghost" style="flex:1">
+        ${icon("copy", 13)} Copy JSON
+      </button>
     </div>
   `;
+
+  $("drawerExportBtn")?.addEventListener("click", exportCsv);
+  $("drawerCopyJsonBtn")?.addEventListener("click", () => {
+    navigator.clipboard.writeText(JSON.stringify(lead, null, 2));
+    toast("Lead JSON copied to clipboard");
+  });
 
   $("drawerScrim").classList.add("is-open");
   $("leadDrawer").classList.add("is-open");
@@ -1143,47 +1232,48 @@ function renderAnalytics() {
 
   let worst = { drop: 0, title: null };
 
-  host.innerHTML = ordered
+   host.innerHTML = ordered
     .map((s, i) => {
       const prev = i === 0 ? null : ordered[i - 1].sessions;
       const drop = prev && prev > 0 ? Math.round(((prev - s.sessions) / prev) * 100) : null;
       if (drop !== null && drop > worst.drop) worst = { drop, title: s.title, stepId: s.stepId };
 
-      const dropLabel =
-        drop === null
-          ? `<span class="spine-drop" style="color:var(--text-3)">—</span>`
-          : `<span class="spine-drop ${drop > 0 ? "delta-neg" : "delta-pos"}">${drop > 0 ? `−${drop}%` : "0%"}</span>`;
-
-      return `<div class="spine-row">
-        <span class="spine-index">${String(i + 1).padStart(2, "0")}</span>
-        <span class="spine-body">
-          <span class="spine-title">${esc(s.title)}</span>
-          <span class="spine-meta"><span class="spine-type">${esc(s.stepId)}</span></span>
-        </span>
-        <span class="spine-track"><span class="spine-fill" style="width:${Math.max(2, Math.round((s.sessions / peak) * 100))}%"></span></span>
-        <span class="spine-figure">
-          <span class="spine-count">${s.sessions}</span>
-          ${dropLabel}
-        </span>
+      const widthPct = Math.max(4, Math.round((s.sessions / peak) * 100));
+      return `<div class="analytics-bar-row">
+        <div class="analytics-bar-head">
+          <span class="analytics-bar-title">${String(i + 1).padStart(2, "0")}. ${esc(s.title)} <span style="font-family:var(--mono);font-size:11px;color:var(--text-3);margin-left:4px">(${esc(s.stepId)})</span></span>
+          <div style="display:flex;align-items:center;gap:10px">
+            ${drop !== null ? `<span class="tag ${drop > 20 ? "tag-warning" : ""}">${drop > 0 ? `−${drop}% drop` : "100% kept"}</span>` : ""}
+            <span class="analytics-bar-count">${s.sessions.toLocaleString()} visitors</span>
+          </div>
+        </div>
+        <div class="analytics-bar-track">
+          <div class="analytics-bar-fill" style="width: ${widthPct}%"></div>
+        </div>
       </div>`;
     })
     .join("");
 
-  if (worst.title) {
-    $("aWorst").textContent = `−${worst.drop}%`;
-    $("aWorstNote").textContent = `Leaving at “${worst.title}”`;
-  } else {
-    $("aWorst").textContent = "0%";
-    $("aWorstNote").textContent = "No drop-off recorded";
-  }
+  $("aWorst").textContent = worst.title ? `−${worst.drop}%` : "—";
+  $("aWorstNote").textContent = worst.title
+    ? `Step ${worst.stepId} (“${worst.title}”)`
+    : "No major drop-offs";
 }
 
 /* ========================================================================== *
  *  Templates
  * ========================================================================== */
 
-function renderTemplates() {
-  $("templateGrid").innerHTML = Object.entries(FUNNEL_TEMPLATES)
+function renderTemplates(filterCat = "all") {
+  const entries = Object.entries(FUNNEL_TEMPLATES).filter(([key, tpl]) => {
+    if (!filterCat || filterCat === "all") return true;
+    if (filterCat === "lead-gen") return key.includes("lead") || key.includes("consultation") || key.includes("qualifier");
+    if (filterCat === "quiz") return key.includes("quiz") || key.includes("assessment") || key.includes("fitness");
+    if (filterCat === "booking") return key.includes("booking") || key.includes("demo") || key.includes("appointment");
+    return true;
+  });
+
+  $("templateGrid").innerHTML = entries
     .map(([key, tpl]) => {
       const color = funnelColor(tpl);
       const flow = tpl.steps
@@ -1416,6 +1506,17 @@ function bindChrome() {
   );
   $("saveBtn").addEventListener("click", saveFunnel);
   $("paletteBtn").addEventListener("click", openPalette);
+  $("copyUrlBtn")?.addEventListener("click", () => {
+    const link = $("liveLinkText")?.textContent || "";
+    if (link) {
+      const fullUrl = window.location.origin + link;
+      navigator.clipboard.writeText(fullUrl).then(() => {
+        toast("Live URL copied to clipboard!", "info");
+      }).catch(() => {
+        toast(fullUrl, "info");
+      });
+    }
+  });
 
   qsa(".tab").forEach((tab) => tab.addEventListener("click", () => showView(tab.dataset.view)));
 
@@ -1434,14 +1535,39 @@ function bindChrome() {
 }
 
 function bindDashboard() {
-  $("newFunnelBtn").addEventListener("click", createFunnel);
-  $("aiGenerateBtn").addEventListener("click", () => openModal("aiOverlay"));
+  $("newFunnelBtn")?.addEventListener("click", () => openModal("newFunnelOverlay"));
+  $("quickCsvBtn")?.addEventListener("click", exportCsv);
   $("allLeadsBtn").addEventListener("click", () => showView("leads"));
   $("funnelSearch").addEventListener("input", renderFunnelGrid);
 
+  const newOverlay = $("newFunnelOverlay");
+  if (newOverlay) {
+    qsa("[data-blueprint]", newOverlay).forEach((card) => {
+      card.addEventListener("click", () => {
+        const bp = card.dataset.blueprint;
+        closeModal("newFunnelOverlay");
+        if (bp === "blank") {
+          createFunnel();
+        } else {
+          useTemplate(bp);
+        }
+      });
+    });
+  }
+
   $("funnelGrid").addEventListener("click", (e) => {
+    const dup = e.target.closest("[data-duplicate]");
+    if (dup) {
+      e.stopPropagation();
+      return duplicateFunnel(dup.dataset.duplicate);
+    }
+    const del = e.target.closest("[data-delete]");
+    if (del) {
+      e.stopPropagation();
+      return deleteFunnel(del.dataset.delete);
+    }
     if (e.target.closest("[data-open]")) return;
-    if (e.target.closest("[data-new-funnel]")) return createFunnel();
+    if (e.target.closest("[data-new-funnel]")) return openModal("newFunnelOverlay");
     const goto = e.target.closest("[data-goto]");
     if (goto) return showView(goto.dataset.goto);
 
@@ -1463,7 +1589,7 @@ function bindDashboard() {
 
 function bindBuilder() {
   $("addStepBtn").addEventListener("click", addStep);
-  $("aiStepBtn").addEventListener("click", () => openModal("aiOverlay"));
+  $("aiStepBtn")?.addEventListener("click", () => openModal("aiOverlay"));
   $("themeModalBtn").addEventListener("click", () => openModal("themeOverlay"));
   $("pixelsModalBtn").addEventListener("click", () => openModal("pixelsOverlay"));
   $("reloadPreviewBtn").addEventListener("click", () => mountPreview(true));
@@ -1487,6 +1613,15 @@ function bindBuilder() {
     if (!row || (e.key !== "Enter" && e.key !== " ")) return;
     e.preventDefault();
     selectStep(+row.dataset.step);
+  });
+
+  $("zoomSelect")?.addEventListener("change", (e) => {
+    const scale = e.target.value;
+    const device = $("device");
+    if (device) {
+      device.style.transform = scale === "1" ? "none" : `scale(${scale})`;
+      device.style.transformOrigin = "top center";
+    }
   });
 
   $("chassisSeg").addEventListener("click", (e) => {
@@ -1584,6 +1719,14 @@ function bindModals() {
   $("templateGrid").addEventListener("click", (e) => {
     const btn = e.target.closest("[data-template]");
     if (btn) useTemplate(btn.dataset.template);
+  });
+
+  $("templateCategories")?.addEventListener("click", (e) => {
+    const pill = e.target.closest(".cat-pill");
+    if (!pill) return;
+    qsa(".cat-pill", $("templateCategories")).forEach((p) => p.classList.remove("is-active"));
+    pill.classList.add("is-active");
+    renderTemplates(pill.dataset.cat);
   });
 
   $("saveSettingsBtn").addEventListener("click", saveSettings);

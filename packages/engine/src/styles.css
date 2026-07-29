@@ -13,8 +13,8 @@
   justify-content: center;
   min-height: 100dvh;
   margin: 0;
-  background: var(--of-bg, #eef1f6);
-  font-family: var(--of-font, system-ui, sans-serif);
+  background: var(--of-bg, #f2f2f7);
+  font-family: var(--of-font, -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", system-ui, sans-serif);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -28,8 +28,8 @@
   height: 100dvh;
   overflow: hidden;
   background: var(--of-surface, #fff);
-  color: var(--of-text, #0f172a);
-  font-family: var(--of-font, system-ui, sans-serif);
+  color: var(--of-text, #1c1c1e);
+  font-family: var(--of-font, -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", system-ui, sans-serif);
   box-sizing: border-box;
 }
 .of-root *,
@@ -42,9 +42,9 @@
     height: min(calc(100dvh - 48px), 900px);
     width: calc(min(calc(100dvh - 48px), 900px) * 9 / 16);
     max-width: 506px;
-    border-radius: 34px;
-    border: 1px solid var(--of-border, #e2e8f0);
-    box-shadow: 0 30px 80px -20px rgba(15, 23, 42, 0.35), 0 8px 24px -12px rgba(15, 23, 42, 0.25);
+    border-radius: 36px;
+    border: 1px solid var(--of-border, rgba(0, 0, 0, 0.1));
+    box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.25), 0 8px 20px -8px rgba(0, 0, 0, 0.15);
   }
 }
 
@@ -63,7 +63,7 @@
   border-radius: 999px;
   border: 1px solid var(--of-border, #e2e8f0);
   background: transparent;
-  color: var(--of-text, #0f172a);
+  color: var(--of-text, #1c1c1e);
   font-size: 20px;
   line-height: 1;
   cursor: pointer;
@@ -83,7 +83,7 @@
   height: 100%;
   width: 0%;
   border-radius: inherit;
-  background: var(--of-primary, #4f46e5);
+  background: var(--of-primary, #007aff);
   transition: width 0.45s cubic-bezier(0.22, 1, 0.36, 1);
 }
 

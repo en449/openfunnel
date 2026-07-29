@@ -12,7 +12,7 @@
   --accent-hover: #4f46e5;
   --success: #10b981;
   --radius: 12px;
-  --font: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "SF Pro", system-ui, sans-serif;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }

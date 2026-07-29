@@ -24,3 +24,4 @@ supabase/.temp/
 *.log
 .vscode/
 .idea/
+.claude/

@@ -26,7 +26,7 @@
  * Run:  bun run dev   (from apps/runtime)   ·   PORT=3000 bun server.js
  */
 
-import { mkdir, readdir, readFile, writeFile, appendFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile, appendFile, unlink } from "node:fs/promises";
 import { extname, join, normalize, resolve } from "node:path";
 
 /* ========================================================================== *
@@ -156,11 +156,16 @@ async function supabaseInsert(table, row) {
  * @param {Record<string, unknown>} record
  */
 async function forwardWebhook(record) {
-  const webhookUrl =
+  let webhookUrl =
     process.env.WEBHOOK_URL ||
     process.env.ZAPIER_WEBHOOK_URL ||
     record.webhookUrl ||
     record.meta?.webhookUrl;
+
+  if (!webhookUrl && record.funnelId) {
+    const funnel = await loadFunnel(record.funnelId);
+    webhookUrl = funnel?.integrations?.webhookUrl || funnel?.integrations?.webhook;
+  }
   if (!webhookUrl) return;
   try {
     const res = await fetch(webhookUrl, {
@@ -269,7 +274,15 @@ function funnelPage(funnel) {
       import { createFunnel } from "/_of/index.js";
       const mount = document.getElementById("app");
       const funnel = JSON.parse(document.getElementById("of-funnel").textContent);
+      const isPreview = Boolean(
+        window.parent !== window ||
+        window.self !== window.top ||
+        location.search.includes("preview=1") ||
+        location.search.includes("admin=1")
+      );
       let live = createFunnel(mount, funnel, {
+        isPreview: isPreview,
+        trackEvents: !isPreview,
         eventEndpoint: "/api/events",
         leadEndpoint: "/api/lead",
       });
@@ -509,16 +522,50 @@ const server = Bun.serve({
       return json({ ok: true, slug });
     }
 
+    if (path === "/api/builder/delete" && req.method === "POST") {
+      const body = await readJson(req);
+      const slug = body?.slug;
+      if (!slug || !SLUG_RE.test(slug)) return json({ error: "invalid_slug" }, 400);
+      const targetPath = normalize(join(FUNNELS_DIR, `${slug}.json`));
+      if (!targetPath.startsWith(FUNNELS_DIR)) return json({ error: "forbidden_path" }, 403);
+      try {
+        await unlink(targetPath);
+      } catch {}
+      cache.delete(slug);
+      return json({ ok: true, slug });
+    }
+
+    if (path === "/api/builder/duplicate" && req.method === "POST") {
+      const body = await readJson(req);
+      const slug = body?.slug;
+      if (!slug || !SLUG_RE.test(slug)) return json({ error: "invalid_slug" }, 400);
+      const source = await loadFunnel(slug);
+      if (!source) return json({ error: "not_found" }, 404);
+
+      const newSlug = `${slug}-copy-${Date.now().toString(36).slice(-4)}`;
+      const copyDoc = { ...source, id: newSlug, slug: newSlug, name: `${source.name || slug} (Copy)` };
+      const targetPath = normalize(join(FUNNELS_DIR, `${newSlug}.json`));
+      await writeFile(targetPath, JSON.stringify(copyDoc, null, 2), "utf8");
+      cache.set(newSlug, { funnel: copyDoc, at: Date.now() });
+      return json({ ok: true, funnel: copyDoc });
+    }
+
     // --- Admin APIs ---------------------------------------------------------
+    const isPreviewRecord = (r) => Boolean(
+      r.preview || r.isPreview || r.meta?.preview || r.meta?.isPreview ||
+      (r.referer && (r.referer.includes("preview=1") || r.referer.includes("admin=1"))) ||
+      (r.meta?.url && (r.meta.url.includes("preview=1") || r.meta.url.includes("admin=1")))
+    );
+
     if (path === "/api/admin/leads" && req.method === "GET") {
-      const records = await readJsonlRecords("leads.jsonl");
+      const records = (await readJsonlRecords("leads.jsonl")).filter((l) => !isPreviewRecord(l));
       return json({ leads: records.reverse() });
     }
 
     if (path === "/api/admin/stats" && req.method === "GET") {
       const scope = url.searchParams.get("funnel") || "";
-      const allEvents = await readJsonlRecords("events.jsonl");
-      const allLeads = await readJsonlRecords("leads.jsonl");
+      const allEvents = (await readJsonlRecords("events.jsonl")).filter((ev) => !isPreviewRecord(ev));
+      const allLeads = (await readJsonlRecords("leads.jsonl")).filter((l) => !isPreviewRecord(l));
 
       const events = scope ? allEvents.filter((ev) => ev.funnelId === scope) : allEvents;
       const leads = scope ? allLeads.filter((l) => l.funnelId === scope) : allLeads;
