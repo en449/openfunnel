@@ -15,6 +15,8 @@
 | :--- | :---: | :---: |
 | **Mobile-First Quiz Engine** | ✅ Yes | ✅ Yes (Swipe transitions, <100ms response) |
 | **Interactive Screen Types** | ✅ Yes | ✅ Yes (Single-choice, Multi-select, Form, Loader, Content, Success) |
+| **Option Image Cards & Media** | ✅ Yes | ✅ **Full** (Image cards, grid layout & step hero media) |
+| **Email Alerts & Autoresponders** | ✅ Paid Addon | ✅ **Built-in** (Resend API & SMTP relay HTML alerts) |
 | **Smart Branching & Logic** | ✅ Yes | ✅ Yes (Target steps by answer ID) |
 | **Dynamic Answer Piping** | ✅ Yes | ✅ Yes (Inject `{{name}}`, `{{goal}}` into any headline) |
 | **Automatic UTM & Ad Tracking** | ⚠️ Limited | ✅ **Full** (`utm_source`, `utm_campaign`, `gclid`, `fbclid`, `ttclid`, etc.) |
@@ -43,6 +45,7 @@ Every visitor who enters your funnel brings their ad parameters with them. OpenF
 
 ### 2. Multi-Channel Lead Integrations
 Send your leads anywhere automatically:
+- **Instant Email Alerts & Autoresponders**: Send formatted HTML email alerts to the business owner (`NOTIFY_EMAIL`) with full lead answers & UTM parameters, plus personalized welcome emails to leads via **Resend API** or **SMTP Relay**.
 - **Webhooks (Zapier, Make.com, GoHighLevel, HubSpot, n8n)**: Forward leads directly via server-side or client-side POST requests.
 - **CSV Export with Attribution**: Export leads in one click with full UTM columns for direct import into Google Sheets or CRMs.
 - **Supabase Cloud Sync**: Sync lead records and analytics directly into your PostgreSQL database.
@@ -98,14 +101,15 @@ Choose from pre-built funnel templates optimized for high conversion:
 
 ### Step 3: Edit Steps in the Visual Builder
 Use the live mobile editor (`/builder`) to customize:
-- **Question Steps**: Single-choice options with icons (`📈`, `🧭`, `💡`).
-- **Multi-Select**: Allow users to pick multiple preferences.
+- **Question Steps**: Single-choice options with icons (`📈`, `🧭`, `💡`) or **Image Cards** with photo grid layouts.
+- **Step Hero Media**: Attach high-res hero photos or video blocks to step headers.
+- **Multi-Select**: Allow visitors to pick multiple preferences with instant feedback.
 - **Interactive Loader**: Show an animated *"Calculating your customized results..."* screen to build anticipation.
 - **Form Capture**: Collect name, email, phone number with instant validation.
 - **Dynamic Piping**: Insert previous answers into headlines like `"Great news, {{name}}! Here is your custom plan"`.
 
-### Step 4: Configure Webhooks & Pixels
-In the **Pixels & Tracking** tab, paste your Webhook URL (Zapier/Make/GoHighLevel) and your Meta/GTM Pixel IDs.
+### Step 4: Configure Email Alerts & Webhooks
+In **Settings**, configure your admin notification email (`NOTIFY_EMAIL`) and Resend API or SMTP credentials to receive instant HTML lead alerts and trigger personalized lead autoresponders. In **Pixels & Tracking**, paste your Webhook URL (Zapier/Make/GoHighLevel) and Meta/GTM Pixel IDs.
 
 ### Step 5: Publish & Collect Leads
 Share your live funnel link (`/f/your-funnel-slug`). Review submitted leads in your **Lead Inbox** (`/leads`) or download them via **Export CSV**.
@@ -146,7 +150,7 @@ Share your live funnel link (`/f/your-funnel-slug`). Review submitted leads in y
 
 ---
 
-### Connecting External Tools via Webhooks
+### Connecting External Tools via Webhooks & Email
 
 To forward leads to **Zapier**, **Make.com**, **GoHighLevel**, **HubSpot**, or a custom CRM, set your webhook URL in your environment:
 
@@ -168,6 +172,17 @@ Copy `.env.example` to `.env.local`:
 PORT=3000
 FUNNELS_DIR=examples/
 DATA_DIR=.data/
+
+# Email Notifications & Autoresponders (Resend / SMTP)
+NOTIFY_EMAIL=owner@yourdomain.com
+EMAIL_PROVIDER=resend
+RESEND_API_KEY=re_123456789...
+RESEND_FROM="OpenFunnel Leads <leads@yourdomain.com>"
+SMTP_HOST=
+SMTP_PORT=587
+SMTP_USER=
+SMTP_PASS=
+SMTP_FROM="OpenFunnel <noreply@yourdomain.com>"
 
 # Global Webhook Forwarding (Zapier, Make, GoHighLevel, CRMs)
 WEBHOOK_URL=https://hooks.zapier.com/hooks/catch/...

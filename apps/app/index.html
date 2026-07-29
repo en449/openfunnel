@@ -193,6 +193,22 @@
                 New funnel
               </button>
             </div>
+          <div class="card" style="margin-bottom:20px;background:linear-gradient(135deg, rgba(79,70,229,0.06) 0%, rgba(147,51,234,0.06) 100%);border:1px solid color-mix(in srgb, var(--accent) 30%, transparent);">
+            <div class="card-pad" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px;">
+              <div>
+                <div style="font-size:17px;font-weight:700;margin-bottom:4px;display:flex;align-items:center;gap:8px;">
+                  🚀 OpenFunnel — Mobile-First Quiz Funnel Engine
+                  <span style="font-size:11px;padding:2px 8px;border-radius:999px;background:var(--accent,#4f46e5);color:#fff;font-weight:700;">VS PERSPECTIVE.CO</span>
+                </div>
+                <p style="margin:0;font-size:13px;color:var(--muted-ink,#64748b);">
+                  Full option image cards, step hero media, Resend & SMTP email notifications/autoresponders, automated UTM ad attribution, Zapier webhooks & 100% data privacy.
+                </p>
+              </div>
+              <div style="display:flex;gap:8px;">
+                <button class="btn btn-ghost btn-sm" onclick="showView('templates')">Browse Templates</button>
+                <button class="btn btn-primary btn-sm" onclick="openModal('newFunnelOverlay')">+ Create Funnel</button>
+              </div>
+            </div>
           </div>
 
           <div class="metrics" id="dashMetrics">
@@ -510,6 +526,92 @@
             </div>
 
             <div class="card">
+              <div class="card-head"><span class="card-title">✉️ Email Delivery & Notifications</span></div>
+              <div class="card-pad">
+                <div class="field">
+                  <label for="setNotifyEmail">Admin Notification Email</label>
+                  <input id="setNotifyEmail" class="input" type="email" placeholder="owner@yourdomain.com" />
+                  <p class="field-hint">Receive instant HTML alerts whenever a visitor submits a lead.</p>
+                </div>
+                <div class="field">
+                  <label for="setEmailProvider">Email Delivery Provider</label>
+                  <span class="select-wrap">
+                    <select id="setEmailProvider" class="select">
+                      <option value="resend">Resend API (Recommended)</option>
+                      <option value="smtp">SMTP Relay Server</option>
+                      <option value="logged">Console Log Only</option>
+                    </select>
+                    <span class="select-caret"><svg width="14" height="14"><use href="#i-chevron" /></svg></span>
+                  </span>
+                </div>
+
+                <!-- Resend fields -->
+                <div id="resendFields">
+                  <div class="field">
+                    <label for="setResendApiKey">Resend API Key</label>
+                    <input id="setResendApiKey" class="input input-mono" type="password" placeholder="re_123456789…" />
+                  </div>
+                  <div class="field">
+                    <label for="setResendFrom">From Address</label>
+                    <input id="setResendFrom" class="input" type="text" placeholder="Leads <leads@yourdomain.com>" />
+                  </div>
+                </div>
+
+                <!-- SMTP fields -->
+                <div id="smtpFields" style="display:none">
+                  <div class="field-grid" style="display:grid;grid-template-columns:2fr 1fr;gap:8px">
+                    <div class="field">
+                      <label for="setSmtpHost">SMTP Host</label>
+                      <input id="setSmtpHost" class="input input-mono" type="text" placeholder="smtp.sendgrid.net" />
+                    </div>
+                    <div class="field">
+                      <label for="setSmtpPort">Port</label>
+                      <input id="setSmtpPort" class="input input-mono" type="number" placeholder="587" />
+                    </div>
+                  </div>
+                  <div class="field">
+                    <label for="setSmtpUser">SMTP Username</label>
+                    <input id="setSmtpUser" class="input" type="text" placeholder="apikey" />
+                  </div>
+                  <div class="field">
+                    <label for="setSmtpPass">SMTP Password</label>
+                    <input id="setSmtpPass" class="input" type="password" placeholder="••••••••" />
+                  </div>
+                  <div class="field">
+                    <label for="setSmtpFrom">From Address</label>
+                    <input id="setSmtpFrom" class="input" type="text" placeholder="OpenFunnel <noreply@yourdomain.com>" />
+                  </div>
+                </div>
+
+                <div class="field row-between" style="margin-top:14px">
+                  <div>
+                    <div style="font-weight: 600">Lead Autoresponder Email</div>
+                    <p class="field-hint">Send a personalized welcome/results email to the lead.</p>
+                  </div>
+                  <label class="switch">
+                    <input id="setAutoresponderEnabled" type="checkbox" />
+                    <span class="switch-track"></span>
+                  </label>
+                </div>
+                <div id="autoresponderFields" style="display:none;margin-top:10px">
+                  <div class="field">
+                    <label for="setAutoresponderSubject">Autoresponder Subject</label>
+                    <input id="setAutoresponderSubject" class="input" type="text" placeholder="Thank you for completing our quiz!" />
+                  </div>
+                  <div class="field">
+                    <label for="setAutoresponderBody">Autoresponder Message (supports {{name}})</label>
+                    <textarea id="setAutoresponderBody" class="textarea" rows="3" placeholder="Hi {{name}},\n\nThank you for reaching out! We received your responses…"></textarea>
+                  </div>
+                </div>
+
+                <div style="margin-top:16px;display:flex;gap:8px">
+                  <button id="saveEmailBtn" class="btn btn-primary" style="flex:1">Save Email Settings</button>
+                  <button id="testEmailBtn" class="btn btn-ghost">Send Test Email</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
               <div class="card-head"><span class="card-title">AI & Global Injection</span></div>
               <div class="card-pad">
                 <div class="field">
@@ -685,6 +787,9 @@
               <select id="thPreset" class="select">
                 <option value="">Custom</option>
                 <option value="midnight-glass">Midnight glass</option>
+                <option value="emerald-glow">Emerald performance</option>
+                <option value="violet-pulse">Violet agency luxe</option>
+                <option value="sunset-coral">Sunset coral light</option>
                 <option value="saas-gradient">Indigo pop</option>
                 <option value="clean-light">Clean light</option>
                 <option value="warm-editorial">Warm editorial</option>

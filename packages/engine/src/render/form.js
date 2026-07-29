@@ -31,10 +31,13 @@ export function renderForm(step, ctrl) {
   /** @type {Record<string, HTMLElement>} */
   const errorEls = {};
 
+  /** @type {HTMLElement | null} */
+  let otpCard = null;
+
   const form = el("form", {
     class: "of-form",
     novalidate: true,
-    onsubmit: (/** @type {Event} */ e) => {
+    onsubmit: async (/** @type {Event} */ e) => {
       e.preventDefault();
       const errors = validateForm(step.fields, values);
       let firstBad = /** @type {HTMLElement | null} */ (null);
@@ -50,6 +53,82 @@ export function renderForm(step, ctrl) {
         firstBad?.focus();
         return;
       }
+
+      // Check if real-time email OTP verification is enabled for this step
+      const targetEmail = String(values.email || "").trim();
+      if (step.verifyEmail && targetEmail && !values.email_verified) {
+        const ctaBtn = form.querySelector(".of-cta");
+        if (ctaBtn) ctaBtn.setAttribute("disabled", "true");
+
+        try {
+          await fetch("/api/otp/send", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ email: targetEmail }),
+          });
+
+          // Render 4-digit OTP Verification UI overlay
+          if (!otpCard) {
+            let otpVal = "";
+            const otpError = el("span", { class: "of-field-error", role: "alert" });
+
+            const otpInput = el("input", {
+              type: "text",
+              class: "of-input of-otp-input",
+              placeholder: "1234",
+              maxLength: 6,
+              inputmode: "numeric",
+              autocomplete: "one-time-code",
+              oninput: (/** @type {Event} */ ev) => {
+                otpVal = /** @type {HTMLInputElement} */ (ev.target).value.trim();
+                otpError.textContent = "";
+              },
+            });
+
+            otpCard = el("div", { class: "of-otp-card" }, [
+              el("div", { class: "of-otp-title", text: "✉️ Verify your email" }),
+              el("div", { class: "of-otp-sub", text: `We sent a 4-digit verification code to ${targetEmail}` }),
+              el("label", { class: "of-field", style: { marginTop: "12px" } }, [otpInput, otpError]),
+              el("div", { class: "of-actions", style: { display: "flex", gap: "8px" } }, [
+                el("button", {
+                  type: "button",
+                  class: "of-cta",
+                  text: "Verify & Submit",
+                  onclick: async () => {
+                    if (!otpVal || otpVal.length < 4) {
+                      otpError.textContent = "Please enter the 4-digit code";
+                      return;
+                    }
+                    try {
+                      const vRes = await fetch("/api/otp/verify", {
+                        method: "POST",
+                        headers: { "content-type": "application/json" },
+                        body: JSON.stringify({ email: targetEmail, code: otpVal }),
+                      });
+                      const vData = await vRes.json();
+                      if (vData.ok || vData.valid) {
+                        values.email_verified = true;
+                        ctrl.submitForm(values);
+                      } else {
+                        otpError.textContent = "Incorrect verification code. Please try again.";
+                      }
+                    } catch {
+                      otpError.textContent = "Verification check failed.";
+                    }
+                  },
+                }),
+              ]),
+            ]);
+            form.innerHTML = "";
+            form.appendChild(otpCard);
+            setTimeout(() => otpInput.focus(), 100);
+            return;
+          }
+        } catch {
+          // If server fails or offline, fall through safely
+        }
+      }
+
       ctrl.submitForm(values);
     },
   });

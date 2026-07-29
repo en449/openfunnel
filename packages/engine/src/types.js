@@ -156,6 +156,8 @@
  * @property {ContentBlock[]} [blocks] Rich content rendered above the interaction.
  * @property {boolean} [progress]      Per-step override of the progress bar.
  * @property {string|null} [next]      Explicit next step id. `null` = end funnel.
+ * @property {string} [image]          Hero image rendered above the headline.
+ * @property {string} [heroImage]      Alias for `image`; `image` wins if both set.
  */
 
 /**
@@ -202,6 +204,7 @@
  *   fields: FormField[],
  *   submitLabel?: string,
  *   consent?: string,
+ *   verifyEmail?: boolean,
  * }} FormStep
  */
 

@@ -27,7 +27,7 @@ beforeAll(async () => {
   base = `http://localhost:${port}`;
 
   proc = Bun.spawn(["bun", SERVER], {
-    env: { ...process.env, PORT: String(port), DATA_DIR: dataDir },
+    env: { ...process.env, PORT: String(port), DATA_DIR: dataDir, FUNNELS_DIR: resolve(import.meta.dir, "../../../examples") },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -154,6 +154,28 @@ describe("ingest", () => {
     const res = await fetch(`${base}/api/events`, { method: "OPTIONS" });
     expect(res.status).toBe(204);
     expect(res.headers.get("access-control-allow-origin")).toBe("*");
+  });
+
+  test("sends and verifies email OTP codes to block fake leads", async () => {
+    const sendRes = await fetch(`${base}/api/otp/send`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "lead@example.com" }),
+    });
+    expect(sendRes.status).toBe(200);
+    const sendData = await sendRes.json();
+    expect(sendData.ok).toBe(true);
+
+    const code = sendData.code;
+    if (code) {
+      const vRes = await fetch(`${base}/api/otp/verify`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: "lead@example.com", code }),
+      });
+      expect(vRes.status).toBe(200);
+      expect((await vRes.json()).ok).toBe(true);
+    }
   });
 });
 

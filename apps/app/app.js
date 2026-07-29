@@ -716,6 +716,11 @@ function renderInspector() {
         <label for="insSubtext">Supporting text</label>
         <textarea id="insSubtext" class="textarea" rows="2" placeholder="Optional">${esc(step.subtext || "")}</textarea>
       </div>
+      <div class="field">
+        <label for="insHeroImage">Step Hero Photo / Media URL</label>
+        <input id="insHeroImage" class="input input-mono" type="text" value="${esc(step.image || step.heroImage || "")}" placeholder="https://images.unsplash.com/photo-…" />
+        <p class="field-hint">Optional hero photo displayed at the top of this step.</p>
+      </div>
       <button id="rewriteBtn" class="btn btn-sm">${icon("ai", 13)} Suggest headlines</button>
     </div>
 
@@ -757,7 +762,10 @@ function renderStepBody(step) {
           </div>
           <div class="repeat-grid">
             <input class="input" type="text" data-opt-label="${i}" value="${esc(opt.label || "")}" placeholder="Label" />
-            <input class="input" type="text" data-opt-icon="${i}" value="${esc(opt.icon || "")}" placeholder="Icon" />
+            <input class="input" type="text" data-opt-icon="${i}" value="${esc(opt.icon || "")}" placeholder="Icon (emoji)" />
+          </div>
+          <div class="repeat-row">
+            <input class="input input-mono" type="text" data-opt-image="${i}" value="${esc(opt.image || "")}" placeholder="Image URL (optional photo card)" />
           </div>
           <div class="repeat-row">
             <input class="input input-mono" type="text" data-opt-next="${i}" value="${esc(opt.next || "")}" placeholder="Branch to step ID" list="stepIds" />
@@ -810,6 +818,16 @@ function renderStepBody(step) {
         <button id="addFieldBtn" class="btn btn-ghost btn-sm">${icon("plus", 12)} Add</button>
       </div>
       ${fields || `<p class="field-hint">No fields yet.</p>`}
+      <div class="field row-between" style="margin-top:14px;padding-top:10px;border-top:1px solid var(--line)">
+        <div>
+          <div style="font-weight:600">Email Verification (Anti-Spam OTP)</div>
+          <p class="field-hint">Send a 4-digit code to prospect's email to block fake leads.</p>
+        </div>
+        <label class="switch">
+          <input id="insVerifyEmail" type="checkbox"${step.verifyEmail ? " checked" : ""} />
+          <span class="switch-track"></span>
+        </label>
+      </div>
     </div>`;
   }
 
@@ -870,6 +888,20 @@ function bindInspector(step) {
 
   const inspector = $("inspector");
 
+  if ($("insHeroImage")) {
+    $("insHeroImage").addEventListener("input", (e) => {
+      step.image = e.target.value.trim() || undefined;
+      onEdit();
+    });
+  }
+
+  if ($("insVerifyEmail")) {
+    $("insVerifyEmail").addEventListener("change", (e) => {
+      step.verifyEmail = e.target.checked || undefined;
+      onEdit();
+    });
+  }
+
   inspector.addEventListener("input", (e) => {
     const t = e.target;
     const opts = step.options || [];
@@ -877,6 +909,7 @@ function bindInspector(step) {
 
     if (t.dataset.optLabel !== undefined) opts[+t.dataset.optLabel].label = t.value;
     else if (t.dataset.optIcon !== undefined) opts[+t.dataset.optIcon].icon = t.value || undefined;
+    else if (t.dataset.optImage !== undefined) opts[+t.dataset.optImage].image = t.value.trim() || undefined;
     else if (t.dataset.optNext !== undefined) {
       opts[+t.dataset.optNext].next = t.value.trim() || undefined;
       renderSpine();
@@ -1496,6 +1529,7 @@ function loadSettings() {
   });
   if ($("setGdpr")) $("setGdpr").checked = localStorage.getItem("of.gdpr.enabled") === "true";
   if ($("setBranding")) $("setBranding").checked = localStorage.getItem("of.branding.hidden") === "true";
+  loadEmailSettings();
 }
 
 function saveSettings() {
@@ -1505,7 +1539,107 @@ function saveSettings() {
   });
   if ($("setGdpr")) localStorage.setItem("of.gdpr.enabled", String($("setGdpr").checked));
   if ($("setBranding")) localStorage.setItem("of.branding.hidden", String($("setBranding").checked));
-  toast("Settings saved");
+  saveEmailSettingsFromUI();
+}
+
+async function loadEmailSettings() {
+  try {
+    const res = await fetch("/api/admin/email-settings");
+    if (!res.ok) return;
+    const data = await res.json();
+    const cfg = data.settings || {};
+
+    if ($("setNotifyEmail")) $("setNotifyEmail").value = cfg.notifyEmail || "";
+    if ($("setEmailProvider")) $("setEmailProvider").value = cfg.provider || "resend";
+    if ($("setResendApiKey")) $("setResendApiKey").value = cfg.resendApiKey || "";
+    if ($("setResendFrom")) $("setResendFrom").value = cfg.resendFrom || "";
+    if ($("setSmtpHost")) $("setSmtpHost").value = cfg.smtpHost || "";
+    if ($("setSmtpPort")) $("setSmtpPort").value = cfg.smtpPort || 587;
+    if ($("setSmtpUser")) $("setSmtpUser").value = cfg.smtpUser || "";
+    if ($("setSmtpPass")) $("setSmtpPass").value = cfg.smtpPass || "";
+    if ($("setSmtpFrom")) $("setSmtpFrom").value = cfg.smtpFrom || "";
+    if ($("setAutoresponderEnabled")) $("setAutoresponderEnabled").checked = Boolean(cfg.autoresponderEnabled);
+    if ($("setAutoresponderSubject")) $("setAutoresponderSubject").value = cfg.autoresponderSubject || "";
+    if ($("setAutoresponderBody")) $("setAutoresponderBody").value = cfg.autoresponderBody || "";
+
+    toggleEmailProviderFields(cfg.provider || "resend");
+    toggleAutoresponderFields(Boolean(cfg.autoresponderEnabled));
+  } catch (err) {
+    console.warn("Failed to load email settings:", err);
+  }
+}
+
+function toggleEmailProviderFields(provider) {
+  if ($("resendFields")) $("resendFields").style.display = provider === "resend" ? "block" : "none";
+  if ($("smtpFields")) $("smtpFields").style.display = provider === "smtp" ? "block" : "none";
+}
+
+function toggleAutoresponderFields(enabled) {
+  if ($("autoresponderFields")) $("autoresponderFields").style.display = enabled ? "block" : "none";
+}
+
+async function saveEmailSettingsFromUI() {
+  const payload = {
+    notifyEmail: $("setNotifyEmail")?.value || "",
+    provider: $("setEmailProvider")?.value || "resend",
+    resendApiKey: $("setResendApiKey")?.value || "",
+    resendFrom: $("setResendFrom")?.value || "",
+    smtpHost: $("setSmtpHost")?.value || "",
+    smtpPort: Number($("setSmtpPort")?.value || 587),
+    smtpUser: $("setSmtpUser")?.value || "",
+    smtpPass: $("setSmtpPass")?.value || "",
+    smtpFrom: $("setSmtpFrom")?.value || "",
+    autoresponderEnabled: $("setAutoresponderEnabled")?.checked || false,
+    autoresponderSubject: $("setAutoresponderSubject")?.value || "",
+    autoresponderBody: $("setAutoresponderBody")?.value || "",
+  };
+
+  try {
+    const res = await fetch("/api/admin/email-settings", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (res.ok) toast("Email settings saved successfully!");
+    else toast("Failed to save email settings", "error");
+  } catch (err) {
+    toast("Error saving email settings", "error");
+  }
+}
+
+async function sendTestEmailFromUI() {
+  const email = $("setNotifyEmail")?.value;
+  if (!email) {
+    toast("Enter an Admin Notification Email first", "error");
+    return;
+  }
+
+  const btn = $("testEmailBtn");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Sending…";
+  }
+
+  try {
+    const res = await fetch("/api/admin/test-email", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      toast(`Test email sent! (${data.provider})`);
+    } else {
+      toast(`Email failed: ${data.error || "unknown"}`, "error");
+    }
+  } catch (err) {
+    toast("Failed to send test email", "error");
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Send Test Email";
+    }
+  }
 }
 
 /* ========================================================================== *
@@ -1750,6 +1884,10 @@ function bindModals() {
   });
 
   $("saveSettingsBtn").addEventListener("click", saveSettings);
+  $("setEmailProvider")?.addEventListener("change", (e) => toggleEmailProviderFields(e.target.value));
+  $("setAutoresponderEnabled")?.addEventListener("change", (e) => toggleAutoresponderFields(e.target.checked));
+  $("saveEmailBtn")?.addEventListener("click", saveEmailSettingsFromUI);
+  $("testEmailBtn")?.addEventListener("click", sendTestEmailFromUI);
 }
 
 function bindKeys() {

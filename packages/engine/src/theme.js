@@ -92,6 +92,45 @@ export const THEME_PRESETS = {
     radius: "16px",
     font: "'Plus Jakarta Sans', system-ui, sans-serif",
     mode: "light"
+  },
+  "emerald-glow": {
+    presetName: "Emerald Performance",
+    primary: "#059669",
+    primaryText: "#ffffff",
+    bg: "#022c22",
+    surface: "#064e3b",
+    text: "#ecfdf5",
+    muted: "#a7f3d0",
+    border: "rgba(167, 243, 208, 0.2)",
+    radius: "18px",
+    font: "'Plus Jakarta Sans', system-ui, sans-serif",
+    mode: "dark"
+  },
+  "violet-pulse": {
+    presetName: "Violet Agency Luxe",
+    primary: "#7c3aed",
+    primaryText: "#ffffff",
+    bg: "#0f0728",
+    surface: "#1e1045",
+    text: "#f5f3ff",
+    muted: "#ddd6fe",
+    border: "rgba(221, 214, 254, 0.2)",
+    radius: "20px",
+    font: "'Inter', system-ui, sans-serif",
+    mode: "dark"
+  },
+  "sunset-coral": {
+    presetName: "Sunset Coral Light",
+    primary: "#f43f5e",
+    primaryText: "#ffffff",
+    bg: "#fff1f2",
+    surface: "#ffffff",
+    text: "#1e293b",
+    muted: "#64748b",
+    border: "#ffe4e6",
+    radius: "16px",
+    font: "'Plus Jakarta Sans', system-ui, sans-serif",
+    mode: "light"
   }
 };
 

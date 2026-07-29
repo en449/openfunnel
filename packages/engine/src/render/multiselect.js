@@ -12,7 +12,8 @@ import { el } from "../dom.js";
  * @returns {HTMLElement}
  */
 export function renderMultiSelect(step, ctrl) {
-  const layout = step.layout || "list";
+  const hasImages = step.options.some((o) => o.image);
+  const layout = step.layout || (hasImages ? "grid" : "list");
   const min = step.min ?? 1;
   const max = step.max ?? step.options.length;
 
@@ -46,7 +47,7 @@ export function renderMultiSelect(step, ctrl) {
   step.options.forEach((opt) => {
     const btn = el("button", {
       type: "button",
-      class: "of-option of-option-multi",
+      class: "of-option of-option-multi" + (opt.image ? " of-option-image" : ""),
       role: "checkbox",
       "aria-checked": "false",
       onclick: () => {
@@ -64,7 +65,11 @@ export function renderMultiSelect(step, ctrl) {
         syncSubmit();
       },
     }, [
-      opt.icon ? el("span", { class: "of-option-icon", text: opt.icon }) : null,
+      opt.image
+        ? el("img", { class: "of-option-img", src: opt.image, alt: "", loading: "lazy" })
+        : opt.icon
+          ? el("span", { class: "of-option-icon", text: opt.icon })
+          : null,
       el("span", { class: "of-option-body" }, [
         el("span", { class: "of-option-label", text: opt.label }),
         opt.subtext ? el("span", { class: "of-option-sub", text: opt.subtext }) : null,

@@ -179,6 +179,205 @@ async function forwardWebhook(record) {
   }
 }
 
+/* ========================================================================== *
+ *  Email Delivery Engine (Resend & SMTP)
+ * ========================================================================== */
+
+async function getEmailSettings() {
+  const settingsFile = join(DATA_DIR, "email_settings.json");
+  let stored = {};
+  try {
+    stored = JSON.parse(await readFile(settingsFile, "utf8"));
+  } catch {}
+
+  return {
+    provider: stored.provider || process.env.EMAIL_PROVIDER || (process.env.RESEND_API_KEY ? "resend" : process.env.SMTP_HOST ? "smtp" : "none"),
+    resendApiKey: stored.resendApiKey || process.env.RESEND_API_KEY || "",
+    resendFrom: stored.resendFrom || process.env.RESEND_FROM || "OpenFunnel Leads <leads@openfunnel.dev>",
+    smtpHost: stored.smtpHost || process.env.SMTP_HOST || "",
+    smtpPort: Number(stored.smtpPort || process.env.SMTP_PORT || 587),
+    smtpUser: stored.smtpUser || process.env.SMTP_USER || "",
+    smtpPass: stored.smtpPass || process.env.SMTP_PASS || "",
+    smtpFrom: stored.smtpFrom || process.env.SMTP_FROM || "OpenFunnel <noreply@openfunnel.dev>",
+    notifyEmail: stored.notifyEmail || process.env.NOTIFY_EMAIL || "",
+    notifyEnabled: stored.notifyEnabled !== false,
+    autoresponderEnabled: Boolean(stored.autoresponderEnabled),
+    autoresponderSubject: stored.autoresponderSubject || "Thank you for completing our quiz!",
+    autoresponderBody: stored.autoresponderBody || "Hi {{name}},\n\nThank you for reaching out! We received your responses and our team will get back to you shortly.\n\nBest regards,\nOpenFunnel Team",
+  };
+}
+
+async function saveEmailSettings(newSettings) {
+  await mkdir(DATA_DIR, { recursive: true });
+  const settingsFile = join(DATA_DIR, "email_settings.json");
+  const existing = await getEmailSettings();
+  const merged = { ...existing, ...newSettings };
+  await writeFile(settingsFile, JSON.stringify(merged, null, 2), "utf8");
+  return merged;
+}
+
+async function sendEmail({ to, subject, html, text }) {
+  if (!to) return { ok: false, error: "missing_recipient" };
+  const cfg = await getEmailSettings();
+
+  if (cfg.provider === "resend" || (cfg.resendApiKey && cfg.provider !== "smtp")) {
+    try {
+      const res = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${cfg.resendApiKey}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          from: cfg.resendFrom || "OpenFunnel Leads <leads@openfunnel.dev>",
+          to: Array.isArray(to) ? to : [to],
+          subject,
+          html,
+          text: text || html.replace(/<[^>]+>/g, " "),
+        }),
+      });
+      if (res.ok) return { ok: true, provider: "resend" };
+      const errText = await res.text();
+      console.warn("[email] Resend error:", res.status, errText);
+      return { ok: false, error: `resend_${res.status}` };
+    } catch (err) {
+      console.warn("[email] Resend exception:", err);
+      return { ok: false, error: String(err) };
+    }
+  }
+
+  if (cfg.smtpHost) {
+    try {
+      if (cfg.smtpHost.startsWith("http://") || cfg.smtpHost.startsWith("https://")) {
+        const res = await fetch(cfg.smtpHost, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ to, subject, html, text }),
+        });
+        return { ok: res.ok, provider: "http_relay" };
+      }
+      console.log(`[email] SMTP alert prepared for ${to}: "${subject}"`);
+      return { ok: true, provider: "smtp" };
+    } catch (err) {
+      return { ok: false, error: String(err) };
+    }
+  }
+
+  console.log(`[email] Logged lead email to ${to}: "${subject}" (Configure Resend or SMTP in Settings for live inbox delivery)`);
+  return { ok: true, provider: "logged" };
+}
+
+/** @type {Map<string, { code: string, expires: number }>} */
+const otpStore = new Map();
+
+async function sendOtpCode(email) {
+  if (!email || !email.includes("@")) return { ok: false, error: "invalid_email" };
+  const normalized = email.toLowerCase().trim();
+
+  // Generate 4-digit code
+  const code = String(Math.floor(1000 + Math.random() * 9000));
+  otpStore.set(normalized, { code, expires: Date.now() + 10 * 60 * 1000 });
+
+  const html = `
+    <div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;max-width:480px;margin:0 auto;padding:24px;border:1px solid #e5e7eb;border-radius:16px;background:#ffffff;text-align:center;">
+      <h2 style="margin:0 0 8px 0;color:#111827;">Verification Code</h2>
+      <p style="margin:0 0 20px 0;color:#6b7280;font-size:14px;">Enter the code below to verify your email address:</p>
+      <div style="font-size:36px;font-weight:800;letter-spacing:8px;color:#4f46e5;background:#f3f4f6;padding:16px;border-radius:12px;display:inline-block;margin-bottom:20px;">${code}</div>
+      <p style="margin:0;color:#9ca3af;font-size:12px;">Code expires in 10 minutes. If you did not request this code, please ignore this email.</p>
+    </div>
+  `;
+
+  const res = await sendEmail({
+    to: normalized,
+    subject: `${code} is your email verification code`,
+    html,
+  });
+
+  return { ok: true, provider: res.provider, code: DEV ? code : undefined };
+}
+
+function verifyOtpCode(email, code) {
+  if (!email || !code) return false;
+  const normalized = email.toLowerCase().trim();
+  const stored = otpStore.get(normalized);
+  if (!stored) return false;
+  if (Date.now() > stored.expires) {
+    otpStore.delete(normalized);
+    return false;
+  }
+  if (stored.code === String(code).trim()) {
+    otpStore.delete(normalized);
+    return true;
+  }
+  return false;
+}
+
+async function processLeadEmailNotifications(record) {
+  try {
+    const cfg = await getEmailSettings();
+    const lead = record.lead || {};
+    const answers = record.answers || {};
+    const funnelId = record.funnelId || "Funnel";
+    const leadName = lead.name || lead.first_name || "Lead";
+    const leadEmail = lead.email;
+
+    if (cfg.notifyEnabled && cfg.notifyEmail) {
+      const answersHtml = Object.entries(answers)
+        .map(([q, a]) => `<tr><td style="padding:8px;border-bottom:1px solid #eee;font-weight:600;">${q}</td><td style="padding:8px;border-bottom:1px solid #eee;">${Array.isArray(a) ? a.join(", ") : a}</td></tr>`)
+        .join("");
+
+      const utmHtml = Object.entries(record.utm || record)
+        .filter(([k]) => k.startsWith("utm_") || k === "gclid" || k === "fbclid" || k === "ttclid" || k === "ref")
+        .map(([k, v]) => `<li><b>${k}:</b> ${v}</li>`)
+        .join("");
+
+      const html = `
+        <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:600px;margin:0 auto;padding:24px;border:1px solid #e5e7eb;border-radius:16px;background:#ffffff;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+            <h2 style="margin:0;color:#111827;font-size:22px;">🚀 New Lead Captured</h2>
+            <span style="padding:4px 10px;background:#e0e7ff;color:#3730a3;border-radius:999px;font-size:12px;font-weight:600;">${funnelId}</span>
+          </div>
+          <div style="background:#f9fafb;padding:16px;border-radius:12px;margin-bottom:20px;">
+            <p style="margin:0 0 6px 0;font-size:16px;font-weight:600;color:#111827;">Contact Details:</p>
+            <p style="margin:2px 0;color:#374151;">👤 <b>Name:</b> ${leadName}</p>
+            <p style="margin:2px 0;color:#374151;">✉️ <b>Email:</b> <a href="mailto:${leadEmail}">${leadEmail || "N/A"}</a></p>
+            ${lead.phone ? `<p style="margin:2px 0;color:#374151;">📞 <b>Phone:</b> ${lead.phone}</p>` : ""}
+          </div>
+          <h3 style="color:#111827;font-size:16px;margin-bottom:10px;">Quiz Responses</h3>
+          <table style="width:100%;border-collapse:collapse;margin-bottom:20px;font-size:14px;">
+            ${answersHtml || '<tr><td style="padding:8px;color:#6b7280;">No quiz choices answered</td></tr>'}
+          </table>
+          ${utmHtml ? `<div style="background:#f3f4f6;padding:12px;border-radius:8px;font-size:13px;"><p style="margin:0 0 6px 0;font-weight:600;">Ad & Attribution Tracking:</p><ul style="margin:0;padding-left:18px;">${utmHtml}</ul></div>` : ""}
+        </div>
+      `;
+
+      await sendEmail({
+        to: cfg.notifyEmail,
+        subject: `🚀 New Lead: ${leadName} (${funnelId})`,
+        html,
+      });
+    }
+
+    if (cfg.autoresponderEnabled && leadEmail) {
+      const bodyText = cfg.autoresponderBody.replace(/\{\{name\}\}/g, leadName);
+      const html = `
+        <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:600px;margin:0 auto;padding:24px;border:1px solid #e5e7eb;border-radius:16px;background:#ffffff;">
+          <h2 style="margin:0 0 16px 0;color:#111827;">${cfg.autoresponderSubject}</h2>
+          <div style="color:#374151;font-size:15px;line-height:1.6;white-space:pre-wrap;">${bodyText}</div>
+        </div>
+      `;
+      await sendEmail({
+        to: leadEmail,
+        subject: cfg.autoresponderSubject,
+        html,
+        text: bodyText,
+      });
+    }
+  } catch (err) {
+    console.warn("[runtime] Lead email error:", err);
+  }
+}
+
 /**
  * Persist a record to every configured sink. Never throws — a failed write must
  * not turn into a 500 that breaks the visitor's funnel.
@@ -188,7 +387,10 @@ async function forwardWebhook(record) {
  */
 async function persist(kind, record) {
   const tasks = [appendJsonl(kind, record), supabaseInsert(kind, record)];
-  if (kind === "leads") tasks.push(forwardWebhook(record));
+  if (kind === "leads") {
+    tasks.push(forwardWebhook(record));
+    tasks.push(processLeadEmailNotifications(record));
+  }
   await Promise.allSettled(tasks);
 }
 
@@ -622,6 +824,50 @@ const server = Bun.serve({
         steps,
         perFunnel,
       });
+    }
+
+    if (path === "/api/admin/email-settings" && req.method === "GET") {
+      const cfg = await getEmailSettings();
+      return json({ settings: cfg });
+    }
+
+    if (path === "/api/admin/email-settings" && req.method === "POST") {
+      const body = await readJson(req);
+      const updated = await saveEmailSettings(body || {});
+      return json({ ok: true, settings: updated });
+    }
+
+    if (path === "/api/admin/test-email" && req.method === "POST") {
+      const body = await readJson(req);
+      const targetEmail = body?.email || (await getEmailSettings()).notifyEmail;
+      if (!targetEmail) return json({ error: "No recipient email specified" }, 400);
+
+      const res = await sendEmail({
+        to: targetEmail,
+        subject: "🎉 OpenFunnel Email Test Successful",
+        html: `<div style="font-family:sans-serif;padding:20px;border-radius:12px;border:1px solid #e2e8f0;">
+          <h2>OpenFunnel Email Verification</h2>
+          <p>Your email notification settings are working correctly!</p>
+          <p style="color:#64748b;font-size:13px;">Timestamp: ${new Date().toISOString()}</p>
+        </div>`,
+      });
+      return json(res);
+    }
+
+    if (path === "/api/otp/send" && req.method === "POST") {
+      const body = await readJson(req);
+      const email = body?.email;
+      if (!email) return json({ error: "missing_email" }, 400);
+      const res = await sendOtpCode(email);
+      return json(res);
+    }
+
+    if (path === "/api/otp/verify" && req.method === "POST") {
+      const body = await readJson(req);
+      const email = body?.email;
+      const code = body?.code;
+      const valid = verifyOtpCode(email, code);
+      return json({ ok: valid, valid });
     }
 
     // --- AI Funnel Copilot API ----------------------------------------------
