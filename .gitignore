@@ -4,24 +4,37 @@ out/
 dist/
 build/
 coverage/
+*.tsbuildinfo
 
-# runtime lead/event storage (JSONL sink)
+# runtime lead/event storage (JSONL sink) — contains real lead PII
 .data/
 .tmp/
 
 # env / secrets
-.env
-.env.local
-.env*.local
+# Broad by design: this project reads SUPABASE_SERVICE_ROLE_KEY,
+# META_CAPI_ACCESS_TOKEN and OPENAI_API_KEY from the environment, so every
+# .env variant stays out except the checked-in template.
+.env*
 !.env.example
+*.pem
 
 # supabase local
 supabase/.branches/
 supabase/.temp/
 
+# scratch funnels written by the console into FUNNELS_DIR (defaults to
+# examples/). `createFunnel` emits funnel-<base36>.json and the duplicate
+# action emits <slug>-copy-<base36>.json — neither belongs in git. The
+# hand-written templates (fitness, lead-gen, real-estate) are unaffected.
+examples/funnel-*.json
+examples/*-copy-*.json
+
 # os / editor
 .DS_Store
+._*
+Thumbs.db
 *.log
+*.swp
 .vscode/
 .idea/
 .claude/
