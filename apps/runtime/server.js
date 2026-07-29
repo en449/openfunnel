@@ -151,6 +151,30 @@ async function supabaseInsert(table, row) {
 }
 
 /**
+ * Forward a captured lead to a Webhook URL (Zapier, Make, GoHighLevel, HubSpot, CRM).
+ *
+ * @param {Record<string, unknown>} record
+ */
+async function forwardWebhook(record) {
+  const webhookUrl =
+    process.env.WEBHOOK_URL ||
+    process.env.ZAPIER_WEBHOOK_URL ||
+    record.webhookUrl ||
+    record.meta?.webhookUrl;
+  if (!webhookUrl) return;
+  try {
+    const res = await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(record),
+    });
+    if (!res.ok) console.warn(`[runtime] webhook dispatch HTTP ${res.status}`);
+  } catch (err) {
+    console.warn(`[runtime] webhook error:`, err);
+  }
+}
+
+/**
  * Persist a record to every configured sink. Never throws — a failed write must
  * not turn into a 500 that breaks the visitor's funnel.
  *
@@ -158,7 +182,9 @@ async function supabaseInsert(table, row) {
  * @param {Record<string, unknown>} record
  */
 async function persist(kind, record) {
-  await Promise.allSettled([appendJsonl(kind, record), supabaseInsert(kind, record)]);
+  const tasks = [appendJsonl(kind, record), supabaseInsert(kind, record)];
+  if (kind === "leads") tasks.push(forwardWebhook(record));
+  await Promise.allSettled(tasks);
 }
 
 /* ========================================================================== *

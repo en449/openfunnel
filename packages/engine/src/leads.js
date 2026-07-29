@@ -9,6 +9,32 @@
  * fall back to `fetch(..., { keepalive: true })`.
  */
 
+function getUtmParams() {
+  if (typeof location === "undefined" || !location.search) return {};
+  try {
+    const params = new URLSearchParams(location.search);
+    const utm = {};
+    const keys = [
+      "utm_source",
+      "utm_medium",
+      "utm_campaign",
+      "utm_term",
+      "utm_content",
+      "gclid",
+      "fbclid",
+      "ttclid",
+      "ref",
+    ];
+    for (const key of keys) {
+      const val = params.get(key);
+      if (val) utm[key] = val;
+    }
+    return utm;
+  } catch {
+    return {};
+  }
+}
+
 /**
  * POST a captured lead to your endpoint (Supabase edge function by default).
  *
@@ -27,6 +53,7 @@ export async function submitLead(lead, answers, ctx = {}) {
     meta: {
       url: typeof location !== "undefined" ? location.href : undefined,
       referrer: typeof document !== "undefined" ? document.referrer : undefined,
+      utm: getUtmParams(),
       ...ctx.meta,
     },
     ts: Date.now(),

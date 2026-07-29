@@ -1061,18 +1061,43 @@ function exportCsv() {
   }
 
   const cell = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-  const headers = ["captured_at", "funnel", "name", "email", "phone", "answers", "ip"];
-  const rows = leads.map((l) =>
-    [
+  const headers = [
+    "captured_at",
+    "funnel",
+    "name",
+    "email",
+    "phone",
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+    "utm_term",
+    "utm_content",
+    "gclid",
+    "fbclid",
+    "answers",
+    "referrer",
+    "ip",
+  ];
+  const rows = leads.map((l) => {
+    const utm = l.meta?.utm || l.utm || {};
+    return [
       l.received_at || "",
       l.funnelId || "",
       l.lead?.name || "",
       l.lead?.email || "",
       l.lead?.phone || "",
+      utm.utm_source || "",
+      utm.utm_medium || "",
+      utm.utm_campaign || "",
+      utm.utm_term || "",
+      utm.utm_content || "",
+      utm.gclid || "",
+      utm.fbclid || "",
       JSON.stringify(l.answers || {}),
+      l.referrer || l.meta?.referrer || "",
       l.ip || "",
-    ].map(cell).join(",")
-  );
+    ].map(cell).join(",");
+  });
 
   const blob = new Blob([[headers.join(","), ...rows].join("\n")], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
