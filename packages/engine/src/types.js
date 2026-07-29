@@ -116,7 +116,15 @@
  */
 
 /**
- * @typedef {ImageBlock|VideoBlock|TextBlock|ListBlock|ReviewsBlock|CountdownBlock|TrustBlock|SpacerBlock} ContentBlock
+ * @typedef {Object} CalculatorBlock
+ * @property {"calculator"} type
+ * @property {string} formula      Formula string (e.g., "{{q1_val}} * 50 + 100").
+ * @property {string} [label]      Label text above calculated amount.
+ * @property {string} [currency]   Currency symbol (e.g. "$").
+ */
+
+/**
+ * @typedef {ImageBlock|VideoBlock|TextBlock|ListBlock|ReviewsBlock|CountdownBlock|TrustBlock|SpacerBlock|CalculatorBlock} ContentBlock
  */
 
 /* ========================================================================== *
@@ -124,7 +132,7 @@
  * ========================================================================== */
 
 /**
- * @typedef {"text"|"name"|"email"|"tel"|"textarea"|"select"|"date"|"number"|"file"} FieldType
+ * @typedef {"text"|"name"|"email"|"tel"|"textarea"|"select"|"date"|"number"|"file"|"address"|"calculation"} FieldType
  */
 
 /**

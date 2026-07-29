@@ -519,6 +519,17 @@ const OTP_TTL_MS = 10 * 60 * 1000;
 const OTP_MAX_ATTEMPTS = 5;
 const VERIFIED_TTL_MS = 30 * 60 * 1000;
 
+/**
+ * Drop expired entries. Both maps otherwise only shrink when a key happens to
+ * be read again, so addresses that are never verified would accumulate for the
+ * life of the process.
+ */
+function sweepExpired() {
+  const now = Date.now();
+  for (const [key, entry] of otpStore) if (now > entry.expires) otpStore.delete(key);
+  for (const [key, until] of verifiedEmails) if (now > until) verifiedEmails.delete(key);
+}
+
 async function sendOtpCode(email) {
   if (!email || !EMAIL_RE.test(String(email).trim())) return { ok: false, error: "invalid_email" };
   const normalized = String(email).toLowerCase().trim();
@@ -527,6 +538,7 @@ async function sendOtpCode(email) {
   // which would let an attacker derive a victim's code instead of guessing it.
   const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
   otpStore.set(normalized, { code, expires: Date.now() + OTP_TTL_MS, attempts: 0 });
+  sweepExpired();
 
   const html = `
     <div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;max-width:480px;margin:0 auto;padding:24px;border:1px solid #e5e7eb;border-radius:16px;background:#ffffff;text-align:center;">

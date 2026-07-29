@@ -1222,7 +1222,15 @@ function exportCsv() {
     return;
   }
 
-  const cell = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  // Lead values are whatever a stranger typed into a form. Excel and Sheets
+  // treat a leading =, +, - or @ as a formula, so an exported name field like
+  // `=HYPERLINK("http://evil","Invoice")` runs against whoever opens the file.
+  // Prefix those with a quote so they stay text. (OWASP CSV injection.)
+  const cell = (v) => {
+    const raw = String(v ?? "");
+    const safe = /^[=+\-@\t\r]/.test(raw) ? `'${raw}` : raw;
+    return `"${safe.replace(/"/g, '""')}"`;
+  };
   const headers = [
     "captured_at",
     "funnel",
