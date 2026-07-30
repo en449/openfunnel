@@ -310,6 +310,9 @@ front does not accidentally grant access.
 - **Email verification that actually verifies**: six-digit codes from a CSPRNG, five attempts, ten-minute expiry, never returned to the browser — and the server re-derives `email_verified` rather than believing the client.
 - **Abuse limits**: the ingest, OTP and mail endpoints are rate-limited per address and per caller, and outbound mail additionally passes a global hourly ceiling (`MAIL_MAX_PER_HOUR`) — the per-caller key comes from `x-forwarded-for`, which a caller can rotate, so it cannot be the only bound.
 - **The console's APIs refuse cross-site browser requests**: privileged routes reject a cross-site `Origin`/`Sec-Fetch-Site` before authenticating, and CORS is scoped to the public ingest paths only. Without this, a page you merely visit could drive the console on a default local install, where the admin gate trusts loopback.
+- **The console cannot be framed**: `X-Frame-Options: DENY` plus `frame-ancestors 'none'` on every
+  operator-facing page, so a lure page cannot overlay an invisible console and borrow your session.
+  Funnel pages deliberately stay framable — being embeddable is the point.
 - **Escaped output**: lead data is escaped into notification emails, the lead inbox, and the funnel HTML shell.
 - **Path-traversal validation** (`SLUG_RE` plus an `isInside()` containment check that requires a path separator, so a sibling directory sharing the root's name cannot be reached) on every route that touches a file.
 - **Outbound destinations are filtered**: webhook targets are refused for loopback, private, link-local, CGNAT and cloud-metadata addresses, including IPv4-mapped IPv6 and the decimal/hex IP spellings.

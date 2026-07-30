@@ -1110,6 +1110,20 @@ const MIME = {
  * @param {string} prefix   URL prefix to strip, e.g. "/_app/"
  * @param {string} pathname requested path
  */
+/**
+ * Headers for the operator-facing UIs. These pages hold the admin token in
+ * localStorage and can drive every privileged API, so they must never be
+ * framable: without `DENY`, a page that lures the operator into clicking can
+ * overlay an invisible console and borrow their session. Funnel pages
+ * deliberately do not get this — being embeddable is the point.
+ */
+const CONSOLE_HEADERS = {
+  "x-frame-options": "DENY",
+  "content-security-policy": "frame-ancestors 'none'",
+  "x-content-type-options": "nosniff",
+  "referrer-policy": "strict-origin-when-cross-origin",
+};
+
 async function serveStaticFile(rootDir, prefix, pathname) {
   const rel = decodeURIComponent(pathname.slice(prefix.length));
   const target = normalize(join(rootDir, rel));
@@ -1120,6 +1134,7 @@ async function serveStaticFile(rootDir, prefix, pathname) {
 
   return new Response(file, {
     headers: {
+      ...CONSOLE_HEADERS,
       "content-type": MIME[extname(target)] || "application/octet-stream",
       // The console ships with the server, so it is only cached in production.
       "cache-control": DEV ? "no-store" : "public, max-age=3600",
@@ -1161,10 +1176,29 @@ const json = (body, status = 200, headers = {}) =>
     headers: { "content-type": "application/json; charset=utf-8", ...headers },
   });
 
-const html = (body, status = 200) =>
+/**
+ * Headers every HTML response carries.
+ *
+ * `nosniff` stops a browser from second-guessing a declared content type, and
+ * the referrer policy keeps a funnel URL (which often carries campaign
+ * parameters) from leaking in full to whatever a visitor clicks through to.
+ *
+ * Framing is deliberately NOT blocked here — a funnel is meant to be embedded on
+ * the operator's marketing site, and the builder previews one in an iframe. The
+ * console gets `DENY` separately below; it is the page holding the admin token,
+ * and nothing legitimately frames it.
+ */
+const BASE_HTML_HEADERS = {
+  "content-type": "text/html; charset=utf-8",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff",
+  "referrer-policy": "strict-origin-when-cross-origin",
+};
+
+const html = (body, status = 200, extra = {}) =>
   new Response(body, {
     status,
-    headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+    headers: { ...BASE_HTML_HEADERS, ...extra },
   });
 
 /** Ingest endpoints are called cross-origin from embedded funnels. */
