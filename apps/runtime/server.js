@@ -430,12 +430,6 @@ async function forwardMetaCapi(record) {
 
   const eventName = record.type === "lead" || record.lead ? "Lead" : "PageView";
   const payload = {
-    // The Graph API takes `access_token` as a body parameter, and it must stay
-    // here rather than in the query string: a fetch failure carries the request
-    // URL on `err.path`, so a token in the URL reaches the server log (and any
-    // proxy access log) the first time the call errors. Do not "simplify" this
-    // back into the URL.
-    access_token: capiToken,
     data: [
       {
         event_name: eventName,
@@ -450,15 +444,24 @@ async function forwardMetaCapi(record) {
     ],
   };
 
+  // `access_token` goes in the query string because that is the only form Meta
+  // documents for a JSON payload to this endpoint — an `access_token` key inside
+  // the JSON body, or an `Authorization: Bearer` header, is unverified here and a
+  // silent 400 would disable conversion tracking without anyone noticing.
+  //
+  // That puts a credential in the URL, so the containment is on the logging side
+  // and it is not optional: a fetch rejection carries the full URL on `err.path`,
+  // so this must never log the error object. `errSummary()` exists for exactly
+  // this, and the non-ok branch logs a bare status. Keep it that way.
+  const endpoint = `https://graph.facebook.com/v19.0/${pixelId}/events?access_token=${encodeURIComponent(capiToken)}`;
   try {
-    const res = await fetch(`https://graph.facebook.com/v19.0/${pixelId}/events`, {
+    const res = await fetch(endpoint, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(payload),
     });
     if (!res.ok) console.warn(`[runtime] Meta CAPI dispatch HTTP ${res.status}`);
   } catch (err) {
-    // Summary only — see `errSummary`: the error object carries the request URL.
     console.warn(`[runtime] Meta CAPI error: ${errSummary(err)}`);
   }
 }
