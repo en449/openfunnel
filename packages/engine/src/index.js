@@ -16,6 +16,7 @@ import { Controller } from "./controller.js";
 
 export { Controller };
 export { firePixel, installPixels } from "./analytics.js";
+export { consentRequired, marketingAllowed, readDecision, writeDecision } from "./consent.js";
 export { submitLead, trackEvent } from "./leads.js";
 export { validateField, validateForm } from "./validate.js";
 export { pipe } from "./piping.js";

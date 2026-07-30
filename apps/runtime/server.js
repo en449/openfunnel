@@ -347,6 +347,14 @@ async function forwardMetaCapi(record) {
   if (!pixelId || !capiToken) return;
   if (isPreviewRecord(record)) return; // a preview drag-through is not a conversion
 
+  // Honour the visitor's consent decision. A record with no `consent` field comes
+  // from a funnel that does not use the consent bar, and forwards as before —
+  // enabling the bar is what turns this gate on, so no existing setup breaks.
+  // Anything other than an explicit grant (denied, or still undecided) is not
+  // permission to hand this visitor's IP to Meta.
+  const consent = record.meta?.consent;
+  if (consent && consent !== "granted") return;
+
   const eventName = record.type === "lead" || record.lead ? "Lead" : "PageView";
   const payload = {
     data: [

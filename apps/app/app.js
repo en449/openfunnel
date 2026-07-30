@@ -1594,7 +1594,13 @@ function loadSettings() {
     const el = $(id);
     if (el) el.value = localStorage.getItem(key) ?? fallback;
   });
-  if ($("setGdpr")) $("setGdpr").checked = localStorage.getItem("of.gdpr.enabled") === "true";
+  // Consent lives on the funnel document, not in localStorage: the funnel page is
+  // rendered for visitors from that JSON, so a per-browser value here could never
+  // reach them. Disabled until a funnel is open, since there is nothing to write to.
+  if ($("setGdpr")) {
+    $("setGdpr").checked = Boolean(state.funnel?.consent?.enabled);
+    $("setGdpr").disabled = !state.funnel;
+  }
   if ($("setBranding")) $("setBranding").checked = localStorage.getItem("of.branding.hidden") === "true";
   loadEmailSettings();
 }
@@ -1604,7 +1610,12 @@ function saveSettings() {
     const el = $(id);
     if (el) localStorage.setItem(key, el.value);
   });
-  if ($("setGdpr")) localStorage.setItem("of.gdpr.enabled", String($("setGdpr").checked));
+  if ($("setGdpr") && state.funnel) {
+    const enabled = $("setGdpr").checked;
+    if (enabled) state.funnel.consent = { ...state.funnel.consent, enabled: true };
+    else if (state.funnel.consent) state.funnel.consent.enabled = false;
+    onFunnelEdited(); // still needs a funnel save to reach visitors
+  }
   if ($("setBranding")) localStorage.setItem("of.branding.hidden", String($("setBranding").checked));
   saveEmailSettingsFromUI();
 }

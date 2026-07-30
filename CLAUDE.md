@@ -202,12 +202,16 @@ TODOs, not working features:
 - `integrations.googleAdsId`, `googleAdsLabel`, `linkedinTagId`,
   `pinterestPixelId` — not in the `FunnelIntegrations` typedef and not handled
   by `analytics.js`.
-- `of.globalCode`, `of.notifyEmail`, `of.gdpr.enabled`, `of.currency`,
-  `of.language`, `of.branding.hidden` — stored in localStorage, never read back.
+- `of.globalCode`, `of.notifyEmail`, `of.currency`, `of.language`,
+  `of.branding.hidden` — stored in localStorage, never read back.
   `of.globalCode` is the one to be careful with: it is described in the UI as
   injected into every published funnel, so wiring it means injecting operator
   HTML into the funnel page. Do that server-side from the funnel document, not
   from a per-browser localStorage value.
+  The consent bar used to be in this list as `of.gdpr.enabled`; it now lives on
+  the funnel document as `consent.enabled` and is read by `src/consent.js`. That
+  move is the pattern to copy for the rest: a visitor-facing setting has to be in
+  the funnel JSON, because that is all the funnel page is rendered from.
 - `of.ai.brandVoice` and `of.ai.provider` are saved but never sent;
   `generateFunnel()` still posts a stale `of.ai.tone` key that the settings UI
   no longer writes.

@@ -14,6 +14,7 @@ import { resolveNext } from "./branching.js";
 import { renderStep } from "./render/index.js";
 import { applyTheme } from "./theme.js";
 import { installPixels, firePixel } from "./analytics.js";
+import { buildConsentBar, consentSignal, marketingAllowed } from "./consent.js";
 import { submitLead as sendLead, trackEvent } from "./leads.js";
 import { loadState, saveState, clearState } from "./persist.js";
 
@@ -83,7 +84,9 @@ export class Controller {
   /** Build the chrome once and render the first (or resumed) step. */
   mount() {
     applyTheme(this.container, this.funnel.theme);
-    installPixels(this.funnel.integrations);
+    // Third-party pixels wait for a decision when the funnel uses a consent bar.
+    // `_grantConsent` installs them the moment the visitor accepts.
+    if (marketingAllowed(this.funnel, this.key)) installPixels(this.funnel.integrations);
 
     this.container.classList.add("of-root");
     clear(this.container);
@@ -104,6 +107,11 @@ export class Controller {
       el("div", { class: "of-topbar" }, [this.backEl, this.progressEl]),
       this.viewport,
     );
+
+    const consentBar = buildConsentBar(this.funnel, (decision) => {
+      if (decision === "granted") this._grantConsent();
+    });
+    if (consentBar) this.container.appendChild(consentBar);
 
     this._emit("funnel_start");
     this._render("none");
@@ -150,13 +158,17 @@ export class Controller {
     if (step) this.state.answers[step.id] = values;
 
     this._emit("lead", { stepId: step?.id, fields: Object.keys(values) });
-    firePixel("lead", { funnelId: this.funnel.id }, this.funnel.integrations);
+    this._pixel("lead", { funnelId: this.funnel.id });
 
     // Ship the lead to your backend. Non-blocking — we advance immediately.
+    // Lead capture itself is never gated on consent: the visitor just filled the
+    // form in and pressed submit. The consent signal rides along so the server
+    // can decide whether to forward the lead onward to an ad platform.
     void sendLead(this.state.lead, this.state.answers, {
       endpoint: this.funnel.integrations?.leadEndpoint || this.options.leadEndpoint,
       funnelId: this.funnel.id,
       sessionId: this.state.sessionId,
+      meta: { consent: consentSignal(this.funnel, this.key) },
     });
 
     this.advance({ next: step?.next });
@@ -191,7 +203,7 @@ export class Controller {
    * @param {string|undefined} url
    */
   redirect(url) {
-    firePixel("complete", { funnelId: this.funnel.id }, this.funnel.integrations);
+    this._pixel("complete", { funnelId: this.funnel.id });
     if (url) window.location.href = url;
   }
 
@@ -221,6 +233,29 @@ export class Controller {
 
   /* ----- internals ------------------------------------------------------ */
 
+  /**
+   * Fire an ad-platform pixel, unless the visitor has not (yet) consented. Every
+   * pixel in the engine goes through here so a new call site cannot forget the
+   * check — see `consent.js` for what is and is not gated.
+   *
+   * @param {import('./types.js').FunnelEventType} name
+   * @param {Record<string, unknown>} payload
+   */
+  _pixel(name, payload) {
+    if (!marketingAllowed(this.funnel, this.key)) return;
+    firePixel(name, payload, this.funnel.integrations);
+  }
+
+  /**
+   * Visitor accepted: install the pixels that were held back at mount, and fire
+   * the view for the step they are on so the session is not lost entirely.
+   */
+  _grantConsent() {
+    installPixels(this.funnel.integrations);
+    const step = this.steps[this.state.index];
+    if (step) this._pixel("step_view", { stepId: step.id, stepIndex: this.state.index });
+  }
+
   _finish() {
     if (this.settings.persist) clearState(this.key);
     // No further step — most funnels end on a `success` step, but if a branch
@@ -246,7 +281,7 @@ export class Controller {
 
     // Fire view events (both to pixels via dataLayer and to your backend).
     this._emit("step_view", { stepId: step.id });
-    firePixel("step_view", { stepId: step.id, stepIndex: this.state.index }, this.funnel.integrations);
+    this._pixel("step_view", { stepId: step.id, stepIndex: this.state.index });
     if (step.type === "success") {
       this._emit("complete", { stepId: step.id });
     }
@@ -296,6 +331,7 @@ export class Controller {
     if (this.options.isPreview || (typeof window !== "undefined" && (window.location.search.includes("preview=1") || window.location.search.includes("admin=1")))) {
       return; // Skip analytics tracking for internal admin or preview views
     }
+    const consent = consentSignal(this.funnel, this.key);
     /** @type {import('./types.js').FunnelEvent} */
     const event = {
       type,
@@ -303,7 +339,9 @@ export class Controller {
       funnelId: this.funnel.id,
       stepId: this.steps[this.state.index]?.id,
       stepIndex: this.state.index,
-      meta,
+      // First-party ingest is not gated, but the signal travels with the record
+      // so the server will not forward it to Meta without permission.
+      meta: consent ? { ...meta, consent } : meta,
       ts: Date.now(),
     };
     if (this.options.onEvent) this.options.onEvent(event);

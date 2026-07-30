@@ -266,7 +266,21 @@
  * @property {FunnelTheme} [theme]
  * @property {FunnelSettings} [settings]
  * @property {FunnelIntegrations} [integrations]
+ * @property {FunnelConsent} [consent]
  * @property {Step[]} steps
+ */
+
+/**
+ * Visitor consent for third-party data sharing. Lives on the funnel document
+ * because the funnel page is rendered for visitors from this JSON — a per-browser
+ * console setting could never reach them. See `consent.js` for what it gates.
+ *
+ * @typedef {Object} FunnelConsent
+ * @property {boolean} [enabled]       Show the consent bar. Off by default.
+ * @property {string} [text]           Bar copy. A sensible default is used if unset.
+ * @property {string} [acceptLabel]
+ * @property {string} [declineLabel]
+ * @property {string} [policyUrl]      Optional link to your privacy policy.
  */
 
 /* ========================================================================== *

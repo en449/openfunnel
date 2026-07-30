@@ -220,12 +220,18 @@ NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 
-# Tracking Pixels (Optional)
-NEXT_PUBLIC_META_PIXEL_ID=
-META_CAPI_ACCESS_TOKEN=
-NEXT_PUBLIC_GTM_ID=
-NEXT_PUBLIC_GA4_MEASUREMENT_ID=
+# Meta Conversions API — server-side conversion forwarding (Optional).
+# Both are server-only. Never expose the token to the browser: it can write
+# conversions into your ad account. Sends visitor IP and user-agent to Meta,
+# so see "Third-party data sharing" below before enabling it.
+META_PIXEL_ID=
+META_CAPI_TOKEN=
 ```
+
+> **Browser pixels are not configured here.** Meta, GA4/GTM and TikTok pixel ids
+> live in each funnel document under `integrations` — set them per funnel in the
+> console's Pixels modal. There are no `NEXT_PUBLIC_*` pixel variables; the
+> engine reads pixel ids from the funnel JSON, never from the environment.
 
 ---
 
@@ -299,7 +305,42 @@ front does not accidentally grant access.
 - **Abuse limits**: the ingest, OTP and mail endpoints are rate-limited per address and per caller.
 - **Escaped output**: lead data is escaped into notification emails, the lead inbox, and the funnel HTML shell.
 - **Path-traversal validation** (`SLUG_RE` plus a resolved-path check) on every route that touches a file.
-- **GDPR-friendly**: no third-party tracking cookies by default.
+- **No third-party sharing until you configure it**: a fresh install talks to
+  nobody but your own server. Pixels fire only for the ids you put in a funnel's
+  `integrations`, and the Meta Conversions API forward is inert unless you set
+  `META_PIXEL_ID` and `META_CAPI_TOKEN`.
+- **Consent is enforced, not decorative**: turn on the consent bar for a funnel
+  and pixels stay uninstalled and the CAPI forward is skipped until the visitor
+  accepts. See [Third-party data sharing](#third-party-data-sharing).
+
+### Third-party data sharing
+
+Two features send visitor data off your server. Both are opt-in, and both are
+worth understanding before you enable them:
+
+| Feature | What leaves | Turned on by |
+| --- | --- | --- |
+| Browser pixels (Meta, GA4/GTM, TikTok) | Whatever the platform's script collects in the visitor's browser, including cookies it sets | Pixel ids in a funnel's `integrations`, via the console's Pixels modal |
+| Meta Conversions API | Visitor **IP address** and **user-agent**, server-side, per lead and per event | `META_PIXEL_ID` + `META_CAPI_TOKEN` in the environment |
+
+An IP address is personal data under GDPR, so the CAPI forward is a third-party
+transfer you need a lawful basis to make — it is not covered by "we set no
+cookies."
+
+To gate both on consent, enable the consent bar on the funnel (Settings → GDPR &
+Privacy Consent Bar, saved onto the funnel document as `consent.enabled`). Then:
+
+- **Gated** — browser pixels are not installed at all until the visitor accepts,
+  and the server skips the CAPI forward for any record that is not an explicit
+  grant.
+- **Not gated** — lead capture (`/api/lead`) and your own drop-off analytics
+  (`/api/events`). The visitor filled the form in and pressed submit; dropping
+  that would be a broken funnel, not a private one, and those records stay on
+  your server.
+
+The decision is stored first-party in `localStorage` and is not re-prompted. A
+funnel with no consent bar behaves exactly as it did before this existed, so
+enabling it is the only thing that changes behaviour.
 
 > **Scope note.** Rate limits and OTP state live in memory, so they are
 > per-process — run more than one instance and you want an edge rate limit and a
