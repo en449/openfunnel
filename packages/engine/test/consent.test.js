@@ -91,6 +91,93 @@ test("pressing accept records the decision and reports it once", async () => {
   expect(readDecision(KEY)).toBe("granted");
 });
 
+/* ===== webfonts ========================================================== *
+ *  A Google font is a third-party request (IP, user-agent, Referer), so it is
+ *  gated exactly like a pixel — and a theme the device can satisfy locally must
+ *  make no request at all, consent or not.
+ * ========================================================================== */
+
+/** @returns {number} `<link>` tags pointing at Google Fonts, in document order. */
+const fontLinkCount = () => document.head.querySelectorAll('link[href*="fonts.googleapis.com"]').length;
+
+/** The loader de-dupes by element id, so tests must not inherit each other's links. */
+const clearFontLinks = () => {
+  document.head.innerHTML = "";
+};
+
+/**
+ * @param {boolean} consentEnabled
+ * @param {string} [font]
+ */
+const themedFunnel = (consentEnabled, font) => ({
+  ...funnelWith(consentEnabled),
+  theme: font ? { font } : undefined,
+});
+
+const PRESET_FONT = "'Plus Jakarta Sans', system-ui, sans-serif";
+
+test("a funnel with no theme requests no webfont", async () => {
+  const { Controller } = await import("../src/controller.js");
+  clearFontLinks();
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+
+  // No consent bar either, so nothing is holding the request back — the default
+  // font stack is simply local, and the extraction must not invent a family.
+  const ctrl = new Controller(container, themedFunnel(false), { trackEvents: false });
+  ctrl.mount();
+
+  expect(fontLinkCount()).toBe(0);
+  ctrl.destroy();
+});
+
+test("a preset webfont waits for the consent decision, then loads", async () => {
+  const { Controller } = await import("../src/controller.js");
+  clearFontLinks();
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+
+  const ctrl = new Controller(container, themedFunnel(true, PRESET_FONT), { trackEvents: false });
+  ctrl.mount();
+
+  // Consent required and undecided: Google has not been told this visitor exists.
+  expect(fontLinkCount()).toBe(0);
+
+  /** @type {any} */ (container.querySelector(".of-consent-accept")).click();
+
+  expect(fontLinkCount()).toBe(1);
+  ctrl.destroy();
+});
+
+test("a preset webfont loads at once when the funnel has no consent bar", async () => {
+  const { Controller } = await import("../src/controller.js");
+  clearFontLinks();
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+
+  const ctrl = new Controller(container, themedFunnel(false, PRESET_FONT), { trackEvents: false });
+  ctrl.mount();
+
+  const link = document.head.querySelector('link[href*="fonts.googleapis.com"]');
+  expect(link).not.toBeNull();
+  expect(link?.getAttribute("href")).toContain("family=Plus+Jakarta+Sans");
+  ctrl.destroy();
+});
+
+test("declining leaves the webfont unrequested", async () => {
+  const { Controller } = await import("../src/controller.js");
+  clearFontLinks();
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+
+  const ctrl = new Controller(container, themedFunnel(true, PRESET_FONT), { trackEvents: false });
+  ctrl.mount();
+  /** @type {any} */ (container.querySelector(".of-consent-decline")).click();
+
+  expect(fontLinkCount()).toBe(0);
+  ctrl.destroy();
+});
+
 test("the controller withholds pixels until consent is granted", async () => {
   const { Controller } = await import("../src/controller.js");
   const container = document.createElement("div");

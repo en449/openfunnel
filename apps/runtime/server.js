@@ -167,6 +167,22 @@ function oneLine(value, max = 200) {
   return String(value ?? "").replace(/[\r\n]+/g, " ").trim().slice(0, max);
 }
 
+/**
+ * The only part of a failed outbound request we are willing to log.
+ *
+ * A `fetch` rejection carries the whole request URL (Bun exposes it as
+ * `err.path`), so `console.warn("...", err)` on an outbound call prints any
+ * credential that URL contained — a webhook token in the path, an `access_token`
+ * query parameter — straight into the server log. Log the code or message only.
+ *
+ * @param {unknown} err
+ * @returns {string}
+ */
+function errSummary(err) {
+  const e = /** @type {{ code?: unknown, message?: unknown } | null | undefined} */ (err);
+  return oneLine(e?.code ?? e?.message ?? "unknown error", 200) || "unknown error";
+}
+
 /* ========================================================================== *
  *  Funnel store
  * ========================================================================== */
@@ -321,7 +337,10 @@ async function forwardWebhook(record) {
     });
     if (!res.ok) console.warn(`[runtime] webhook dispatch HTTP ${res.status}`);
   } catch (err) {
-    console.warn(`[runtime] webhook error:`, err);
+    // Never log the error object: a fetch failure carries the full request URL
+    // on `err.path`, and webhook URLs routinely embed a token in the path, so
+    // printing it would copy an operator's credential into the log.
+    console.warn(`[runtime] webhook error: ${errSummary(err)}`);
   }
 }
 
@@ -341,22 +360,82 @@ function isPreviewRecord(r) {
   );
 }
 
+/**
+ * funnelIds we have already complained about, so a busy funnel logs the
+ * "consent not enforced" warning once instead of once per event.
+ *
+ * @type {Set<string>}
+ */
+const capiConsentWarned = new Set();
+
+/** @param {unknown} funnelId */
+function warnCapiConsentUnenforced(funnelId) {
+  const key = oneLine(funnelId, 120);
+  if (capiConsentWarned.has(key)) return;
+  // `funnelId` is client-supplied on the public ingest route, so cap the set
+  // rather than let junk ids grow it without bound.
+  if (capiConsentWarned.size > 200) capiConsentWarned.clear();
+  capiConsentWarned.add(key);
+  const which = key ? `funnelId "${key}"` : "a record with no funnelId";
+  console.warn(
+    `[runtime] Meta CAPI: no funnel document for ${which} — consent could not be enforced ` +
+      `server-side, falling back to the client's signal. Make the funnel's \`id\` match its slug to enforce.`
+  );
+}
+
+/**
+ * Forward a conversion to the Meta Conversions API (server-side pixel).
+ *
+ * This hands Meta the visitor's IP address and user-agent, so it is the most
+ * consequential outbound call the runtime makes: opt-in via `META_PIXEL_ID` +
+ * `META_CAPI_TOKEN`, never fired for preview traffic, and gated on consent from
+ * the funnel document rather than on the client's word alone.
+ *
+ * @param {Record<string, any>} record
+ */
 async function forwardMetaCapi(record) {
   const pixelId = process.env.META_PIXEL_ID || "";
   const capiToken = process.env.META_CAPI_TOKEN || "";
   if (!pixelId || !capiToken) return;
   if (isPreviewRecord(record)) return; // a preview drag-through is not a conversion
 
-  // Honour the visitor's consent decision. A record with no `consent` field comes
-  // from a funnel that does not use the consent bar, and forwards as before —
-  // enabling the bar is what turns this gate on, so no existing setup breaks.
-  // Anything other than an explicit grant (denied, or still undecided) is not
-  // permission to hand this visitor's IP to Meta.
+  // Honour the visitor's consent decision — but do not let the client define what
+  // the decision was by omission. `record.meta.consent` is a client-side
+  // assertion, so a missing field cannot mean "permitted": a stripped payload
+  // would read exactly like a funnel that has no consent bar. The funnel document
+  // is operator-owned and says authoritatively whether the bar is on, so ask it
+  // first and fall back to the client signal only when it cannot be resolved.
   const consent = record.meta?.consent;
-  if (consent && consent !== "granted") return;
+
+  /** @type {any} */
+  let funnel = null;
+  try {
+    if (record.funnelId) funnel = await loadFunnel(String(record.funnelId));
+  } catch {
+    funnel = null; // a lookup problem is a miss, never an ingest failure
+  }
+
+  if (funnel?.consent?.enabled) {
+    // Enforcement. The funnel asks for consent, so only an explicit grant
+    // forwards — "denied", "pending" and absent all mean no.
+    if (consent !== "granted") return;
+  } else {
+    // Either the funnel has no consent bar, or we could not resolve it (a funnel
+    // whose `id` is not its slug, or a document since deleted). Keep the
+    // pre-consent behaviour and honour whatever the client did send. Deliberately
+    // not failing closed: that would silently disable CAPI for those deployments.
+    if (!funnel) warnCapiConsentUnenforced(record.funnelId);
+    if (consent && consent !== "granted") return;
+  }
 
   const eventName = record.type === "lead" || record.lead ? "Lead" : "PageView";
   const payload = {
+    // The Graph API takes `access_token` as a body parameter, and it must stay
+    // here rather than in the query string: a fetch failure carries the request
+    // URL on `err.path`, so a token in the URL reaches the server log (and any
+    // proxy access log) the first time the call errors. Do not "simplify" this
+    // back into the URL.
+    access_token: capiToken,
     data: [
       {
         event_name: eventName,
@@ -372,14 +451,15 @@ async function forwardMetaCapi(record) {
   };
 
   try {
-    const res = await fetch(`https://graph.facebook.com/v19.0/${pixelId}/events?access_token=${capiToken}`, {
+    const res = await fetch(`https://graph.facebook.com/v19.0/${pixelId}/events`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(payload),
     });
     if (!res.ok) console.warn(`[runtime] Meta CAPI dispatch HTTP ${res.status}`);
   } catch (err) {
-    console.warn(`[runtime] Meta CAPI error:`, err);
+    // Summary only — see `errSummary`: the error object carries the request URL.
+    console.warn(`[runtime] Meta CAPI error: ${errSummary(err)}`);
   }
 }
 

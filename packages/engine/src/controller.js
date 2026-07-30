@@ -12,7 +12,7 @@
 import { el, clear, uid, prefersReducedMotion } from "./dom.js";
 import { resolveNext } from "./branching.js";
 import { renderStep } from "./render/index.js";
-import { applyTheme } from "./theme.js";
+import { applyTheme, loadThemeFont } from "./theme.js";
 import { installPixels, firePixel } from "./analytics.js";
 import { buildConsentBar, consentSignal, marketingAllowed } from "./consent.js";
 import { submitLead as sendLead, trackEvent } from "./leads.js";
@@ -83,7 +83,12 @@ export class Controller {
 
   /** Build the chrome once and render the first (or resumed) step. */
   mount() {
-    applyTheme(this.container, this.funnel.theme);
+    // A non-system `theme.font` is fetched from Google, which hands the visitor's
+    // IP, user-agent and Referer to a third party — so it waits for the same
+    // decision the pixels wait for. Colours and spacing apply either way.
+    applyTheme(this.container, this.funnel.theme, {
+      allowRemote: marketingAllowed(this.funnel, this.key),
+    });
     // Third-party pixels wait for a decision when the funnel uses a consent bar.
     // `_grantConsent` installs them the moment the visitor accepts.
     if (marketingAllowed(this.funnel, this.key)) installPixels(this.funnel.integrations);
@@ -247,11 +252,13 @@ export class Controller {
   }
 
   /**
-   * Visitor accepted: install the pixels that were held back at mount, and fire
-   * the view for the step they are on so the session is not lost entirely.
+   * Visitor accepted: install the pixels that were held back at mount, load the
+   * webfont that was held back with them, and fire the view for the step they are
+   * on so the session is not lost entirely.
    */
   _grantConsent() {
     installPixels(this.funnel.integrations);
+    loadThemeFont(this.funnel.theme);
     const step = this.steps[this.state.index];
     if (step) this._pixel("step_view", { stepId: step.id, stepIndex: this.state.index });
   }

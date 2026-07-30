@@ -24,7 +24,7 @@ bun run demo           # zero-build static demo on :4321 (scripts/serve.mjs)
 
 Run a single test file: `bun test packages/engine/test/logic.test.js`.
 
-`bun test` (33 tests) and `bun run typecheck` both pass on `main` — keep it that
+`bun test` (58 tests) and `bun run typecheck` both pass on `main` — keep it that
 way. Two tests log expected warnings (`branch target "nope" not found`, an
 invalid-URL `submitLead` failure); those are assertions about failure tolerance,
 not breakage.
@@ -61,9 +61,15 @@ The engine mounts into any container in any framework and mutates nothing else.
 - `src/leads.js` — **your own backend only** (`/api/lead`, `/api/events`).
   Also captures UTM and click-id params (`gclid`, `fbclid`, `ttclid`, `ref`).
   These two files are separate on purpose; don't merge them.
-- `src/theme.js` — funnel `theme` JSON → `--of-*` CSS custom properties, plus
-  `THEME_PRESETS` (`midnight-glass`, `neo-brutalist`, `warm-editorial`,
-  `saas-gradient`, `clean-light`).
+- `src/theme.js` — funnel `theme` JSON → `--of-*` CSS custom properties, plus the
+  eight `THEME_PRESETS` (`midnight-glass`, `neo-brutalist`, `warm-editorial`,
+  `saas-gradient`, `clean-light`, `emerald-glow`, `violet-pulse`,
+  `sunset-coral`). Also the only file in the engine that makes a third-party
+  request: `loadThemeFont()` / `applyTheme(root, theme, { allowRemote })` fetch a
+  non-system `theme.font` from Google Fonts. It stays independent of `consent.js`
+  — the decision is passed in as a boolean.
+- `src/consent.js` — the consent bar and the `marketingAllowed()` / `consentSignal()`
+  gate for third-party sharing. Its header defines what is and is not gated.
 - `src/persist.js` — localStorage resume. Fails silently by design.
 
 ### apps/runtime/server.js
@@ -87,6 +93,14 @@ One file, `Bun.serve`, no framework. Routes:
 
 Only the console shell is public; every API behind it is not. The `/f/:slug`
 page and the ingest endpoints are the entire public API surface.
+
+**Meta Conversions API.** `persist()` also forwards to Meta server-side via
+`forwardMetaCapi`, opt-in through `META_PIXEL_ID` + `META_CAPI_TOKEN` (env only,
+never per funnel, never from the request body). Two rules there: the token goes
+in the JSON **body** as `access_token`, not in the URL query string; and a fetch
+failure is logged through `errSummary(err)`, never as the error object — Bun puts
+the full request URL on `err.path`, so `console.warn("…", err)` would print the
+credential. `forwardWebhook` follows the same logging rule for the same reason.
 
 ### apps/app
 
@@ -127,6 +141,28 @@ do not weaken the gate: with `ADMIN_TOKEN` set it requires a bearer token, and
 without one it allows only direct loopback callers. A request carrying
 `x-forwarded-for` is never treated as loopback — otherwise anyone reaching a
 reverse-proxied deployment would inherit localhost's privileges.
+
+**Third-party sharing is consent-gated in two independent places.** A funnel opts
+in with `consent.enabled` on the funnel document (never a localStorage setting — a
+per-browser value can't reach a visitor). Both halves must stay:
+
+- *Client* — `Controller._pixel()` checks `marketingAllowed()` before every
+  `firePixel`, so **every** pixel call site must go through `_pixel()`; a direct
+  `firePixel` import in new code silently bypasses the gate. The webfont rides the
+  same decision via `applyTheme(..., { allowRemote })`, with `loadThemeFont()`
+  called from `_grantConsent()` when the visitor accepts.
+- *Server* — `forwardMetaCapi` re-derives the gate from the funnel document rather
+  than trusting `record.meta.consent`: with `consent.enabled` on, only an explicit
+  `"granted"` forwards, so a stripped field is a refusal, not permission. When the
+  document can't be resolved it warns and falls back to the client signal —
+  deliberately not failing closed, which would disable CAPI for funnels whose `id`
+  is not their slug.
+
+Gated: browser pixels, the Meta CAPI forward, Google Fonts. **Not** gated: lead
+capture (`/api/lead`) and first-party drop-off events (`/api/events`) — the
+visitor typed their details in and pressed submit, so dropping the lead would be
+a broken funnel rather than a private one, and those records stay on the
+operator's own server. See the header of `src/consent.js`.
 
 **Never trust the client for anything that matters.** Two live examples worth
 copying: `email_verified` arrives in the lead payload but is re-derived from
@@ -215,11 +251,29 @@ TODOs, not working features:
 - `of.ai.brandVoice` and `of.ai.provider` are saved but never sent;
   `generateFunnel()` still posts a stale `of.ai.tone` key that the settings UI
   no longer writes.
-- `theme.font` *is* applied (`--of-font`), but the funnel page loads no
-  webfonts, so a non-system choice like `Playfair Display` silently falls back.
+
+### The mirror image: wired in the engine, not reachable from the console
+
+These work in the engine but the builder cannot create them, so they are reachable
+only through a template or hand-edited funnel JSON:
+
+- The `calculator` content block (`src/calculator.js` + the `CalculatorBlock`
+  typedef) — the string `"calculator"` appears nowhere in `apps/app/`. The
+  `solar-calculator` template in `templates.js` is the only thing that emits one.
+- The `address` form field type — handled by `src/render/form.js`, but
+  `FIELD_TYPES` in `apps/app/app.js` is only `["text", "email", "tel"]`, so the
+  field-type dropdown cannot produce it (nor `textarea`, `select`, `date`,
+  `number`, `file`).
 
 ## Gotchas
 
+- `theme.font` is applied as `--of-font` **and** fetched from Google Fonts when it
+  names a non-system family — which every built-in preset does, so a preset funnel
+  hotlinks Google. Only the first comma-separated segment of the stack counts, and
+  generic/system/`ui-*`/`-*` families are refused, so a default-themed funnel
+  requests nothing. The request is consent-gated: `applyTheme` skips it unless
+  `allowRemote`, and `_grantConsent()` loads it on accept. A new preset naming a
+  family Google does not host would leak the visitor for a 404 — check it exists.
 - `.data/` and `.tmp/` are gitignored. Runtime tests write into `.tmp/`.
 - The builder writes into `FUNNELS_DIR` (default `examples/`), so scratch funnels
   created while testing show up as untracked files there. Don't commit them.

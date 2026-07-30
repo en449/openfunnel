@@ -41,10 +41,12 @@ export type ContentBlock =
   | { type: "reviews"; items: Array<{ name: string; text: string; avatar?: string; rating?: number }> }
   | { type: "countdown"; minutes: number; label?: string }
   | { type: "trust"; items: Array<{ src?: string; label?: string }> }
-  | { type: "spacer"; size?: number };
+  | { type: "spacer"; size?: number }
+  | { type: "calculator"; formula: string; label?: string; currency?: string };
 
 export type FieldType =
-  | "text" | "name" | "email" | "tel" | "textarea" | "select" | "date" | "number" | "file";
+  | "text" | "name" | "email" | "tel" | "textarea" | "select" | "date" | "number" | "file"
+  | "address";
 
 export interface FormField {
   name: string;
@@ -103,6 +105,20 @@ export type SuccessStep = StepBase & {
 
 export type Step = ChoiceStep | MultiSelectStep | FormStep | ContentStep | LoaderStep | SuccessStep;
 
+/**
+ * Visitor consent for third-party data sharing. On the funnel document rather
+ * than a console setting, because the funnel page is rendered for visitors from
+ * this JSON. Enabling it gates the browser pixels, the server's Meta CAPI
+ * forward, and the theme webfont; lead capture is deliberately not gated.
+ */
+export interface FunnelConsent {
+  enabled?: boolean;
+  text?: string;
+  acceptLabel?: string;
+  declineLabel?: string;
+  policyUrl?: string;
+}
+
 export interface Funnel {
   id?: string;
   name?: string;
@@ -110,6 +126,7 @@ export interface Funnel {
   theme?: FunnelTheme;
   settings?: FunnelSettings;
   integrations?: FunnelIntegrations;
+  consent?: FunnelConsent;
   steps: Step[];
 }
 
@@ -132,6 +149,10 @@ export interface FunnelOptions {
   eventEndpoint?: string;
   leadEndpoint?: string;
   resume?: boolean;
+  /** Suppresses analytics. Set by the builder preview, never from a URL param. */
+  isPreview?: boolean;
+  /** Enables in-canvas editing affordances. Builder-only. */
+  isEditor?: boolean;
 }
 
 export declare class Controller {
@@ -144,6 +165,8 @@ export declare class Controller {
   advance(branch?: { next?: string | null }): void;
   back(): void;
   redirect(url: string | undefined): void;
+  /** Repaint the current step in place, without touching index or history. */
+  refresh(): void;
 }
 
 export declare function createFunnel(
@@ -158,6 +181,17 @@ export declare function firePixel(
   integrations?: FunnelIntegrations,
 ): void;
 export declare function installPixels(integrations?: FunnelIntegrations): void;
+
+/* ----- consent -------------------------------------------------------------
+ * An embedder that mounts the engine itself is responsible for the same gate the
+ * Controller applies: check `marketingAllowed` before firing anything outward.
+ */
+export type ConsentDecision = "granted" | "denied";
+export declare function consentRequired(funnel: Funnel): boolean;
+export declare function marketingAllowed(funnel: Funnel, key: string): boolean;
+export declare function readDecision(key: string): ConsentDecision | null;
+export declare function writeDecision(key: string, decision: ConsentDecision): void;
+
 export declare function submitLead(
   lead: Record<string, unknown>,
   answers: Record<string, unknown>,
