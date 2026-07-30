@@ -8,6 +8,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { copyFile, mkdir, mkdtemp, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -401,5 +402,43 @@ describe("api", () => {
 
   test("healthz reports readiness", async () => {
     expect(await fetch(`${base}/healthz`).then((r) => r.json())).toMatchObject({ ok: true });
+  });
+});
+
+describe("content security policy", () => {
+  /**
+   * The funnel page pins `script-src` to the SHA-256 of its inline boot script.
+   * If the script is edited and the hash is not recomputed from the same string,
+   * the browser refuses to run it and EVERY funnel page silently renders a blank
+   * screen — nothing throws server-side, and no other test notices. So this
+   * recomputes the hash from the bytes actually served and compares.
+   */
+  test("the advertised script hash matches the script actually served", async () => {
+    const res = await fetch(`${base}/f/fitness`);
+    const csp = res.headers.get("content-security-policy") || "";
+    const page = await res.text();
+
+    const inline = page.match(/<script type="module">([\s\S]*?)<\/script>/);
+    expect(inline).not.toBeNull();
+
+    const digest = createHash("sha256").update(inline[1], "utf8").digest("base64");
+    expect(csp).toContain(`'sha256-${digest}'`);
+  });
+
+  test("locks down the funnel page without blocking embedding", async () => {
+    const csp = (await fetch(`${base}/f/fitness`)).headers.get("content-security-policy") || "";
+    expect(csp).toContain("default-src 'none'");
+    expect(csp).toContain("base-uri 'none'");
+    // Funnels are meant to be embedded on the operator's marketing site, and the
+    // builder previews one in an iframe — so this must NOT be restricted here.
+    expect(csp).not.toContain("frame-ancestors");
+    // A funnel with no pixels configured gets no third-party script origin.
+    expect(csp).not.toContain("connect.facebook.net");
+  });
+
+  test("the operator console refuses to be framed", async () => {
+    const res = await fetch(`${base}/`);
+    expect(res.headers.get("x-frame-options")).toBe("DENY");
+    expect(res.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
   });
 });

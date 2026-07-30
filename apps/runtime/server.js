@@ -28,7 +28,7 @@
 
 import { mkdir, readdir, readFile, writeFile, appendFile, unlink } from "node:fs/promises";
 import { extname, join, normalize, resolve, sep } from "node:path";
-import { randomInt, timingSafeEqual } from "node:crypto";
+import { createHash, randomInt, timingSafeEqual } from "node:crypto";
 
 /* ========================================================================== *
  *  Config
@@ -1005,32 +1005,16 @@ function publicFunnel(funnel) {
   return { ...funnel, integrations };
 }
 
-function funnelPage(funnel) {
-  const first = funnel.steps[0] || {};
-  const title = funnel.name || first.headline || "Get started";
-  const description = first.subtext || "";
-  const dark = funnel.theme?.mode === "dark";
-
-  return `<!doctype html>
-<html lang="${esc(funnel.lang || "en")}" style="${esc(themeVars(funnel.theme))}">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="color-scheme" content="${dark ? "dark" : "light"}" />
-    <meta name="robots" content="noindex" />
-    <title>${esc(title)}</title>
-    ${description ? `<meta name="description" content="${esc(description)}" />` : ""}
-    <meta property="og:title" content="${esc(title)}" />
-    ${description ? `<meta property="og:description" content="${esc(description)}" />` : ""}
-    <link rel="preload" as="script" href="/_of/index.js" crossorigin />
-    <link rel="stylesheet" href="/_of/styles.css" />
-    <style>body{margin:0;background:var(--of-bg,#eef1f6)}</style>
-  </head>
-  <body>
-    <main class="of-stage"><div id="app" class="of-root"></div></main>
-
-    <script id="of-funnel" type="application/json">${jsonScript(publicFunnel(funnel))}</script>
-    <script type="module">
+/**
+ * The funnel page's boot script, kept out of the template so its hash is stable.
+ *
+ * It is deliberately free of interpolation — the funnel document travels in a
+ * separate `application/json` block that this reads — which is what makes a
+ * strict `script-src` possible: the hash below is computed once and never
+ * depends on which funnel is being served. Edit this and the CSP hash follows
+ * automatically; interpolate a value into it and you break every funnel page.
+ */
+const FUNNEL_BOOT_SCRIPT = `
       import { createFunnel } from "/_of/index.js";
       const mount = document.getElementById("app");
       const funnel = JSON.parse(document.getElementById("of-funnel").textContent);
@@ -1068,7 +1052,120 @@ function funnelPage(funnel) {
         });
         parent.postMessage({ type: "of:preview-ready" }, location.origin);
       }
-    </script>
+`;
+
+/** base64 SHA-256 of the boot script, for `script-src 'sha256-…'`. */
+const FUNNEL_BOOT_HASH = createHash("sha256").update(FUNNEL_BOOT_SCRIPT, "utf8").digest("base64");
+
+/**
+ * Hosts each ad platform needs, added only for the pixels a funnel configures.
+ * A funnel with no pixels gets no third-party script origin at all.
+ *
+ * @type {Record<string, { script?: string[], connect?: string[], img?: string[] }>}
+ */
+const PIXEL_CSP_HOSTS = {
+  metaPixelId: {
+    script: ["https://connect.facebook.net"],
+    connect: ["https://www.facebook.com"],
+    img: ["https://www.facebook.com"],
+  },
+  gtmId: {
+    script: ["https://www.googletagmanager.com"],
+    connect: ["https://www.google-analytics.com", "https://*.analytics.google.com"],
+  },
+  ga4Id: {
+    script: ["https://www.googletagmanager.com"],
+    connect: ["https://www.google-analytics.com", "https://*.analytics.google.com"],
+  },
+  tiktokPixelId: {
+    script: ["https://analytics.tiktok.com"],
+    connect: ["https://analytics.tiktok.com"],
+  },
+};
+
+/**
+ * Content-Security-Policy for a funnel page.
+ *
+ * This is the backstop for the engine's one deliberate HTML sink (`step.consent`
+ * is rendered as markup so an operator can put a link in it) and for any XSS a
+ * future renderer introduces: with `script-src` pinned to the boot script's hash
+ * plus same-origin modules, injected markup cannot execute.
+ *
+ * What is deliberately loose, and why:
+ *   style-src   'unsafe-inline' — the theme writes inline `style` attributes and
+ *               the engine sets `node.style` directly. Style injection is not in
+ *               the same risk class as script injection.
+ *   img/media   `https:` — image and video blocks take arbitrary operator URLs.
+ *   frame-src   `https:` — YouTube/Vimeo embeds.
+ * `frame-ancestors` is intentionally absent: funnels are meant to be embedded on
+ * the operator's marketing site, and the builder previews one in an iframe.
+ *
+ * @param {any} funnel
+ * @returns {string}
+ */
+function funnelCsp(funnel) {
+  const script = new Set(["'self'", `'sha256-${FUNNEL_BOOT_HASH}'`]);
+  const connect = new Set(["'self'"]);
+  const img = new Set(["'self'", "https:", "data:"]);
+
+  const integrations = funnel?.integrations || {};
+  for (const [key, hosts] of Object.entries(PIXEL_CSP_HOSTS)) {
+    if (!integrations[key]) continue;
+    hosts.script?.forEach((h) => script.add(h));
+    hosts.connect?.forEach((h) => connect.add(h));
+    hosts.img?.forEach((h) => img.add(h));
+  }
+
+  // A funnel may post leads to the operator's own backend instead of ours.
+  const leadEndpoint = integrations.leadEndpoint;
+  if (typeof leadEndpoint === "string" && /^https?:\/\//i.test(leadEndpoint)) {
+    try {
+      connect.add(new URL(leadEndpoint).origin);
+    } catch {
+      /* unparseable endpoint — the engine's fetch will fail on its own */
+    }
+  }
+
+  return [
+    "default-src 'none'",
+    `script-src ${[...script].join(" ")}`,
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com data:",
+    `img-src ${[...img].join(" ")}`,
+    `connect-src ${[...connect].join(" ")}`,
+    "media-src 'self' https: data:",
+    "frame-src https:",
+    "base-uri 'none'",
+    "form-action 'self'",
+  ].join("; ");
+}
+
+function funnelPage(funnel) {
+  const first = funnel.steps[0] || {};
+  const title = funnel.name || first.headline || "Get started";
+  const description = first.subtext || "";
+  const dark = funnel.theme?.mode === "dark";
+
+  return `<!doctype html>
+<html lang="${esc(funnel.lang || "en")}" style="${esc(themeVars(funnel.theme))}">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="${dark ? "dark" : "light"}" />
+    <meta name="robots" content="noindex" />
+    <title>${esc(title)}</title>
+    ${description ? `<meta name="description" content="${esc(description)}" />` : ""}
+    <meta property="og:title" content="${esc(title)}" />
+    ${description ? `<meta property="og:description" content="${esc(description)}" />` : ""}
+    <link rel="preload" as="script" href="/_of/index.js" crossorigin />
+    <link rel="stylesheet" href="/_of/styles.css" />
+    <style>body{margin:0;background:var(--of-bg,#eef1f6)}</style>
+  </head>
+  <body>
+    <main class="of-stage"><div id="app" class="of-root"></div></main>
+
+    <script id="of-funnel" type="application/json">${jsonScript(publicFunnel(funnel))}</script>
+    <script type="module">${FUNNEL_BOOT_SCRIPT}</script>
 
     <noscript>
       <p style="font:16px/1.5 system-ui;padding:24px;text-align:center">
@@ -1333,7 +1430,7 @@ const server = import.meta.main ? Bun.serve({
     if (path.startsWith("/f/")) {
       const funnel = await loadFunnel(path.slice(3));
       if (!funnel) return html("<h1>404 — funnel not found</h1>", 404);
-      return html(funnelPage(funnel));
+      return html(funnelPage(funnel), 200, { "content-security-policy": funnelCsp(funnel) });
     }
 
     // The console's funnel switcher and dashboard read this instead of holding a
