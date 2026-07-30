@@ -7,7 +7,10 @@
     "checkJs": true,
     "strict": true,
     "noEmit": true,
-    "skipLibCheck": true
+    // false on purpose. types/index.d.ts is the hand-maintained published
+    // surface and is included below, so it must be checked, not skipped — it
+    // silently drifted out of sync with src/types.js until it was added here.
+    "skipLibCheck": false
   },
-  "include": ["src/**/*.js"]
+  "include": ["src/**/*.js", "types/**/*.d.ts"]
 }

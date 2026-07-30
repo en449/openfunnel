@@ -463,6 +463,13 @@ textarea.of-input { min-height: 96px; resize: vertical; }
 /* ---- Consent Bar --------------------------------------------------------- */
 /* Pinned to the bottom of the funnel, above the stage but never over the CTA:
    the funnel stays usable whichever button the visitor presses. */
+/* While the bar is up, give the step back the height the bar covers — otherwise
+   it sits on top of the CTA, which is the one control the funnel depends on.
+   `:has` is supported everywhere the swipe engine is; the padding is harmless
+   where it is not. */
+.of-root:has(.of-consent-bar) .of-step {
+  padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px));
+}
 .of-consent-bar {
   position: fixed;
   left: 0;
@@ -474,7 +481,9 @@ textarea.of-input { min-height: 96px; resize: vertical; }
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  /* Longhand after the shorthand, or the shorthand resets the inset padding. */
   padding: 12px 16px;
+  padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
   background: var(--of-surface);
   border-top: 1px solid var(--of-border);
   color: var(--of-text);

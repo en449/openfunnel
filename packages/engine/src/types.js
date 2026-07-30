@@ -132,7 +132,11 @@
  * ========================================================================== */
 
 /**
- * @typedef {"text"|"name"|"email"|"tel"|"textarea"|"select"|"date"|"number"|"file"|"address"|"calculation"} FieldType
+ * Every member must have an entry in `FIELD_HTML` in `render/form.js`, or a
+ * funnel using it renders nothing. (`"calculation"` was listed here with no
+ * renderer — removed rather than left as a trap.)
+ *
+ * @typedef {"text"|"name"|"email"|"tel"|"textarea"|"select"|"date"|"number"|"file"|"address"} FieldType
  */
 
 /**

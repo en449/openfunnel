@@ -192,6 +192,12 @@ DATA_DIR=.data/
 # Leave blank and those routes accept localhost only (fine for local dev).
 ADMIN_TOKEN=
 
+# Absolute ceiling on outbound mail per hour, across all callers — covers both
+# the OTP challenge and the lead autoresponder. Both mail an address taken from
+# a public request body, and their per-IP limits key off x-forwarded-for, which
+# the caller sets. This cap is the one a caller cannot rotate past. Default 500.
+MAIL_MAX_PER_HOUR=
+
 # Email Notifications & Autoresponders
 NOTIFY_EMAIL=owner@yourdomain.com
 EMAIL_PROVIDER=resend
@@ -302,9 +308,11 @@ front does not accidentally grant access.
 - **Outbound destinations are operator-owned**: webhook targets come from your environment or your funnel document, never from a visitor's request, and loopback / private / cloud-metadata addresses are refused.
 - **Signed webhooks**: set a webhook secret and every delivery carries an `X-Webhook-Secret` header your automation can check.
 - **Email verification that actually verifies**: six-digit codes from a CSPRNG, five attempts, ten-minute expiry, never returned to the browser — and the server re-derives `email_verified` rather than believing the client.
-- **Abuse limits**: the ingest, OTP and mail endpoints are rate-limited per address and per caller.
+- **Abuse limits**: the ingest, OTP and mail endpoints are rate-limited per address and per caller, and outbound mail additionally passes a global hourly ceiling (`MAIL_MAX_PER_HOUR`) — the per-caller key comes from `x-forwarded-for`, which a caller can rotate, so it cannot be the only bound.
+- **The console's APIs refuse cross-site browser requests**: privileged routes reject a cross-site `Origin`/`Sec-Fetch-Site` before authenticating, and CORS is scoped to the public ingest paths only. Without this, a page you merely visit could drive the console on a default local install, where the admin gate trusts loopback.
 - **Escaped output**: lead data is escaped into notification emails, the lead inbox, and the funnel HTML shell.
-- **Path-traversal validation** (`SLUG_RE` plus a resolved-path check) on every route that touches a file.
+- **Path-traversal validation** (`SLUG_RE` plus an `isInside()` containment check that requires a path separator, so a sibling directory sharing the root's name cannot be reached) on every route that touches a file.
+- **Outbound destinations are filtered**: webhook targets are refused for loopback, private, link-local, CGNAT and cloud-metadata addresses, including IPv4-mapped IPv6 and the decimal/hex IP spellings.
 - **No third-party sharing until you configure it**: pixels fire only for the ids
   you put in a funnel's `integrations`, and the Meta Conversions API forward is
   inert unless you set `META_PIXEL_ID` and `META_CAPI_TOKEN`. A funnel on the

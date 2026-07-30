@@ -291,7 +291,7 @@ async function supabaseInsert(table, row) {
     });
     if (!res.ok) console.warn(`[runtime] supabase ${table} insert ${res.status}`);
   } catch (err) {
-    console.warn(`[runtime] supabase ${table} insert failed:`, err);
+    console.warn(`[runtime] supabase ${table} insert failed: ${errSummary(err)}`);
   }
 }
 
@@ -674,7 +674,7 @@ async function sendEmail({ to, subject, html, text }) {
       console.warn("[email] Resend error:", res.status, errText);
       return { ok: false, error: `resend_${res.status}` };
     } catch (err) {
-      console.warn("[email] Resend exception:", err);
+      console.warn(`[email] Resend exception: ${errSummary(err)}`);
       return { ok: false, error: String(err) };
     }
   }
@@ -690,7 +690,9 @@ async function sendEmail({ to, subject, html, text }) {
       });
       return { ok: res.ok, provider: "http_relay" };
     } catch (err) {
-      console.warn("[email] relay error:", err);
+      // SMTP_RELAY_URL is operator-supplied and may carry a token in the URL,
+      // which a fetch rejection would otherwise print via `err.path`.
+      console.warn(`[email] relay error: ${errSummary(err)}`);
       return { ok: false, error: "relay_failed" };
     }
   }
@@ -725,14 +727,15 @@ const OTP_TTL_MS = 10 * 60 * 1000;
 const OTP_MAX_ATTEMPTS = 5;
 
 /**
- * Absolute ceiling on verification emails per hour, across every caller.
+ * Absolute ceiling on outbound mail per hour, across every caller — shared by
+ * the OTP challenge and the lead autoresponder.
  *
  * The per-address and per-IP limits are the everyday guards; this one exists
  * because the per-IP key comes from `x-forwarded-for`, which the caller sets.
  * Bounding the total means the worst case is a capped amount of outbound mail
  * rather than an open relay. Generous by default so a real funnel never notices.
  */
-const OTP_SEND_HOURLY_CAP = Math.max(1, Number(process.env.OTP_MAX_PER_HOUR) || 500);
+const MAIL_HOURLY_CAP = Math.max(1, Number(process.env.MAIL_MAX_PER_HOUR) || 500);
 const VERIFIED_TTL_MS = 30 * 60 * 1000;
 
 /**
@@ -875,7 +878,15 @@ async function processLeadEmailNotifications(record) {
       // as a spam cannon against a third party from the operator's domain.
       const recipient = String(leadEmail).toLowerCase().trim();
       if (!rateLimit(`autoresponder:${recipient}`, 3, 60 * 60 * 1000)) {
-        console.warn(`[email] autoresponder rate limit hit for ${recipient}`);
+        console.warn(`[email] autoresponder rate limit hit for ${oneLine(recipient, 120)}`);
+        return;
+      }
+      // Per-recipient is not a ceiling: the attacker picks the recipients, so an
+      // unbounded number of addresses each get their 3. Same open-relay shape as
+      // /api/otp/send, so the same absolute cap applies — mail leaving the
+      // operator's domain is bounded by something the caller cannot rotate.
+      if (!rateLimit("autoresponder-global", MAIL_HOURLY_CAP, 60 * 60 * 1000)) {
+        console.warn("[email] autoresponder hourly ceiling reached — see MAIL_MAX_PER_HOUR");
         return;
       }
 
@@ -894,7 +905,7 @@ async function processLeadEmailNotifications(record) {
       });
     }
   } catch (err) {
-    console.warn("[runtime] Lead email error:", err);
+    console.warn(`[runtime] Lead email error: ${errSummary(err)}`);
   }
 }
 
@@ -1517,8 +1528,8 @@ const server = import.meta.main ? Bun.serve({
       //
       // This cap is global and keyed on nothing the caller controls, so no header
       // rotates past it. It sits after the per-address limits so ordinary traffic
-      // never reaches it. Raise it with OTP_MAX_PER_HOUR on a high-volume funnel.
-      if (!rateLimit("otp-send-global", OTP_SEND_HOURLY_CAP, 60 * 60 * 1000)) return tooMany();
+      // never reaches it. Raise it with MAIL_MAX_PER_HOUR on a high-volume funnel.
+      if (!rateLimit("otp-send-global", MAIL_HOURLY_CAP, 60 * 60 * 1000)) return tooMany();
 
       const res = await sendOtpCode(email);
       return json(res, res.ok ? 200 : 502, CORS);
@@ -1680,7 +1691,7 @@ const server = import.meta.main ? Bun.serve({
         const actual = claimed && isEmailVerified(record.lead.email);
         record.lead = { ...record.lead, email_verified: actual };
         if (claimed && !actual) {
-          console.warn(`[runtime] unverified lead claimed email_verified: ${record.lead.email}`);
+          console.warn(`[runtime] unverified lead claimed email_verified: ${oneLine(record.lead.email, 120)}`);
         }
       }
 

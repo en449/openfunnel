@@ -142,6 +142,46 @@ without one it allows only direct loopback callers. A request carrying
 `x-forwarded-for` is never treated as loopback — otherwise anyone reaching a
 reverse-proxied deployment would inherit localhost's privileges.
 
+**Privileged routes also refuse cross-site browser requests.** Authentication is
+not enough on its own: with no `ADMIN_TOKEN` the gate trusts loopback, so a page
+the operator merely *visits* was able to drive the console. `readJson` ignores
+`Content-Type`, so `fetch(…, {mode:"no-cors", headers:{"content-type":
+"text/plain"}})` was a CORS *simple* request — no preflight to stop it — that
+wrote a funnel document, and a funnel renders on the console's own origin where
+`of.adminToken` lives. `isCrossSiteRequest()` now rejects any privileged request
+carrying a cross-site `Origin` or `Sec-Fetch-Site`, checked *before*
+`requireAdmin`. Two rules follow:
+
+- CORS headers and the `OPTIONS` reply belong only to `PUBLIC_CORS_PATHS`
+  (`/api/lead`, `/api/events`, `/api/otp/*`). Answering `OPTIONS` with
+  `Allow-Origin: *` for every path green-lit the preflight for privileged
+  routes. Do not widen that set.
+- A funnel document is operator-authored and the engine trusts it (`form.js`
+  renders `step.consent` as HTML). That trust is only sound while the write path
+  is not forgeable, so anything that weakens the CSRF check re-opens stored XSS
+  on the console origin.
+
+**Outbound mail is capped by something the caller cannot rotate.** `/api/otp/send`
+and the lead autoresponder both mail an address taken from a public request body.
+Their per-address and per-IP limits are the everyday guards, but the per-IP key
+comes from `clientIp`, which honours caller-supplied `x-forwarded-for` — rotate
+it and the ceiling never binds, turning the operator's domain into an open relay.
+Both paths therefore also pass a global `MAIL_HOURLY_CAP` (`MAIL_MAX_PER_HOUR`,
+default 500). Any new endpoint that sends mail to a caller-supplied address needs
+the same absolute ceiling.
+
+**Nothing logs an error object from an outbound `fetch`.** Bun puts the full
+request URL on `err.path`, so `console.warn("…", err)` prints whatever the URL
+carried — the Meta CAPI `access_token`, a webhook token in the path, an
+`SMTP_RELAY_URL` credential. Log `errSummary(err)` (code/message only); a bare
+`res.status` is fine.
+
+**Path containment uses `isInside()`, not `startsWith`.** A bare prefix test also
+accepts a sibling that shares the root's name (`/apps/app` vs `/apps/app-legacy`).
+`isInside()` requires a separator. The WHATWG URL parser resolves literal and
+`%2e`-encoded dot segments before routing, but `%2f` survives to
+`decodeURIComponent`, so this check is what actually stops traversal.
+
 **Third-party sharing is consent-gated in two independent places.** A funnel opts
 in with `consent.enabled` on the funnel document (never a localStorage setting — a
 per-browser value can't reach a visitor). Both halves must stay:
