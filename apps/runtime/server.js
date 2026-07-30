@@ -325,6 +325,56 @@ async function forwardWebhook(record) {
   }
 }
 
+/**
+ * Builder-preview and admin traffic must never reach analytics — neither the
+ * console's own numbers nor an ad platform. Shared by the ingest fan-out and
+ * the `/api/admin/*` readers so both agree on what counts as preview.
+ *
+ * @param {Record<string, any>} r
+ * @returns {boolean}
+ */
+function isPreviewRecord(r) {
+  return Boolean(
+    r.preview || r.isPreview || r.meta?.preview || r.meta?.isPreview ||
+    (r.referer && (r.referer.includes("preview=1") || r.referer.includes("admin=1"))) ||
+    (r.meta?.url && (r.meta.url.includes("preview=1") || r.meta.url.includes("admin=1")))
+  );
+}
+
+async function forwardMetaCapi(record) {
+  const pixelId = process.env.META_PIXEL_ID || "";
+  const capiToken = process.env.META_CAPI_TOKEN || "";
+  if (!pixelId || !capiToken) return;
+  if (isPreviewRecord(record)) return; // a preview drag-through is not a conversion
+
+  const eventName = record.type === "lead" || record.lead ? "Lead" : "PageView";
+  const payload = {
+    data: [
+      {
+        event_name: eventName,
+        event_time: Math.floor((new Date(record.received_at || Date.now()).getTime()) / 1000),
+        action_source: "website",
+        event_id: record.sessionId || undefined,
+        user_data: {
+          client_ip_address: record.ip || undefined,
+          client_user_agent: record.user_agent || undefined,
+        },
+      },
+    ],
+  };
+
+  try {
+    const res = await fetch(`https://graph.facebook.com/v19.0/${pixelId}/events?access_token=${capiToken}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) console.warn(`[runtime] Meta CAPI dispatch HTTP ${res.status}`);
+  } catch (err) {
+    console.warn(`[runtime] Meta CAPI error:`, err);
+  }
+}
+
 /* ========================================================================== *
  *  Email Delivery Engine (Resend & SMTP)
  * ========================================================================== */
@@ -690,7 +740,7 @@ async function processLeadEmailNotifications(record) {
  * @param {Record<string, unknown>} record
  */
 async function persist(kind, record) {
-  const tasks = [appendJsonl(kind, record), supabaseInsert(kind, record)];
+  const tasks = [appendJsonl(kind, record), supabaseInsert(kind, record), forwardMetaCapi(record)];
   if (kind === "leads") {
     tasks.push(forwardWebhook(record));
     tasks.push(processLeadEmailNotifications(record));
@@ -832,6 +882,9 @@ function funnelPage(funnel) {
           mount.innerHTML = "";
           live = createFunnel(mount, e.data.funnel, {
             isPreview: true,
+            // Only this same-origin handshake turns on canvas drag-to-reorder,
+            // so a visitor appending ?preview=1 never sees editor chrome.
+            isEditor: true,
             trackEvents: false,
             resume: false,
           });
@@ -1112,11 +1165,7 @@ const server = Bun.serve({
     }
 
     // --- Admin APIs ---------------------------------------------------------
-    const isPreviewRecord = (r) => Boolean(
-      r.preview || r.isPreview || r.meta?.preview || r.meta?.isPreview ||
-      (r.referer && (r.referer.includes("preview=1") || r.referer.includes("admin=1"))) ||
-      (r.meta?.url && (r.meta.url.includes("preview=1") || r.meta.url.includes("admin=1")))
-    );
+    // `isPreviewRecord` lives at module scope so the ingest fan-out shares it.
 
     if (path === "/api/admin/leads" && req.method === "GET") {
       const records = (await readJsonlRecords("leads.jsonl")).filter((l) => !isPreviewRecord(l));

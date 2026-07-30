@@ -147,5 +147,118 @@ export const FUNNEL_TEMPLATES = {
         subtext: "Your localized real estate report has been generated."
       }
     ]
+  },
+  "social-recruiting": {
+    id: "social-recruiting",
+    slug: "social-recruiting",
+    title: "Social Recruiting Application",
+    description: "Mobile-first applicant funnel replacing traditional resume/CV uploads.",
+    theme: { preset: "violet-pulse" },
+    steps: [
+      {
+        id: "intro",
+        type: "content",
+        headline: "Join Our Fast-Growing Team 🚀",
+        subtext: "Apply in 60 seconds without updating your resume or CV.",
+        buttonText: "Start 60-Second Application →"
+      },
+      {
+        id: "experience",
+        type: "choice",
+        headline: "How many years of relevant experience do you have?",
+        options: [
+          { id: "exp_1", label: "0 - 1 year (Junior)", icon: "🌱" },
+          { id: "exp_2", label: "2 - 4 years (Mid-Level)", icon: "⚡" },
+          { id: "exp_3", label: "5+ years (Senior / Lead)", icon: "🔥" }
+        ]
+      },
+      {
+        id: "availability",
+        type: "choice",
+        headline: "When could you start?",
+        options: [
+          { id: "imm", label: "Immediately", icon: "⚡" },
+          { id: "notice", label: "Within 2 - 4 weeks", icon: "📅" },
+          { id: "flexible", label: "Flexible / Exploring", icon: "🔍" }
+        ]
+      },
+      {
+        id: "evaluating",
+        type: "loader",
+        headline: "Matching your profile...",
+        subtext: "Please wait while we evaluate your qualifications",
+        items: ["Analyzing experience level...", "Checking team capacity...", "Application match confirmed!"]
+      },
+      {
+        id: "contact",
+        type: "form",
+        headline: "Great news! You qualify for an interview 🎉",
+        subtext: "Enter your contact details so our talent partner can reach out.",
+        fields: [
+          { name: "name", type: "text", label: "Full Name", required: true },
+          { name: "email", type: "email", label: "Email Address", required: true },
+          { name: "phone", type: "tel", label: "Phone Number", required: true }
+        ],
+        buttonText: "Submit Application"
+      },
+      {
+        id: "done",
+        type: "success",
+        headline: "Application Submitted, {{name}}! 🙌",
+        subtext: "Our hiring manager will review your answers and text you shortly."
+      }
+    ]
+  },
+  "solar-calculator": {
+    id: "solar-calculator",
+    slug: "solar-calculator",
+    title: "Solar & Home Savings Estimator",
+    description: "Interactive home savings & quote calculation funnel.",
+    theme: { preset: "emerald-glow" },
+    steps: [
+      {
+        id: "welcome",
+        type: "content",
+        headline: "Calculate Your Monthly Solar Savings ☀️",
+        subtext: "See how much you can save on electricity in 3 simple steps.",
+        buttonText: "Estimate Savings →"
+      },
+      {
+        id: "bill",
+        type: "choice",
+        headline: "What is your average monthly electricity bill?",
+        options: [
+          { id: "b1", label: "$100 - $200 / mo", icon: "💵" },
+          { id: "b2", label: "$200 - $400 / mo", icon: "💰" },
+          { id: "b3", label: "$400+ / mo", icon: "🏦" }
+        ]
+      },
+      {
+        id: "quote_display",
+        type: "content",
+        headline: "Estimated Annual Savings:",
+        blocks: [
+          { type: "calculator", formula: "2400", label: "Potential 25-Year Household Savings:", currency: "$" }
+        ],
+        buttonText: "Check Roof Eligibility →"
+      },
+      {
+        id: "form",
+        type: "form",
+        headline: "Where should we send your official quote?",
+        fields: [
+          { name: "address", type: "address", label: "Home Street Address", required: true },
+          { name: "name", type: "text", label: "Full Name", required: true },
+          { name: "phone", type: "tel", label: "Phone Number", required: true }
+        ],
+        buttonText: "Get Official Solar Proposal"
+      },
+      {
+        id: "complete",
+        type: "success",
+        headline: "Proposal Requested! ☀️",
+        subtext: "Your satellite roof assessment is underway. We will text your results to {{phone}}."
+      }
+    ]
   }
 };

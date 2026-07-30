@@ -10,11 +10,81 @@ import { pipe } from "../piping.js";
 /**
  * @param {import('../types.js').ContentBlock[]} blocks
  * @param {{ lead?: Record<string, unknown>, answers?: Record<string, unknown> }} data
+ * @param {import('../types.js').Step} [step]
+ * @param {import('../controller.js').Controller} [ctrl]
  * @returns {HTMLElement}
  */
-export function renderBlocks(blocks, data) {
+export function renderBlocks(blocks, data, step, ctrl) {
   const wrap = el("div", { class: "of-blocks" });
-  for (const block of blocks) wrap.appendChild(renderBlock(block, data));
+  /** @type {number | null} */
+  let draggedBlockIdx = null;
+
+  blocks.forEach((block, idx) => {
+    const node = renderBlock(block, data);
+    if (ctrl?.isEditor && step) {
+      node.classList.add("is-block-draggable");
+      node.setAttribute("draggable", "true");
+      node.setAttribute("data-block-idx", String(idx));
+
+      const handle = el("span", { class: "of-drag-handle-block", text: "⋮⋮ Drag Block", title: "Drag to reorder block on canvas" });
+      node.prepend(handle);
+
+      node.addEventListener("dragstart", (e) => {
+        draggedBlockIdx = idx;
+        node.classList.add("is-dragging");
+        if (e.dataTransfer) {
+          e.dataTransfer.effectAllowed = "move";
+          e.dataTransfer.setData("text/plain", String(idx));
+        }
+      });
+
+      node.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+        const rect = node.getBoundingClientRect();
+        const isAfter = e.clientY > rect.top + rect.height / 2;
+        node.classList.toggle("drop-after", isAfter);
+        node.classList.toggle("drop-before", !isAfter);
+        node.classList.add("drag-over");
+      });
+
+      node.addEventListener("dragleave", () => {
+        node.classList.remove("drag-over", "drop-before", "drop-after");
+      });
+
+      node.addEventListener("drop", (e) => {
+        e.preventDefault();
+        node.classList.remove("drag-over", "drop-before", "drop-after");
+        if (draggedBlockIdx === null) return;
+        const rect = node.getBoundingClientRect();
+        const isAfter = e.clientY > rect.top + rect.height / 2;
+        let targetIdx = isAfter ? idx + 1 : idx;
+
+        const movedBlocks = [...blocks];
+        const [moved] = movedBlocks.splice(draggedBlockIdx, 1);
+        if (draggedBlockIdx < targetIdx) targetIdx--;
+        movedBlocks.splice(targetIdx, 0, moved);
+
+        step.blocks = movedBlocks;
+        if (window.parent && window.parent !== window) {
+          // Same-origin builder only — never "*", or any site that frames this
+          // funnel would receive the message too.
+          window.parent.postMessage(
+            { type: "of_reorder_blocks", stepId: step.id, blocks: movedBlocks },
+            window.location.origin
+          );
+        }
+        ctrl.refresh();
+      });
+
+      node.addEventListener("dragend", () => {
+        node.classList.remove("is-dragging", "drag-over", "drop-before", "drop-after");
+        draggedBlockIdx = null;
+      });
+    }
+    wrap.appendChild(node);
+  });
+
   return wrap;
 }
 
@@ -89,9 +159,38 @@ function renderBlock(block, data) {
     case "spacer":
       return el("div", { style: { height: `${block.size ?? 12}px` } });
 
+    case "calculator":
+      return renderCalculator(block, data);
+
     default:
       return el("div");
   }
+}
+
+/**
+ * @param {import('../types.js').CalculatorBlock} block
+ * @param {{ lead?: Record<string, unknown>, answers?: Record<string, unknown> }} data
+ */
+function renderCalculator(block, data) {
+  const currency = block.currency || "$";
+  const pipedFormula = pipe(block.formula || "0", data);
+
+  // Built first so the node exists before the async fill-in below can touch it.
+  const wrap = el("div", { class: "of-block-calculator" }, [
+    block.label ? el("div", { class: "of-calc-label", text: pipe(block.label, data) }) : null,
+    el("div", { class: "of-calc-amount", text: currency }),
+  ]);
+
+  // The evaluator is only pulled in for steps that actually carry a calculator,
+  // so a plain funnel never pays for the parser.
+  import("../calculator.js").then(({ evaluateFormula }) => {
+    const amountEl = wrap.querySelector(".of-calc-amount");
+    if (!amountEl) return;
+    const formatted = new Intl.NumberFormat().format(evaluateFormula(pipedFormula));
+    amountEl.textContent = `${currency}${formatted}`;
+  });
+
+  return wrap;
 }
 
 /** @param {import('../types.js').VideoBlock} block */

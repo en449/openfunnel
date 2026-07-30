@@ -307,6 +307,7 @@
  * @property {(e: FunnelEvent) => void} [onEvent]
  * @property {string} [leadEndpoint]
  * @property {boolean} [isPreview]
+ * @property {boolean} [isEditor]
  */
 
 export {}; // keep this a module

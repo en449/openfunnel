@@ -30,7 +30,7 @@ export function renderStep(step, ctrl) {
   ]);
   if (header.childElementCount) screen.appendChild(header);
 
-  if (step.blocks?.length) screen.appendChild(renderBlocks(step.blocks, data));
+  if (step.blocks?.length) screen.appendChild(renderBlocks(step.blocks, data, step, ctrl));
 
   screen.appendChild(renderBody(step, ctrl));
   return screen;

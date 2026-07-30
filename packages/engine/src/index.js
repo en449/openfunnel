@@ -32,6 +32,10 @@ export { pipe } from "./piping.js";
  *                                    `integrations.leadEndpoint` if set.
  * @property {boolean} [resume]       Resume a persisted session. Default true.
  * @property {boolean} [isPreview]    Preview mode flag inside visual builder.
+ *                                    Suppresses analytics; see `Controller._emit`.
+ * @property {boolean} [isEditor]     Enable in-canvas editing affordances
+ *                                    (drag-to-reorder). Builder-only — never set
+ *                                    this from a URL parameter.
  */
 
 /**

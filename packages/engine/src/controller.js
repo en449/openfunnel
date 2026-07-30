@@ -39,6 +39,12 @@ export class Controller {
       ...funnel.settings,
     };
     this.reducedMotion = prefersReducedMotion();
+    // Canvas editing affordances (drag-to-reorder) are opt-in from the builder
+    // only. Deliberately NOT derived from `?preview=1` / `?admin=1`: those are
+    // visitor-supplied, so keying off them would show editor chrome to anyone
+    // who appends the param to a live funnel. `isPreview` stays what it is —
+    // an analytics suppression flag — and is checked in `_emit()`.
+    this.isEditor = Boolean(options.isEditor);
     /** @type {number[]} Pending timeout ids, cleared on every navigation. */
     this._timers = [];
     this._destroyed = false;
@@ -202,6 +208,15 @@ export class Controller {
     }, ms);
     this._timers.push(id);
     return id;
+  }
+
+  /**
+   * Repaint the current step in place, with no transition and without touching
+   * `index` or `history`. In-canvas editing uses this after mutating the step it
+   * is showing, so renderers still never reach for `_render` themselves.
+   */
+  refresh() {
+    this._render("none");
   }
 
   /* ----- internals ------------------------------------------------------ */

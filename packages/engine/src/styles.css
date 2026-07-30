@@ -354,6 +354,104 @@ textarea.of-input { min-height: 96px; resize: vertical; }
   box-shadow: 0 12px 28px -4px color-mix(in srgb, var(--of-primary) 50%, transparent);
 }
 
+/* ---- Calculator Block ---------------------------------------------------- */
+.of-block-calculator {
+  text-align: center;
+  padding: 16px 20px;
+  border-radius: var(--of-radius, 16px);
+  background: color-mix(in srgb, var(--of-primary) 10%, transparent);
+  border: 1.5px solid color-mix(in srgb, var(--of-primary) 30%, transparent);
+  margin: 6px 0;
+}
+.of-calc-label {
+  font-size: 14px;
+  color: var(--of-muted);
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.of-calc-amount {
+  font-size: 32px;
+  font-weight: 850;
+  letter-spacing: -0.02em;
+  color: var(--of-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Direct Canvas Drag-and-Drop Editor Controls ------------------------ */
+.of-option.is-draggable {
+  cursor: grab;
+  position: relative;
+}
+.of-option.is-draggable:active {
+  cursor: grabbing;
+}
+.of-drag-handle-canvas {
+  font-size: 14px;
+  color: var(--of-muted);
+  opacity: 0.6;
+  padding: 0 4px;
+  user-select: none;
+  cursor: grab;
+  margin-right: 4px;
+}
+.of-option.drag-over {
+  border-color: var(--of-primary);
+  background: color-mix(in srgb, var(--of-primary) 12%, transparent);
+}
+.of-option.drop-before {
+  border-top: 3px solid var(--of-primary) !important;
+  box-shadow: 0 -4px 12px color-mix(in srgb, var(--of-primary) 40%, transparent);
+}
+.of-option.drop-after {
+  border-bottom: 3px solid var(--of-primary) !important;
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--of-primary) 40%, transparent);
+}
+.of-option.is-dragging {
+  opacity: 0.35;
+  transform: scale(0.97);
+}
+
+.is-block-draggable {
+  position: relative;
+  cursor: grab;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+  border: 1px dashed transparent;
+  border-radius: var(--of-radius, 12px);
+  padding: 4px;
+}
+.is-block-draggable:hover {
+  border-color: color-mix(in srgb, var(--of-primary) 50%, transparent);
+}
+.is-block-draggable:active {
+  cursor: grabbing;
+}
+.of-drag-handle-block {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--of-primary);
+  background: color-mix(in srgb, var(--of-primary) 12%, transparent);
+  padding: 2px 8px;
+  border-radius: 999px;
+  margin-bottom: 6px;
+  user-select: none;
+  cursor: grab;
+}
+.is-block-draggable.drag-over {
+  background: color-mix(in srgb, var(--of-primary) 10%, transparent);
+}
+.is-block-draggable.drop-before {
+  border-top: 3px solid var(--of-primary) !important;
+}
+.is-block-draggable.drop-after {
+  border-bottom: 3px solid var(--of-primary) !important;
+}
+.is-block-draggable.is-dragging {
+  opacity: 0.3;
+}
+
 /* ---- Reduced motion: disable all movement ------------------------------- */
 @media (prefers-reduced-motion: reduce) {
   .of-step, .of-progress-fill, .of-loader-fill, .of-option, .of-cta,

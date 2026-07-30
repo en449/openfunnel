@@ -18,6 +18,7 @@ const FIELD_HTML = {
   textarea: { input: "textarea" },
   select: { input: "select" },
   file: { input: "input", type: "file" },
+  address: { input: "input", type: "text", autocomplete: "street-address" },
 };
 
 /**

@@ -1092,6 +1092,24 @@ window.addEventListener("message", (e) => {
     previewReady = true;
     pushPreview();
   }
+  if (e.data?.type === "of_reorder_options" && state.funnel) {
+    const { stepId, options } = e.data;
+    const targetStep = state.funnel.steps.find((s) => s.id === stepId);
+    if (targetStep && Array.isArray(options)) {
+      targetStep.options = options;
+      markDirty();
+      renderInspector();
+    }
+  }
+  if (e.data?.type === "of_reorder_blocks" && state.funnel) {
+    const { stepId, blocks } = e.data;
+    const targetStep = state.funnel.steps.find((s) => s.id === stepId);
+    if (targetStep && Array.isArray(blocks)) {
+      targetStep.blocks = blocks;
+      markDirty();
+      renderInspector();
+    }
+  }
 });
 
 /* ========================================================================== *
