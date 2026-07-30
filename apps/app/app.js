@@ -574,8 +574,10 @@ function renderCaptureFeed() {
 
   feed.innerHTML = recent
     .map((lead) => {
-      const who = lead.lead?.email || lead.lead?.phone || lead.lead?.name || "Anonymous";
-      const initial = who.charAt(0).toUpperCase();
+      // Coerce: `lead` is public input, so any of these can be an object or a
+      // number. `.charAt` on one throws and permanently blanks the operator's feed.
+      const who = String(lead.lead?.email || lead.lead?.phone || lead.lead?.name || "Anonymous");
+      const initial = (who.charAt(0) || "?").toUpperCase();
       return `<div class="feed-row" style="cursor:pointer" data-lead-id="${esc(lead.id || "")}">
         <div style="display:flex;align-items:center;gap:10px;overflow:hidden">
           <span class="avatar-bubble">${esc(initial)}</span>
@@ -1145,7 +1147,7 @@ function renderLeads() {
 
   body.innerHTML = leads
     .map((lead, i) => {
-      const who = lead.lead?.email || lead.lead?.phone || lead.lead?.name || "Anonymous";
+      const who = String(lead.lead?.email || lead.lead?.phone || lead.lead?.name || "Anonymous");
       const answers = Object.entries(lead.answers || {})
         .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(", ") : v}`)
         .join(" · ");
@@ -1162,7 +1164,7 @@ function renderLeads() {
 function openLeadDrawer(lead) {
   const contact = lead.lead || {};
   const answers = lead.answers || {};
-  const who = contact.email || contact.phone || contact.name || "Anonymous Visitor";
+  const who = String(contact.email || contact.phone || contact.name || "Anonymous Visitor");
 
   const contactItems = Object.entries(contact)
     .filter(([, v]) => v)
@@ -1181,7 +1183,7 @@ function openLeadDrawer(lead) {
 
   $("drawerBody").innerHTML = `
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px">
-      <span class="avatar-bubble" style="width:40px;height:40px;font-size:16px">${esc(who.charAt(0).toUpperCase())}</span>
+      <span class="avatar-bubble" style="width:40px;height:40px;font-size:16px">${esc((who.charAt(0) || "?").toUpperCase())}</span>
       <div>
         <div style="font-size:16px;font-weight:600;color:var(--text)">${esc(who)}</div>
         <div style="font-size:12px;color:var(--text-2);margin-top:2px">Captured ${esc(relativeTime(lead.received_at))} in <span class="tag">${esc(lead.funnelId || "funnel")}</span></div>

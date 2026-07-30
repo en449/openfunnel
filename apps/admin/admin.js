@@ -88,16 +88,26 @@ function filterLeads() {
 
 function exportCsv() {
   if (!allLeads.length) return alert("No lead data to export.");
+  // Lead values are whatever a stranger typed into a public form. Two things to
+  // get right, and this exporter previously got neither: Excel/Sheets treat a
+  // leading =, +, - or @ as a formula, and a raw " closes the cell early so the
+  // rest of the value lands in a fresh unquoted one. Same helper as the console.
+  const cell = (v) => {
+    const raw = String(v ?? "");
+    const safe = /^[=+\-@\t\r]/.test(raw) ? `'${raw}` : raw;
+    return `"${safe.replace(/"/g, '""')}"`;
+  };
+
   const headers = ["received_at", "funnelId", "contact", "answers", "ip"];
   const rows = allLeads.map((l) => [
     l.received_at || "",
     l.funnelId || "",
     l.lead?.email || l.lead?.phone || l.lead?.name || "",
-    JSON.stringify(l.answers || {}).replace(/"/g, '""'),
+    JSON.stringify(l.answers || {}),
     l.ip || ""
   ]);
 
-  const csvContent = [headers.join(","), ...rows.map((r) => r.map((cell) => `"${cell}"`).join(","))].join("\n");
+  const csvContent = [headers.join(","), ...rows.map((r) => r.map(cell).join(","))].join("\n");
   const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");

@@ -115,11 +115,16 @@ export function buildConsentBar(funnel, onDecide) {
         "We use marketing pixels to measure our ads. Accept to allow them, or decline — either way you can use this page.",
     }),
   ]);
-  if (cfg.policyUrl) {
+  // Same reasoning as `Controller.redirect`: operator-written, but a link target
+  // is never a reason to allow `javascript:`.
+  const policyUrl = /^https?:\/\//i.test(String(cfg.policyUrl || "")) || String(cfg.policyUrl || "").startsWith("/")
+    ? cfg.policyUrl
+    : "";
+  if (policyUrl) {
     copy.appendChild(
       el("a", {
         class: "of-consent-link",
-        href: cfg.policyUrl,
+        href: policyUrl,
         target: "_blank",
         rel: "noopener noreferrer",
         text: "Privacy policy",

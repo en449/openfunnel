@@ -209,7 +209,17 @@ export class Controller {
    */
   redirect(url) {
     this._pixel("complete", { funnelId: this.funnel.id });
-    if (url) window.location.href = url;
+    // Only ever navigate to a real web address. A funnel document is
+    // operator-written, so this is not a privilege boundary — but `javascript:`
+    // and `data:` have no legitimate use here, and refusing them means a
+    // document that reaches the engine by some other route cannot execute.
+    if (!url) return;
+    const safe = /^https?:\/\//i.test(String(url)) || String(url).startsWith("/");
+    if (!safe) {
+      console.warn("[openfunnel] refusing redirect to non-http(s) target");
+      return;
+    }
+    window.location.href = url;
   }
 
   /**

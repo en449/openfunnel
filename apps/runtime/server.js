@@ -27,7 +27,7 @@
  */
 
 import { mkdir, readdir, readFile, writeFile, appendFile, unlink } from "node:fs/promises";
-import { extname, join, normalize, resolve } from "node:path";
+import { extname, join, normalize, resolve, sep } from "node:path";
 import { randomInt, timingSafeEqual } from "node:crypto";
 
 /* ========================================================================== *
@@ -59,6 +59,30 @@ const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
 
 /** Slugs are user-facing URL segments — keep them boring so path joins are safe. */
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/i;
+
+/**
+ * Is `target` the root directory itself, or genuinely inside it?
+ *
+ * A bare `target.startsWith(root)` is the usual way to write this and it is
+ * subtly wrong: with a root of `…/apps/app`, the sibling `…/apps/app-legacy`
+ * also passes, so `/_app/..%2fapp-legacy/secret` would escape. No such sibling
+ * exists today, which makes this a latent bug rather than a live one — the point
+ * is that creating one must not silently open a hole. Requiring the separator
+ * closes the whole class.
+ *
+ * The `..` still has to arrive percent-encoded to get this far: the WHATWG URL
+ * parser resolves literal (and `%2e`-encoded) dot segments before routing, but
+ * `%2f` survives to `decodeURIComponent`, so this check is load-bearing, not
+ * decoration.
+ *
+ * @param {string} target  An already-`normalize`d absolute path.
+ * @param {string} root    An absolute directory.
+ * @returns {boolean}
+ */
+function isInside(target, root) {
+  const base = root.endsWith(sep) ? root.slice(0, -sep.length) : root;
+  return target === base || target.startsWith(base + sep);
+}
 
 /** Client-side console routes the server must answer with the app shell. */
 const APP_ROUTES = new Set([
@@ -204,7 +228,7 @@ async function loadFunnel(slug) {
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.funnel;
 
   const file = join(FUNNELS_DIR, `${slug}.json`);
-  if (!file.startsWith(FUNNELS_DIR)) return null; // defence in depth
+  if (!isInside(file, FUNNELS_DIR)) return null; // defence in depth
   try {
     const funnel = JSON.parse(await readFile(file, "utf8"));
     if (!Array.isArray(funnel?.steps) || funnel.steps.length === 0) {
@@ -276,17 +300,54 @@ async function supabaseInsert(table, row) {
  *
  * @param {Record<string, unknown>} record
  */
-/** Hosts a webhook must never resolve to — cloud metadata and the local network. */
-const BLOCKED_HOST_RE =
-  /^(localhost$|127\.|0\.0\.0\.0$|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|\[?::1\]?$|\[?f[cd][0-9a-f]{2}:|.*\.internal$|.*\.local$)/i;
+/** Names that resolve to the local machine even though they are not literals. */
+const BLOCKED_NAME_RE = /^(localhost|.*\.localhost|.*\.internal|.*\.local|.*\.home\.arpa)$/i;
+
+/**
+ * Reserved IPv4 ranges we refuse to POST to, as `[firstOctet, test]` predicates.
+ * Deliberately spelled out rather than crammed into one regex — the previous
+ * single-regex version silently missed several of these.
+ */
+function isBlockedIpv4(host) {
+  const parts = host.split(".");
+  if (parts.length !== 4) return false;
+  const [a, b] = parts.map(Number);
+  if (parts.some((p) => !/^\d{1,3}$/.test(p)) || [a, b].some((n) => Number.isNaN(n))) return false;
+  if (a === 0 || a === 127) return true;                    // this-host, loopback
+  if (a === 10) return true;                                // private
+  if (a === 169 && b === 254) return true;                  // link-local + cloud metadata
+  if (a === 172 && b >= 16 && b <= 31) return true;         // private
+  if (a === 192 && b === 168) return true;                  // private
+  if (a === 100 && b >= 64 && b <= 127) return true;        // RFC 6598 carrier-grade NAT
+  return false;
+}
+
+/**
+ * @param {string} host  An IPv6 literal WITHOUT surrounding brackets, lower-cased.
+ */
+function isBlockedIpv6(host) {
+  if (host === "::1" || host === "::") return true;          // loopback, unspecified
+  // IPv4-mapped (`::ffff:127.0.0.1`, which the URL parser rewrites to
+  // `::ffff:7f00:1`). No webhook has a legitimate reason to be one, and letting
+  // them through was a straight loopback bypass — the old regex missed it.
+  if (host.startsWith("::ffff:")) return true;
+  if (/^f[cd][0-9a-f]{2}:/.test(host)) return true;          // fc00::/7 unique-local
+  if (/^fe[89ab][0-9a-f]:/.test(host)) return true;          // fe80::/10 link-local
+  return false;
+}
 
 /**
  * Is this a destination we are willing to POST lead data to?
  *
- * Blocks non-HTTP schemes and anything addressed at the loopback interface,
- * the private ranges, or the cloud metadata endpoint. This is a literal-address
- * check: it does not defeat a hostname that resolves to a private IP (DNS
- * rebinding), which needs resolution-time filtering to close properly.
+ * Blocks non-HTTP schemes and anything addressed at the loopback interface, the
+ * private ranges, or the cloud metadata endpoint. The URL parser normalises the
+ * decimal/hex/octal IPv4 spellings (`http://2130706433/`) before we see them, so
+ * those arrive here as plain dotted quads.
+ *
+ * Still a literal-address check: it does not defeat a hostname that RESOLVES to
+ * a private IP (DNS rebinding), which needs resolution-time filtering to close
+ * properly. The destination is operator-owned, so that residual gap is a
+ * misconfiguration risk rather than something a visitor can reach.
  */
 function isSafeWebhookTarget(raw) {
   let url;
@@ -296,7 +357,11 @@ function isSafeWebhookTarget(raw) {
     return false;
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") return false;
-  return !BLOCKED_HOST_RE.test(url.hostname);
+
+  const host = url.hostname.toLowerCase();
+  if (host.startsWith("[") && host.endsWith("]")) return !isBlockedIpv6(host.slice(1, -1));
+  if (BLOCKED_NAME_RE.test(host)) return false;
+  return !isBlockedIpv4(host);
 }
 
 async function forwardWebhook(record) {
@@ -658,6 +723,16 @@ const verifiedEmails = new Map();
 
 const OTP_TTL_MS = 10 * 60 * 1000;
 const OTP_MAX_ATTEMPTS = 5;
+
+/**
+ * Absolute ceiling on verification emails per hour, across every caller.
+ *
+ * The per-address and per-IP limits are the everyday guards; this one exists
+ * because the per-IP key comes from `x-forwarded-for`, which the caller sets.
+ * Bounding the total means the worst case is a capped amount of outbound mail
+ * rather than an open relay. Generous by default so a real funnel never notices.
+ */
+const OTP_SEND_HOURLY_CAP = Math.max(1, Number(process.env.OTP_MAX_PER_HOUR) || 500);
 const VERIFIED_TTL_MS = 30 * 60 * 1000;
 
 /**
@@ -1027,7 +1102,7 @@ const MIME = {
 async function serveStaticFile(rootDir, prefix, pathname) {
   const rel = decodeURIComponent(pathname.slice(prefix.length));
   const target = normalize(join(rootDir, rel));
-  if (!target.startsWith(rootDir)) return new Response("Forbidden", { status: 403 });
+  if (!isInside(target, rootDir)) return new Response("Forbidden", { status: 403 });
 
   const file = Bun.file(target);
   if (!(await file.exists())) return new Response("Not found", { status: 404 });
@@ -1051,7 +1126,7 @@ async function serveStaticFile(rootDir, prefix, pathname) {
 async function serveEngine(pathname) {
   const rel = decodeURIComponent(pathname.slice("/_of/".length));
   const target = normalize(join(ENGINE_SRC, rel));
-  if (!target.startsWith(ENGINE_SRC)) return new Response("Forbidden", { status: 403 });
+  if (!isInside(target, ENGINE_SRC)) return new Response("Forbidden", { status: 403 });
 
   const file = Bun.file(target);
   if (!(await file.exists())) return new Response("Not found", { status: 404 });
@@ -1089,6 +1164,42 @@ const CORS = {
   "access-control-max-age": "86400",
 };
 
+/**
+ * The only paths that may be called cross-origin. A funnel is embedded on the
+ * operator's own marketing site, so ingest and the email challenge have to work
+ * from another origin — nothing else does.
+ *
+ * Previously every path answered `OPTIONS` with `Allow-Origin: *`, which
+ * green-lit the preflight for `/api/builder/*` and `/api/admin/*` too.
+ */
+const PUBLIC_CORS_PATHS = new Set(["/api/lead", "/api/events", "/api/otp/send", "/api/otp/verify"]);
+
+/**
+ * Reject a privileged request that a browser made from another site.
+ *
+ * Without this the console's own APIs are CSRF-able, and on the documented
+ * default (no `ADMIN_TOKEN`, so `requireAdmin` trusts loopback) that is a real
+ * takeover: `readJson` ignores `Content-Type`, so any page the operator visits
+ * can `fetch("http://127.0.0.1:3000/api/builder/save", …)` as a CORS *simple*
+ * request — no preflight to block it — and write a funnel document. The reply is
+ * unreadable to the attacker, but the write already happened, and a funnel
+ * document renders on the console's own origin where the admin token lives.
+ *
+ * `Origin` and `Sec-Fetch-Site` are set by the browser and cannot be forged by
+ * page script. A non-browser client (curl, CI, a server-side integration) sends
+ * neither and is unaffected.
+ *
+ * @param {Request} req
+ * @param {URL} url
+ * @returns {boolean} true when the call must be refused.
+ */
+function isCrossSiteRequest(req, url) {
+  const site = req.headers.get("sec-fetch-site");
+  if (site && site !== "same-origin" && site !== "none") return true;
+  const origin = req.headers.get("origin");
+  return Boolean(origin && origin !== url.origin);
+}
+
 /** Body size guard — these endpoints take small JSON, never uploads. */
 const MAX_BODY = 64 * 1024;
 
@@ -1119,14 +1230,24 @@ function clientIp(req, server) {
  *  Router
  * ========================================================================== */
 
-const server = Bun.serve({
+// Only listen when this file is the entrypoint. Importing it (the egress-guard
+// unit tests do) must not bind a port or print a banner — the handler takes its
+// own `server` argument, so nothing inside the router depends on this binding.
+const server = import.meta.main ? Bun.serve({
   port: PORT,
 
   async fetch(req, server) {
     const url = new URL(req.url);
     const path = url.pathname.replace(/\/+$/, "") || "/";
 
-    if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
+    // Only the public ingest surface is cross-origin callable. Answering every
+    // path with `Allow-Origin: *` would let a preflight succeed for the
+    // privileged routes below.
+    if (req.method === "OPTIONS") {
+      return PUBLIC_CORS_PATHS.has(path)
+        ? new Response(null, { status: 204, headers: CORS })
+        : new Response(null, { status: 204 });
+    }
 
     // --- Health -------------------------------------------------------------
     if (path === "/healthz") return json({ ok: true, supabase: SUPABASE_ON });
@@ -1196,6 +1317,10 @@ const server = Bun.serve({
       path.startsWith("/api/builder/") ||
       path.startsWith("/api/ai/")
     ) {
+      // Refuse before authenticating: on a loopback-trust deploy the caller is
+      // already "authorised", so the browser-driven CSRF has to be stopped here.
+      if (isCrossSiteRequest(req, url)) return json({ error: "cross_site_denied" }, 403);
+
       const denied = requireAdmin(req, server);
       if (denied) return denied;
     }
@@ -1220,7 +1345,7 @@ const server = Bun.serve({
       if (!SLUG_RE.test(slug)) return json({ error: "invalid_slug" }, 400);
 
       const targetPath = normalize(join(FUNNELS_DIR, `${slug}.json`));
-      if (!targetPath.startsWith(FUNNELS_DIR)) return json({ error: "forbidden_path" }, 403);
+      if (!isInside(targetPath, FUNNELS_DIR)) return json({ error: "forbidden_path" }, 403);
       await mkdir(FUNNELS_DIR, { recursive: true });
       await writeFile(targetPath, JSON.stringify(body, null, 2), "utf8");
       cache.delete(slug);
@@ -1232,7 +1357,7 @@ const server = Bun.serve({
       const slug = body?.slug;
       if (!slug || !SLUG_RE.test(slug)) return json({ error: "invalid_slug" }, 400);
       const targetPath = normalize(join(FUNNELS_DIR, `${slug}.json`));
-      if (!targetPath.startsWith(FUNNELS_DIR)) return json({ error: "forbidden_path" }, 403);
+      if (!isInside(targetPath, FUNNELS_DIR)) return json({ error: "forbidden_path" }, 403);
       try {
         await unlink(targetPath);
       } catch {}
@@ -1247,9 +1372,18 @@ const server = Bun.serve({
       const source = await loadFunnel(slug);
       if (!source) return json({ error: "not_found" }, 404);
 
-      const newSlug = `${slug}-copy-${Date.now().toString(36).slice(-4)}`;
+      // Trim the base so the derived slug still fits SLUG_RE's 64-char budget.
+      // Without this a long source slug produces a copy that is written to disk
+      // and then unloadable, because `loadFunnel` rejects the over-long name.
+      const suffix = `-copy-${Date.now().toString(36).slice(-4)}`;
+      const newSlug = `${slug.slice(0, 64 - suffix.length)}${suffix}`;
+      if (!SLUG_RE.test(newSlug)) return json({ error: "invalid_slug" }, 400);
+
       const copyDoc = { ...source, id: newSlug, slug: newSlug, name: `${source.name || slug} (Copy)` };
       const targetPath = normalize(join(FUNNELS_DIR, `${newSlug}.json`));
+      // Same guard as save/delete. `newSlug` is safe by construction here, but a
+      // write path that skips the check is exactly how the next edit regresses.
+      if (!isInside(targetPath, FUNNELS_DIR)) return json({ error: "forbidden_path" }, 403);
       await writeFile(targetPath, JSON.stringify(copyDoc, null, 2), "utf8");
       cache.set(newSlug, { funnel: copyDoc, at: Date.now() });
       return json({ ok: true, funnel: copyDoc });
@@ -1372,6 +1506,19 @@ const server = Bun.serve({
       if (!rateLimit(`otp-send:${email}`, 1, 60 * 1000)) return tooMany();
       if (!rateLimit(`otp-send-hourly:${email}`, 5, 60 * 60 * 1000)) return tooMany();
       if (!rateLimit(`otp-send-ip:${ip}`, 20, 60 * 60 * 1000)) return tooMany();
+
+      // The per-caller ceiling above is keyed on `clientIp`, which honours
+      // `x-forwarded-for` so a proxied deploy attributes traffic correctly — and
+      // that header is caller-supplied, so an attacker rotates it and the ceiling
+      // never binds. What is actually at stake is outbound mail: this endpoint
+      // sends a "Verification Code" message to any address in the request, so an
+      // unbounded caller turns the operator's mail domain into an open relay and
+      // burns their sending reputation.
+      //
+      // This cap is global and keyed on nothing the caller controls, so no header
+      // rotates past it. It sits after the per-address limits so ordinary traffic
+      // never reaches it. Raise it with OTP_MAX_PER_HOUR on a high-volume funnel.
+      if (!rateLimit("otp-send-global", OTP_SEND_HOURLY_CAP, 60 * 60 * 1000)) return tooMany();
 
       const res = await sendOtpCode(email);
       return json(res, res.ok ? 200 : 502, CORS);
@@ -1549,8 +1696,16 @@ const server = Bun.serve({
     console.error("[runtime] unhandled:", err);
     return json({ error: "internal" }, 500);
   },
-});
+}) : null;
 
-console.log(`\n  OpenFunnel runtime → http://localhost:${server.port}`);
-console.log(`  funnels: ${FUNNELS_DIR}`);
-console.log(`  data:    ${DATA_DIR}${SUPABASE_ON ? "  (+ Supabase)" : ""}\n`);
+if (server) {
+  console.log(`\n  OpenFunnel runtime → http://localhost:${server.port}`);
+  console.log(`  funnels: ${FUNNELS_DIR}`);
+  console.log(`  data:    ${DATA_DIR}${SUPABASE_ON ? "  (+ Supabase)" : ""}\n`);
+}
+
+/* ========================================================================== *
+ *  Exports — for tests only. The server is started above when run directly.
+ * ========================================================================== */
+
+export { isSafeWebhookTarget, isInside, isPreviewRecord };
