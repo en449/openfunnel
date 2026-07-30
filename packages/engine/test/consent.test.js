@@ -200,3 +200,52 @@ test("the controller withholds pixels until consent is granted", async () => {
 
   ctrl.destroy();
 });
+
+/* ===== navigable-URL guard =============================================== *
+ *  Shared by `Controller.redirect` and the consent bar's policy link. The
+ *  interesting cases are the ones a naive `startsWith("/")` waves through.
+ * ========================================================================== */
+
+test("isNavigableUrl accepts only http(s) and true same-origin paths", async () => {
+  const { isNavigableUrl } = await import("../src/dom.js");
+
+  for (const good of ["https://example.com/p", "http://example.com", "/privacy", "/a/b?c=1"]) {
+    expect(isNavigableUrl(good)).toBe(true);
+  }
+  for (const bad of [
+    "javascript:alert(1)",
+    "data:text/html,<script>alert(1)</script>",
+    "vbscript:msgbox(1)",
+    "//evil.com", // protocol-relative: the browser reads this as https://evil.com
+    "/\\evil.com", // same hop, backslash spelling
+    "",
+    "   ",
+    null,
+    undefined,
+  ]) {
+    expect(isNavigableUrl(/** @type {any} */ (bad))).toBe(false);
+  }
+});
+
+test("the consent bar drops a policy link it would not navigate to", async () => {
+  const { buildConsentBar } = await import("../src/consent.js");
+  localStorage.clear();
+
+  const hostile = buildConsentBar(
+    { ...funnelWith(true), consent: { enabled: true, policyUrl: "javascript:alert(1)" } },
+    () => {}
+  );
+  expect(hostile?.querySelector(".of-consent-link")).toBeNull();
+
+  const relative = buildConsentBar(
+    { ...funnelWith(true), consent: { enabled: true, policyUrl: "//evil.com" } },
+    () => {}
+  );
+  expect(relative?.querySelector(".of-consent-link")).toBeNull();
+
+  const good = buildConsentBar(
+    { ...funnelWith(true), consent: { enabled: true, policyUrl: "https://example.com/privacy" } },
+    () => {}
+  );
+  expect(good?.querySelector(".of-consent-link")?.getAttribute("href")).toBe("https://example.com/privacy");
+});

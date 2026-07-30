@@ -9,7 +9,7 @@
  * keeps the funnel logic in one auditable place.
  */
 
-import { el, clear, uid, prefersReducedMotion } from "./dom.js";
+import { el, clear, uid, prefersReducedMotion, isNavigableUrl } from "./dom.js";
 import { resolveNext } from "./branching.js";
 import { renderStep } from "./render/index.js";
 import { applyTheme, loadThemeFont } from "./theme.js";
@@ -214,8 +214,7 @@ export class Controller {
     // and `data:` have no legitimate use here, and refusing them means a
     // document that reaches the engine by some other route cannot execute.
     if (!url) return;
-    const safe = /^https?:\/\//i.test(String(url)) || String(url).startsWith("/");
-    if (!safe) {
+    if (!isNavigableUrl(url)) {
       console.warn("[openfunnel] refusing redirect to non-http(s) target");
       return;
     }

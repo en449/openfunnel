@@ -5,6 +5,31 @@
  */
 
 /**
+ * May this string be used as a navigation target or an `href`?
+ *
+ * Accepts absolute http(s) and same-origin paths, and nothing else. Two traps
+ * this closes, both of which a naive `startsWith("/")` check waves through:
+ *
+ *   //evil.com    protocol-relative — the browser reads it as https://evil.com
+ *   /\evil.com    the same thing; browsers normalise the backslash to a slash
+ *
+ * Funnel documents are operator-written, so this is not a privilege boundary —
+ * it is here so a document that arrives by some other route cannot turn a
+ * "redirect on completion" field into `javascript:` execution or an open
+ * redirect that lends the operator's domain to a phishing hop.
+ *
+ * @param {unknown} url
+ * @returns {boolean}
+ */
+export function isNavigableUrl(url) {
+  const s = String(url ?? "").trim();
+  if (!s) return false;
+  if (/^https?:\/\//i.test(s)) return true;
+  // Same-origin path only: one leading slash, not two, and no backslash trick.
+  return s.startsWith("/") && !s.startsWith("//") && !s.startsWith("/\\");
+}
+
+/**
  * Create an element with attributes/props and children in one call.
  *
  * @param {string} tag

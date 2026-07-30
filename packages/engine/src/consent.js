@@ -23,7 +23,7 @@
  * which is the conservative direction.
  */
 
-import { el } from "./dom.js";
+import { el, isNavigableUrl } from "./dom.js";
 
 const PREFIX = "openfunnel:consent:";
 
@@ -116,10 +116,8 @@ export function buildConsentBar(funnel, onDecide) {
     }),
   ]);
   // Same reasoning as `Controller.redirect`: operator-written, but a link target
-  // is never a reason to allow `javascript:`.
-  const policyUrl = /^https?:\/\//i.test(String(cfg.policyUrl || "")) || String(cfg.policyUrl || "").startsWith("/")
-    ? cfg.policyUrl
-    : "";
+  // is never a reason to allow `javascript:` or a protocol-relative hop.
+  const policyUrl = isNavigableUrl(cfg.policyUrl) ? cfg.policyUrl : "";
   if (policyUrl) {
     copy.appendChild(
       el("a", {

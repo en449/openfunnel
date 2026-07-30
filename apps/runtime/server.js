@@ -1206,9 +1206,22 @@ const PUBLIC_CORS_PATHS = new Set(["/api/lead", "/api/events", "/api/otp/send", 
  */
 function isCrossSiteRequest(req, url) {
   const site = req.headers.get("sec-fetch-site");
-  if (site && site !== "same-origin" && site !== "none") return true;
+  // Authoritative whenever the browser sends it (every current browser does),
+  // and page script cannot forge it. `none` is a typed URL or a bookmark.
+  if (site) return site !== "same-origin" && site !== "none";
+
+  // Legacy fallback for a browser too old to send Sec-Fetch-*. Compare HOST, not
+  // the whole origin: a TLS-terminating proxy — which is every PaaS deployment —
+  // means the browser sends an `https://` Origin while this process only ever
+  // sees `http://` reconstructed from the Host header. Comparing origins would
+  // 403 the operator's own console on any real production setup.
   const origin = req.headers.get("origin");
-  return Boolean(origin && origin !== url.origin);
+  if (!origin) return false; // curl, CI, server-side integrations
+  try {
+    return new URL(origin).host !== url.host;
+  } catch {
+    return true; // unparseable Origin is not something to give the benefit of
+  }
 }
 
 /** Body size guard — these endpoints take small JSON, never uploads. */
