@@ -985,7 +985,12 @@ function esc(value) {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(/"/g, "&quot;")
+    // Every attribute in this file is double-quoted, so `'` is not strictly
+    // required today — it is escaped anyway so that writing `attr='${esc(x)}'`
+    // some day is not an XSS. The console's `esc()` already does this; matching
+    // them means there is no "which escaper was that" question later.
+    .replace(/'/g, "&#39;");
 }
 
 /**
