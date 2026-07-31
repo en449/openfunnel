@@ -53,7 +53,7 @@ export class Controller {
     /** @type {import('./types.js').FunnelState} */
     this.state = {
       sessionId: uid(),
-      index: 0,
+      index: typeof options.stepIndex === "number" ? Math.max(0, Math.min(options.stepIndex, this.steps.length - 1)) : 0,
       history: [],
       answers: {},
       lead: {},
@@ -112,6 +112,25 @@ export class Controller {
       el("div", { class: "of-topbar" }, [this.backEl, this.progressEl]),
       this.viewport,
     );
+
+    const hideBranding = Boolean(
+      this.funnel.branding?.hidden ||
+      this.options.hideBranding ||
+      (typeof localStorage !== "undefined" && localStorage.getItem("of.branding.hidden") === "true")
+    );
+    if (!hideBranding) {
+      this.container.appendChild(
+        el("div", { class: "of-branding-footer" }, [
+          el("a", {
+            href: "https://openfunnel.org",
+            target: "_blank",
+            rel: "noopener",
+            class: "of-branding-link",
+            html: "⚡ Powered by <strong>OpenFunnel</strong>"
+          })
+        ])
+      );
+    }
 
     const consentBar = buildConsentBar(this.funnel, (decision) => {
       if (decision === "granted") this._grantConsent();
@@ -245,6 +264,43 @@ export class Controller {
     this._render("none");
   }
 
+  /**
+   * Update funnel data and step index live from preview frame without DOM recreation.
+   * @param {import('./types.js').Funnel} funnel
+   * @param {number} [stepIndex]
+   */
+  updateFunnel(funnel, stepIndex) {
+    if (!funnel || !Array.isArray(funnel.steps) || funnel.steps.length === 0) return;
+    this.funnel = funnel;
+    this.steps = funnel.steps;
+    if (typeof stepIndex === "number") {
+      this.state.index = Math.max(0, Math.min(stepIndex, this.steps.length - 1));
+    } else if (this.state.index >= this.steps.length) {
+      this.state.index = Math.max(0, this.steps.length - 1);
+    }
+    applyTheme(this.container, this.funnel.theme, {
+      allowRemote: marketingAllowed(this.funnel, this.key),
+    });
+    this.refresh();
+  }
+
+  /**
+   * Jump directly to a step by index or ID without clearing history.
+   * @param {number|string} indexOrId
+   */
+  goToStep(indexOrId) {
+    let idx = -1;
+    if (typeof indexOrId === "number") {
+      idx = indexOrId;
+    } else if (typeof indexOrId === "string") {
+      idx = this.steps.findIndex((s) => s.id === indexOrId);
+    }
+    if (idx >= 0 && idx < this.steps.length) {
+      this.state.index = idx;
+      this.refresh();
+    }
+  }
+
   /* ----- internals ------------------------------------------------------ */
 
   /**
@@ -290,7 +346,12 @@ export class Controller {
     const screen = renderStep(step, this);
     const mode = this.reducedMotion ? "none" : transition;
 
-    // Update chrome.
+    // Update chrome. The two attributes below are what let a landing step break
+    // out of the 9:16 phone frame on desktop (`width: "wide"`) and collapse the
+    // top bar when neither the back button nor the progress bar is showing —
+    // both are CSS-only effects keyed off the step currently on screen.
+    this.container.dataset.stepType = step.type;
+    this.container.dataset.width = /** @type {any} */ (step).width === "wide" ? "wide" : "phone";
     this._updateProgress(step);
     const canBack = this.settings.allowBack && this.state.history.length > 0;
     if (this.backEl) this.backEl.classList.toggle("is-hidden", !canBack);
@@ -330,7 +391,11 @@ export class Controller {
 
   /** @param {import('./types.js').Step} step */
   _updateProgress(step) {
-    const show = this.settings.showProgress && step.progress !== false;
+    // A landing page defaults to no progress bar: it is a marketing page, not
+    // question 1 of 6, and "17% complete" above a hero reads as a broken quiz.
+    // An explicit `progress: true` still turns it on.
+    const byDefault = step.type !== "landing";
+    const show = this.settings.showProgress && (step.progress ?? byDefault) !== false;
     if (this.progressEl) this.progressEl.classList.toggle("is-hidden", !show);
     const fill = /** @type {HTMLElement|undefined} */ (this.progressEl?.firstElementChild);
     if (fill) {

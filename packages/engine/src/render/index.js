@@ -10,6 +10,7 @@ import { renderChoice } from "./choice.js";
 import { renderMultiSelect } from "./multiselect.js";
 import { renderForm } from "./form.js";
 import { renderContent } from "./content.js";
+import { renderLanding } from "./landing.js";
 import { renderLoader } from "./loader.js";
 import { renderSuccess } from "./success.js";
 
@@ -21,6 +22,15 @@ import { renderSuccess } from "./success.js";
 export function renderStep(step, ctrl) {
   const data = ctrl.data;
   const screen = el("div", { class: `of-step of-step-${step.type}`, "data-step-id": step.id });
+
+  // A landing step owns its entire screen: the hero draws its own eyebrow,
+  // headline and subtext with layout-specific typography, and `step.blocks` is
+  // the page body *below* that hero. Drawing the shared header here as well
+  // would print the headline twice and strand the sections above the fold.
+  if (step.type === "landing") {
+    screen.appendChild(renderLanding(step, ctrl));
+    return screen;
+  }
 
   const heroImageSrc = step.image || step.heroImage;
   const header = el("header", { class: "of-step-header" }, [
@@ -51,6 +61,9 @@ function renderBody(step, ctrl) {
       return renderForm(step, ctrl);
     case "content":
       return renderContent(step, ctrl);
+    case "landing":
+      // Handled before renderBody; listed so the union stays exhaustive.
+      return renderLanding(step, ctrl);
     case "loader":
       return renderLoader(step, ctrl);
     case "success":

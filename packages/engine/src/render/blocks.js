@@ -1,11 +1,51 @@
 /**
  * @file Renderers for reusable content blocks (image, video, reviews, etc.).
  * These can appear on the header of any step via `step.blocks`, and are what let
- * a `content` step act as a VSL / social-proof / storytelling screen.
+ * a `content` step act as a VSL / social-proof / storytelling screen — or a
+ * `landing` step act as a full marketing page, where `step.blocks` is the page
+ * body below the hero.
+ *
+ * Every section a landing page needs is a block rather than a landing-only
+ * field, so a new section type lands here once and every step type gains it.
  */
 
 import { el } from "../dom.js";
 import { pipe } from "../piping.js";
+
+/**
+ * One call-to-action button, shared by the `cta` block, the landing hero and the
+ * landing nav so all three behave identically: `url` navigates through the same
+ * guard `Controller.redirect` applies, anything else advances the funnel and
+ * honours `next`, letting one page offer two entry points into different branches.
+ *
+ * It lives here rather than in `landing.js` to keep the import one-directional —
+ * `landing.js` needs `renderBlocks`, so `blocks.js` must not need `landing.js`.
+ *
+ * @param {import('../types.js').CtaBlock|import('../types.js').LandingCta} cta
+ * @param {import('../controller.js').Controller} ctrl
+ * @param {string} className
+ * @param {string} fallbackLabel
+ * @returns {HTMLElement}
+ */
+export function ctaButton(cta, ctrl, className, fallbackLabel) {
+  const variant = cta.variant;
+  const icon = /** @type {any} */ (cta).icon;
+  return el(
+    "button",
+    {
+      type: "button",
+      class: `${className}${variant && variant !== "solid" ? ` of-cta-${variant}` : ""}`,
+      onclick: () => {
+        if (cta.url) return ctrl.redirect(cta.url);
+        ctrl.advance({ next: cta.next });
+      },
+    },
+    [
+      icon ? el("span", { class: "of-cta-icon", text: icon }) : null,
+      el("span", { text: cta.label || fallbackLabel }),
+    ].filter(Boolean),
+  );
+}
 
 /**
  * @param {import('../types.js').ContentBlock[]} blocks
@@ -20,7 +60,7 @@ export function renderBlocks(blocks, data, step, ctrl) {
   let draggedBlockIdx = null;
 
   blocks.forEach((block, idx) => {
-    const node = renderBlock(block, data);
+    const node = renderBlock(block, data, ctrl);
     if (ctrl?.isEditor && step) {
       node.classList.add("is-block-draggable");
       node.setAttribute("draggable", "true");
@@ -91,9 +131,10 @@ export function renderBlocks(blocks, data, step, ctrl) {
 /**
  * @param {import('../types.js').ContentBlock} block
  * @param {{ lead?: Record<string, unknown>, answers?: Record<string, unknown> }} data
+ * @param {import('../controller.js').Controller} [ctrl]  Only the `cta` block needs it.
  * @returns {HTMLElement}
  */
-function renderBlock(block, data) {
+function renderBlock(block, data, ctrl) {
   switch (block.type) {
     case "image":
       return el("img", {
@@ -149,11 +190,15 @@ function renderBlock(block, data) {
       return el(
         "div",
         { class: "of-block-trust" },
-        block.items.map((t) =>
-          t.src
+        // A bare string is accepted as shorthand for `{ label }`. Templates and
+        // hand-written funnels reach for `["Trusted by 200+ brands", …]`, and the
+        // strict shape rendered those as empty spans — a silently blank row.
+        (block.items || []).map((raw) => {
+          const t = typeof raw === "string" ? { label: raw } : raw || {};
+          return t.src
             ? el("img", { class: "of-trust-logo", src: t.src, alt: t.label || "", loading: "lazy" })
-            : el("span", { class: "of-trust-label", text: t.label || "" }),
-        ),
+            : el("span", { class: "of-trust-label", text: t.label || "" });
+        }),
       );
 
     case "spacer":
@@ -162,9 +207,173 @@ function renderBlock(block, data) {
     case "calculator":
       return renderCalculator(block, data);
 
+    /* ----- landing-page sections ----------------------------------------- */
+
+    case "heading":
+      return el("div", { class: `of-block-heading of-align-${block.align || "center"}` }, [
+        block.eyebrow ? el("span", { class: "of-section-eyebrow", text: block.eyebrow }) : null,
+        el("h2", { class: "of-section-title", text: pipe(block.value, data) }),
+        block.sub ? el("p", { class: "of-section-sub", text: pipe(block.sub, data) }) : null,
+      ]);
+
+    case "features":
+      return el(
+        "div",
+        { class: `of-block-features of-cols-${block.columns || 1}` },
+        (block.items || []).map((f) =>
+          el("div", { class: "of-feature" }, [
+            f.image
+              ? el("img", { class: "of-feature-img", src: f.image, alt: "", loading: "lazy" })
+              : el("span", { class: "of-feature-icon", text: f.icon || "✦" }),
+            el("div", { class: "of-feature-body" }, [
+              el("h3", { class: "of-feature-title", text: pipe(f.title, data) }),
+              f.text ? el("p", { class: "of-feature-text", text: pipe(f.text, data) }) : null,
+            ]),
+          ]),
+        ),
+      );
+
+    case "steps":
+      return el(
+        "ol",
+        { class: "of-block-steps" },
+        (block.items || []).map((s, i) =>
+          el("li", { class: "of-howstep" }, [
+            el("span", { class: "of-howstep-num", text: String(i + 1) }),
+            el("div", { class: "of-howstep-body" }, [
+              el("h3", { class: "of-howstep-title", text: pipe(s.title, data) }),
+              s.text ? el("p", { class: "of-howstep-text", text: pipe(s.text, data) }) : null,
+            ]),
+          ]),
+        ),
+      );
+
+    case "stats":
+      return el(
+        "div",
+        { class: `of-block-stats of-cols-${block.columns || 3}` },
+        (block.items || []).map((s) =>
+          el("div", { class: "of-stat" }, [
+            el("div", { class: "of-stat-value", text: pipe(s.value, data) }),
+            s.label ? el("div", { class: "of-stat-label", text: s.label }) : null,
+          ]),
+        ),
+      );
+
+    case "faq":
+      return el(
+        "div",
+        { class: "of-block-faq" },
+        (block.items || []).map((item) =>
+          el("details", { class: "of-faq-item" }, [
+            el("summary", { class: "of-faq-q", text: item.q }),
+            el("p", { class: "of-faq-a", text: pipe(item.a, data) }),
+          ]),
+        ),
+      );
+
+    case "pricing":
+      return el(
+        "div",
+        { class: "of-block-pricing" },
+        (block.plans || []).map((plan) =>
+          el("div", { class: `of-plan${plan.highlight ? " is-highlight" : ""}` }, [
+            plan.badge ? el("span", { class: "of-plan-badge", text: plan.badge }) : null,
+            el("h3", { class: "of-plan-name", text: plan.name }),
+            el("div", { class: "of-plan-price" }, [
+              el("span", { class: "of-plan-amount", text: plan.price }),
+              plan.period ? el("span", { class: "of-plan-period", text: plan.period }) : null,
+            ]),
+            plan.features?.length
+              ? el(
+                  "ul",
+                  { class: "of-plan-features" },
+                  plan.features.map((f) =>
+                    el("li", {}, [el("span", { class: "of-list-icon", text: "✓" }), el("span", { text: f })]),
+                  ),
+                )
+              : null,
+            plan.ctaLabel && ctrl
+              ? el("button", {
+                  type: "button",
+                  class: `of-plan-cta${plan.highlight ? "" : " of-cta-outline"}`,
+                  text: plan.ctaLabel,
+                  onclick: () => ctrl.advance({ next: plan.next }),
+                })
+              : null,
+          ]),
+        ),
+      );
+
+    case "gallery":
+      return el(
+        "div",
+        { class: `of-block-gallery of-gallery-${block.layout || "scroll"}` },
+        (block.items || []).map((g) =>
+          el("figure", { class: "of-gallery-item" }, [
+            el("img", { src: g.src, alt: g.alt || "", loading: "lazy", decoding: "async" }),
+            g.caption ? el("figcaption", { text: g.caption }) : null,
+          ]),
+        ),
+      );
+
+    case "compare":
+      return el("div", { class: "of-block-compare" }, [
+        comparePane(block.left, "of-compare-neg", "✕"),
+        comparePane(block.right, "of-compare-pos", "✓"),
+      ]);
+
+    case "quote":
+      return el("figure", { class: "of-block-quote" }, [
+        block.rating ? el("div", { class: "of-stars", text: "★".repeat(Math.round(block.rating)) }) : null,
+        el("blockquote", { text: pipe(block.text, data) }),
+        block.name
+          ? el("figcaption", { class: "of-quote-author" }, [
+              block.avatar ? el("img", { class: "of-avatar", src: block.avatar, alt: "", loading: "lazy" }) : null,
+              el("div", {}, [
+                el("span", { class: "of-quote-name", text: block.name }),
+                block.role ? el("span", { class: "of-quote-role", text: block.role }) : null,
+              ]),
+            ])
+          : null,
+      ]);
+
+    case "cta":
+      // Without a controller (a preview rendering blocks standalone) the button
+      // would do nothing, so render the copy and skip the dead control.
+      return el("div", { class: "of-block-cta" }, [
+        ctrl
+          ? ctaButton(block, ctrl, "of-cta", "Continue")
+          : el("p", { class: "of-block-text of-align-center", text: block.label || "Continue" }),
+        block.note ? el("p", { class: "of-cta-note", text: block.note }) : null,
+      ]);
+
+    case "divider":
+      return el("div", { class: "of-block-divider" }, [
+        block.label ? el("span", { class: "of-divider-label", text: block.label }) : null,
+      ]);
+
     default:
       return el("div");
   }
+}
+
+/**
+ * @param {{ title: string, items: string[] }} pane
+ * @param {string} className
+ * @param {string} mark
+ */
+function comparePane(pane, className, mark) {
+  return el("div", { class: `of-compare-pane ${className}` }, [
+    el("h3", { class: "of-compare-title", text: pane?.title || "" }),
+    el(
+      "ul",
+      { class: "of-compare-list" },
+      (pane?.items || []).map((text) =>
+        el("li", {}, [el("span", { class: "of-compare-mark", text: mark }), el("span", { text })]),
+      ),
+    ),
+  ]);
 }
 
 /**

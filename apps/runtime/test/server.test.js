@@ -162,6 +162,28 @@ describe("ingest", () => {
     expect((await fetch(`${base}/api/lead`)).status).toBe(405);
   });
 
+  test("refuses an oversized body without buffering it", async () => {
+    // A chunked request declares no content-length, so `readJson`'s declared-size
+    // check reads 0 and only catches the body after Bun has buffered all of it.
+    // `maxRequestBodySize` is what makes this a transport-layer 413 instead of an
+    // unauthenticated caller getting the server to allocate up to Bun's 128MB
+    // default per request. A ReadableStream body forces chunked encoding.
+    const oversized = "A".repeat(256 * 1024);
+    const res = await fetch(`${base}/api/lead`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(`{"pad":"${oversized}"}`));
+          controller.close();
+        },
+      }),
+      // @ts-expect-error — required by fetch for a streaming request body.
+      duplex: "half",
+    });
+    expect(res.status).toBe(413);
+  });
+
   test("answers CORS preflight so funnels can be embedded cross-origin", async () => {
     const res = await fetch(`${base}/api/events`, { method: "OPTIONS" });
     expect(res.status).toBe(204);
@@ -282,7 +304,7 @@ describe("privileged route protection", () => {
     expect(settings).not.toHaveProperty("relayUrl");
   });
 
-  test("never ships webhook credentials to the browser", async () => {
+  test("never ships webhook credentials or API keys to the browser", async () => {
     // The whole funnel document is inlined into the page, so anything left in
     // integrations is readable with View Source.
     await fetch(`${base}/api/builder/save`, {
@@ -291,7 +313,14 @@ describe("privileged route protection", () => {
       body: JSON.stringify({
         slug: "leaky",
         name: "Leaky",
-        integrations: { webhookUrl: "https://hooks.example/catch/abc", webhookSecret: "whsec_topsecret" },
+        apiKey: "sk-topsecret-apikey",
+        integrations: {
+          webhookUrl: "https://hooks.example/catch/abc",
+          webhookSecret: "whsec_topsecret",
+          apiKey: "sk-integration-secret",
+          resendApiKey: "re_secret_key_123",
+          smtpPass: "super_secret_smtp_password",
+        },
         steps: [{ id: "a", type: "content", headline: "Hi" }],
       }),
     });
@@ -299,10 +328,18 @@ describe("privileged route protection", () => {
     const page = await (await fetch(`${base}/f/leaky`)).text();
     expect(page).not.toContain("whsec_topsecret");
     expect(page).not.toContain("hooks.example");
+    expect(page).not.toContain("sk-topsecret-apikey");
+    expect(page).not.toContain("sk-integration-secret");
+    expect(page).not.toContain("re_secret_key_123");
+    expect(page).not.toContain("super_secret_smtp_password");
 
     const publicJson = await (await fetch(`${base}/api/funnels/leaky`)).text();
     expect(publicJson).not.toContain("whsec_topsecret");
     expect(publicJson).not.toContain("hooks.example");
+    expect(publicJson).not.toContain("sk-topsecret-apikey");
+    expect(publicJson).not.toContain("sk-integration-secret");
+    expect(publicJson).not.toContain("re_secret_key_123");
+    expect(publicJson).not.toContain("super_secret_smtp_password");
 
     // The builder still needs the real values, or saving would blank them.
     const editing = await (await fetch(`${base}/api/builder/funnel/leaky`)).json();
@@ -440,5 +477,145 @@ describe("content security policy", () => {
     const res = await fetch(`${base}/`);
     expect(res.headers.get("x-frame-options")).toBe("DENY");
     expect(res.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+  });
+});
+
+/**
+ * Operator-pasted `customHead` / `customBody` scripts.
+ *
+ * A funnel page is served from the same origin as the console, and the admin
+ * token lives in that origin's `localStorage` — so a script running on a funnel
+ * page can read it and drain `/api/admin/*`. Funnel documents get imported from
+ * templates and bug reports, which is why executing whatever a document carries
+ * is opt-in per deployment rather than on by default.
+ *
+ * The first test here is the one that matters: it asserts the gate is SHUT when
+ * nobody opted in. If that ever inverts, importing a funnel JSON becomes console
+ * takeover, and no other test in this file would notice.
+ */
+describe("custom script injection", () => {
+  const HEAD_INLINE = `console.log("head")`;
+  const BODY_INLINE = `console.log("body")`;
+
+  /** A funnel carrying every shape of custom code. */
+  const funnelDoc = {
+    id: "custom-code",
+    name: "Custom code",
+    customCss: ".of-root{--of-radius:20px}",
+    customHead:
+      `<meta name="x-marker" content="yes">` +
+      `<script>${HEAD_INLINE}</script>` +
+      `<script src="https://cdn.example.com/tag.js"></script>` +
+      `<script type="application/json">{"not":"executable"}</script>`,
+    customBody: `<script>${BODY_INLINE}</script>`,
+    steps: [{ id: "s1", type: "content", headline: "Hi", ctaLabel: "Go" }],
+  };
+
+  const sha = (s) => `'sha256-${createHash("sha256").update(s, "utf8").digest("base64")}'`;
+
+  /** Boot a second runtime with its own env, so both flag states are covered. */
+  async function bootWith(env) {
+    const dir = await mkdtemp(join(resolve(import.meta.dir, "../../../.tmp"), "openfunnel-custom-"));
+    await Bun.write(join(dir, "custom-code.json"), JSON.stringify(funnelDoc));
+    const port = 5000 + Math.floor(Math.random() * 900);
+    const child = Bun.spawn(["bun", SERVER], {
+      env: { ...process.env, PORT: String(port), DATA_DIR: dir, FUNNELS_DIR: dir, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const url = `http://localhost:${port}`;
+    for (let i = 0; i < 50; i++) {
+      try {
+        if ((await fetch(`${url}/healthz`)).ok) return { url, child };
+      } catch {
+        /* not up yet */
+      }
+      await Bun.sleep(50);
+    }
+    child.kill();
+    throw new Error("custom-code runtime did not start in time");
+  }
+
+  test("refuses pasted scripts by default, but still serves the markup", async () => {
+    const { url, child } = await bootWith({});
+    try {
+      const res = await fetch(`${url}/f/custom-code`);
+      const csp = res.headers.get("content-security-policy") || "";
+      const page = await res.text();
+
+      // Neither inline script is granted, and the external host is not allowed.
+      expect(csp).not.toContain(sha(HEAD_INLINE));
+      expect(csp).not.toContain(sha(BODY_INLINE));
+      expect(csp).not.toContain("cdn.example.com");
+      // Exactly one hash — the boot script's — so nothing else can execute.
+      expect(csp.match(/'sha256-/g)?.length).toBe(1);
+
+      // The markup is still injected; only execution is refused. CSS too.
+      expect(page).toContain('name="x-marker"');
+      expect(page).toContain("--of-radius:20px");
+    } finally {
+      child.kill();
+    }
+  });
+
+  test("ALLOW_CUSTOM_SCRIPTS grants exactly what was pasted, and nothing else", async () => {
+    const { url, child } = await bootWith({
+      ALLOW_CUSTOM_SCRIPTS: "1",
+      CUSTOM_SCRIPT_ORIGINS: "https://extra.example.net",
+    });
+    try {
+      const res = await fetch(`${url}/f/custom-code`);
+      const csp = res.headers.get("content-security-policy") || "";
+      const page = await res.text();
+
+      // Both inline scripts are allowed by the hash of their exact bytes.
+      expect(csp).toContain(sha(HEAD_INLINE));
+      expect(csp).toContain(sha(BODY_INLINE));
+
+      // The external script's origin is allowed to load AND to beacon back — a
+      // script that loads but cannot connect reports nothing, silently.
+      expect(csp).toContain("script-src");
+      const scriptSrc = csp.split("; ").find((d) => d.startsWith("script-src")) || "";
+      const connectSrc = csp.split("; ").find((d) => d.startsWith("connect-src")) || "";
+      expect(scriptSrc).toContain("https://cdn.example.com");
+      expect(connectSrc).toContain("https://cdn.example.com");
+      expect(scriptSrc).toContain("https://extra.example.net");
+      expect(connectSrc).toContain("https://extra.example.net");
+
+      // Only the origin is granted, never the full URL path.
+      expect(scriptSrc).not.toContain("/tag.js");
+      // Opting in must not degrade into a blanket allow. Compared as whole
+      // tokens: a substring test for "https:" also matches the legitimate
+      // "https://cdn.example.com" and would pass while proving nothing.
+      const sources = scriptSrc.split(/\s+/).slice(1);
+      expect(sources).not.toContain("'unsafe-inline'");
+      expect(sources).not.toContain("https:");
+      expect(sources).not.toContain("*");
+
+      // The JSON data block is not executable, so it gets no grant of its own:
+      // boot + the two inline scripts, and nothing for the data block.
+      expect(csp.match(/'sha256-/g)?.length).toBe(3);
+
+      // The hashes have to match the bytes actually on the page, or the browser
+      // refuses them — recompute from the served HTML rather than trusting the
+      // fixture, which is what catches a drift between the two resolvers.
+      for (const body of [...page.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1])) {
+        expect(csp).toContain(sha(body));
+      }
+    } finally {
+      child.kill();
+    }
+  });
+
+  test("a funnel with no custom code is unaffected by the opt-in", async () => {
+    const { url, child } = await bootWith({ ALLOW_CUSTOM_SCRIPTS: "1" });
+    try {
+      const csp = (await fetch(`${url}/f/custom-code`)).headers.get("content-security-policy") || "";
+      // Sanity: the flag alone never adds 'unsafe-inline' anywhere.
+      expect(csp).not.toContain("'unsafe-inline'; script-src");
+      expect(csp).toContain("default-src 'none'");
+    } finally {
+      child.kill();
+    }
   });
 });

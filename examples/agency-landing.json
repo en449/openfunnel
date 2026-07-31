@@ -1,0 +1,256 @@
+{
+  "id": "agency-landing",
+  "slug": "agency-landing",
+  "name": "Agency Lead Qualifier",
+  "theme": {
+    "preset": "midnight-glass"
+  },
+  "steps": [
+    {
+      "id": "landing",
+      "type": "landing",
+      "layout": "centered",
+      "height": "tall",
+      "eyebrow": "Free growth audit",
+      "headline": "We find the leaks in your ad account. You keep the plan.",
+      "subtext": "Answer three questions and get a personalised breakdown of where your paid spend is going — no call required to receive it.",
+      "background": {
+        "gradient": "linear-gradient(160deg, #4f46e5 0%, #1e1b4b 55%, #020617 100%)",
+        "ink": "light"
+      },
+      "cta": {
+        "label": "Start my free audit",
+        "note": "Takes 60 seconds · No credit card"
+      },
+      "proof": {
+        "rating": 5,
+        "text": "Rated 4.9/5 by 200+ founders"
+      },
+      "stickyCta": true,
+      "scrollHint": true,
+      "blocks": [
+        {
+          "type": "stats",
+          "columns": 3,
+          "items": [
+            {
+              "value": "200+",
+              "label": "Brands scaled"
+            },
+            {
+              "value": "4.8×",
+              "label": "Median ROAS"
+            },
+            {
+              "value": "$41M",
+              "label": "Ad spend managed"
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "eyebrow": "The problem",
+          "value": "Most accounts leak money in the same three places"
+        },
+        {
+          "type": "features",
+          "columns": 1,
+          "items": [
+            {
+              "icon": "🎯",
+              "title": "Broad targeting, no exclusions",
+              "text": "You pay to reach people who already bought."
+            },
+            {
+              "icon": "🧊",
+              "title": "Cold traffic sent straight to a form",
+              "text": "No warming step, so the form does all the persuading — and fails."
+            },
+            {
+              "icon": "📉",
+              "title": "Optimising for clicks, not leads",
+              "text": "Cheap traffic that never converts still counts as a win in the dashboard."
+            }
+          ]
+        },
+        {
+          "type": "compare",
+          "left": {
+            "title": "Before",
+            "items": [
+              "£90 cost per lead",
+              "Sales team chasing tyre-kickers",
+              "No idea which ad works"
+            ]
+          },
+          "right": {
+            "title": "After",
+            "items": [
+              "£23 cost per lead",
+              "Pre-qualified by budget",
+              "Attribution to the creative"
+            ]
+          }
+        },
+        {
+          "type": "quote",
+          "rating": 5,
+          "text": "They found £6k a month we were burning on an audience that had already converted. Paid for itself before the first call.",
+          "name": "Marcus D.",
+          "role": "Founder, Northline Fitness"
+        },
+        {
+          "type": "faq",
+          "items": [
+            {
+              "q": "Is this really free?",
+              "a": "Yes. We publish the audit whether or not you ever speak to us — it is how we prove we know what we are doing."
+            },
+            {
+              "q": "How long does the quiz take?",
+              "a": "About 60 seconds. Three multiple-choice questions and your email."
+            },
+            {
+              "q": "Will I get spammed?",
+              "a": "One email with your audit, and one follow-up. Unsubscribe in either."
+            }
+          ]
+        },
+        {
+          "type": "cta",
+          "label": "Get my free audit",
+          "note": "Three questions. Sixty seconds."
+        }
+      ]
+    },
+    {
+      "id": "revenue",
+      "type": "choice",
+      "headline": "What is your current monthly revenue?",
+      "subtext": "This decides which benchmarks we compare you against.",
+      "options": [
+        {
+          "id": "rev_1",
+          "label": "Under $10,000/mo",
+          "icon": "🌱"
+        },
+        {
+          "id": "rev_2",
+          "label": "$10,000 – $50,000/mo",
+          "icon": "⚡"
+        },
+        {
+          "id": "rev_3",
+          "label": "$50,000 – $100,000/mo",
+          "icon": "🔥"
+        },
+        {
+          "id": "rev_4",
+          "label": "$100,000+/mo",
+          "icon": "👑",
+          "badge": "Priority"
+        }
+      ]
+    },
+    {
+      "id": "goal",
+      "type": "choice",
+      "headline": "What is your primary growth bottleneck?",
+      "options": [
+        {
+          "id": "leads",
+          "label": "Not enough qualified leads",
+          "icon": "🎯"
+        },
+        {
+          "id": "sales",
+          "label": "Low lead-to-close rate",
+          "icon": "🤝"
+        },
+        {
+          "id": "ad_cost",
+          "label": "Ad costs are too high",
+          "icon": "💸"
+        },
+        {
+          "id": "scale",
+          "label": "Can't scale past a ceiling",
+          "icon": "📈"
+        }
+      ]
+    },
+    {
+      "id": "spend",
+      "type": "choice",
+      "headline": "What do you spend on ads each month?",
+      "layout": "grid",
+      "options": [
+        {
+          "id": "s1",
+          "label": "Under $2k",
+          "icon": "🪙"
+        },
+        {
+          "id": "s2",
+          "label": "$2k – $10k",
+          "icon": "💵"
+        },
+        {
+          "id": "s3",
+          "label": "$10k – $50k",
+          "icon": "💰"
+        },
+        {
+          "id": "s4",
+          "label": "$50k+",
+          "icon": "🏦"
+        }
+      ]
+    },
+    {
+      "id": "analysing",
+      "type": "loader",
+      "headline": "Building your audit…",
+      "durationMs": 2600,
+      "items": [
+        "Benchmarking your revenue band",
+        "Modelling your cost per lead",
+        "Finding the three biggest leaks"
+      ]
+    },
+    {
+      "id": "contact",
+      "type": "form",
+      "headline": "Your growth plan is ready, where should we send it?",
+      "subtext": "Delivered instantly. No call required to read it.",
+      "fields": [
+        {
+          "name": "name",
+          "type": "text",
+          "label": "Full name",
+          "required": true
+        },
+        {
+          "name": "email",
+          "type": "email",
+          "label": "Work email",
+          "required": true
+        },
+        {
+          "name": "phone",
+          "type": "tel",
+          "label": "Phone (optional)"
+        }
+      ],
+      "submitLabel": "Send my free audit",
+      "consent": "We'll email your audit and occasional growth tips. Unsubscribe anytime."
+    },
+    {
+      "id": "thankyou",
+      "type": "success",
+      "headline": "Audit on its way, {{name}} 🙌",
+      "subtext": "Check your inbox in the next two minutes. Want to walk through it live?",
+      "buttonLabel": "Book a 15-minute walkthrough"
+    }
+  ]
+}

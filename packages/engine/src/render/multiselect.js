@@ -65,6 +65,7 @@ export function renderMultiSelect(step, ctrl) {
         syncSubmit();
       },
     }, [
+      opt.badge ? el("span", { class: "of-option-badge", text: opt.badge }) : null,
       opt.image
         ? el("img", { class: "of-option-img", src: opt.image, alt: "", loading: "lazy" })
         : opt.icon

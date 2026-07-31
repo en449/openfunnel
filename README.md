@@ -14,8 +14,13 @@
 | Feature | Perspective.co ($99+/mo) | OpenFunnel (Free & Open Source) |
 | :--- | :---: | :---: |
 | **Mobile-First Quiz Engine** | ✅ Yes | ✅ Yes (Swipe transitions, <100ms response) |
-| **Interactive Screen Types** | ✅ Yes | ✅ Yes (Single-choice, Multi-select, Form, Loader, Content, Success) |
+| **Landing Pages** | ✅ Yes | ✅ **Yes** (5 hero layouts, background image/video, sticky CTA, nav & footer) |
+| **Page Sections / Blocks** | ✅ Yes | ✅ **20 block types** (features, pricing, FAQ, stats, comparison, gallery…) |
+| **Interactive Screen Types** | ✅ Yes | ✅ Yes (Landing, Single-choice, Multi-select, Form, Loader, Content, Success) |
 | **Option Image Cards & Media** | ✅ Yes | ✅ **Full** (Image cards, grid layout & step hero media) |
+| **Proven Industry Templates** | ✅ Yes | ✅ **20 built-in** across 7 categories, editable as plain JSON |
+| **Theming** | ✅ Yes | ✅ 8 presets + custom colour, font, radius & button style |
+| **AI Funnel Copilot** | ✅ Yes | ✅ **Bring your own key** (OpenAI, Claude, Gemini, DeepSeek or any compatible API) |
 | **Email Alerts & Autoresponders** | ✅ Paid Addon | ✅ **Built-in** (HTML alerts via Resend or an HTTP relay) |
 | **Email Verification (OTP)** | ✅ Yes | ✅ **Built-in** (6-digit code, verified server-side) |
 | **Smart Branching & Logic** | ✅ Yes | ✅ Yes (Target steps by answer ID) |
@@ -82,42 +87,90 @@ OpenFunnel is designed to run in two modes depending on your workflow:
 ## 🎨 How to Build & Launch Your Funnel
 
 ```
-┌─────────────────┐     ┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
-│  1. Launch App  │ ──► │  2. Pick Template│ ──► │ 3. Edit Questions│ ──► │ 4. Set Integrations│
-└─────────────────┘     └──────────────────┘     └──────────────────┘     └──────────────────┘
-                                                                                   │
-                                                                                   ▼
-                                                                          ┌──────────────────┐
-                                                                          │ 5. Collect Leads │
-                                                                          └──────────────────┘
+┌───────────────┐   ┌────────────────┐   ┌────────────────┐   ┌────────────────┐
+│ 1. Launch App │──►│ 2. Pick        │──►│ 3. Build the   │──►│ 4. Edit the    │
+│               │   │    Template    │   │    Landing Page│   │    Questions   │
+└───────────────┘   └────────────────┘   └────────────────┘   └───────┬────────┘
+                                                                      │
+        ┌────────────────┐   ┌────────────────┐   ┌────────────────┐  │
+        │ 7. Collect     │◄──│ 6. Alerts &    │◄──│ 5. Theme It    │◄─┘
+        │    Leads       │   │    Webhooks    │   │                │
+        └────────────────┘   └────────────────┘   └────────────────┘
 ```
 
 ### Step 1: Open the Console
 Start OpenFunnel on your server or local environment and open your admin console at `/app`.
 
 ### Step 2: Pick a Proven Industry Template
-Choose from pre-built funnel templates optimized for high conversion:
-- 📈 **Lead Generation**: Agency & service business client qualification.
-- 🏋️ **Fitness & Wellness**: Calorie/plan calculation quizzes.
-- 🏡 **Real Estate**: Homebuyer and seller criteria capture.
+20 pre-built funnels, filterable by category in `/templates`. Each is modelled on
+a paid-traffic pattern rather than a feature demo — a landing page that sells the
+click, two to four qualifying questions, a "warming" loader, then the form:
 
-### Step 3: Edit Steps in the Visual Builder
-Use the live mobile editor (`/builder`) to customize:
-- **Question Steps**: Single-choice options with icons (`📈`, `🧭`, `💡`) or **Image Cards** with photo grid layouts.
-- **Step Hero Media**: Attach high-res hero photos or video blocks to step headers.
-- **Multi-Select**: Allow visitors to pick multiple preferences with instant feedback.
-- **Interactive Loader**: Show an animated *"Calculating your customized results..."* screen to build anticipation.
-- **Form Capture**: Collect name, email, phone number with instant validation.
-- **Dynamic Piping**: Insert previous answers into headlines like `"Great news, {{name}}! Here is your custom plan"`.
+- 📈 **Lead Gen** (6): agency qualifier, lead magnet, insurance quote, mortgage pre-approval, social recruiting, newsletter.
+- 📅 **Booking** (1): high-ticket application call, with branches that *disqualify* on budget and revenue so your calendar stays clean.
+- 🛒 **E-commerce** (2): product-finder quiz, launch waitlist with countdown.
+- 💻 **SaaS** (2): trial & demo with an enterprise branch, free ROI audit calculator.
+- 🏡 **Local Services** (6): home valuation, solar savings, med spa, home improvement, car trade-in, gym trial.
+- 🎯 **Coaching** (2): 1:1 application, 6-week body challenge.
+- 🎟️ **Webinar** (1): live masterclass registration.
 
-### Step 4: Configure Email Alerts & Webhooks
+### Step 3: Build the Landing Page
+A cold ad click is not ready for question 1. The `landing` step is a full
+marketing page rendered as the first step of the funnel, so its CTAs advance
+straight into the quiz — one document, no second page builder:
+
+- **5 hero layouts**: centred, left, split (media beside copy), full-bleed, minimal.
+- **Backgrounds**: image or muted looping video behind an adjustable scrim, or a flat colour / CSS gradient.
+- **Chrome**: top nav with logo and links, sticky CTA bar that follows the scroll, footer for your imprint and privacy links.
+- **Proof**: star rating, face pile, eyebrow badge, scroll hint.
+- **20 section blocks** below the hero: heading, feature cards, how-it-works steps, stat row, FAQ accordion, pricing plans, image gallery, us-vs-them comparison, pull quote, trust badges, countdown, calculator, checklist, mid-page CTA, divider, spacer, image, video, paragraph, review cards.
+
+Every section is an ordinary content block, so the same 20 types are available on
+*any* step — a choice step can carry a testimonial above its options. A landing
+step hides the progress bar by default (it is a page, not question 1 of 6), and
+`width: "wide"` breaks it out of the 9:16 phone frame on desktop.
+
+### Step 4: Edit Steps in the Visual Builder
+Use the live mobile editor (`/builder`) featuring a **clean 4-Tab Inspector** (`Content`, `Design`, `Blocks`, `Logic`) to customize:
+- **Conversion Step Archetype Library**: 1-click add 8 pre-built conversion step templates (Single-Choice Quiz with auto-advance, Multi-Select, Lead Capture Form with Anti-Spam OTP, VSL Video, ROI Calculator, Testimonials & Reviews, Pricing Comparison, Landing Page).
+- **Visual Drag & Drop Editor**: Drag step rows in the spine, choice options, or content blocks with glowing drop target lines (`drop-before`/`drop-after`) and explicit `⋮⋮ Drag` grab handles.
+- **Palette Drag-to-Add**: Drag content block chips directly from the palette onto any step.
+- **Dual Reordering & Duplication**: Every list supports both **drag-and-drop** AND **1-click Up/Down arrow buttons** plus 1-click **Step & Option Duplication**.
+- **Auto-Advance Toggle**: 1-click toggle on choice steps for instant single-choice quiz progression.
+- **Dynamic Variable Piping**: Insert previous answers with 1-click token chips (`{{name}}`, `{{email}}`, `{{answers.budget}}`, `{{score}}`).
+- **Question Steps**: Single-choice options with icons (`📈`, `🧭`, `💡`) or **Image Cards** with photo grid layouts, plus conversion badges (*"🔥 Popular"*, *"⭐ Best Value"*, *"⚡ Recommended"*).
+- **Form Capture & Anti-Spam OTP**: Collect contact info with built-in 6-digit email OTP verification.
+- **Branching & Disqualification**: Direct option branching targets to route qualified prospects to calendar booking and disqualified leads to exit pages.
+- **Live Device Preview**: Phone / tablet / desktop switching with instant iframe preview updates. `Cmd/Ctrl+K` opens the command palette, `Cmd/Ctrl+S` saves, `1`–`6` switch views.
+
+### Step 5: Theme It
+The **Theme** modal gives you 8 presets (`midnight-glass`, `neo-brutalist`,
+`warm-editorial`, `saas-gradient`, `clean-light`, `emerald-glow`,
+`violet-pulse`, `sunset-coral`) plus a custom accent colour, font, corner radius,
+light/dark mode and three button styles (`flat`, `glow`, `pressable-3d`).
+
+**Settings** holds the funnel-level behaviour flags — back button, swipe
+navigation, resume-on-return and the GDPR consent bar. These are saved onto the
+funnel *document*, not your browser, which is what lets them reach a real
+visitor. **Hide OpenFunnel Branding** removes the "Powered by OpenFunnel" footer;
+note that AGPL-3.0 still requires you to offer your source to users of a modified
+public deployment, so hiding the footer is a styling choice, not a licence
+waiver.
+
+> **Preset themes hotlink Google Fonts.** Every built-in preset names a
+> non-system font family, so a funnel using one asks `fonts.googleapis.com` for
+> it — handing Google the visitor's IP. The default theme requests nothing, and
+> the consent bar gates the request when enabled. See
+> [Third-party data sharing](#third-party-data-sharing).
+
+### Step 6: Configure Email Alerts & Webhooks
 In **Settings**, set your admin notification email (`NOTIFY_EMAIL`) and a Resend API key to receive instant HTML lead alerts and trigger personalized autoresponders. In **Pixels & Tracking**, paste your Webhook URL (Zapier/Make/GoHighLevel), an optional webhook secret, and your Meta/GTM Pixel IDs.
 
 Webhook delivery is server-side, so your endpoint and secret are never exposed in the funnel page. If you set a secret, each delivery carries it as an `X-Webhook-Secret` header for your automation to check.
 
 Optionally enable **email verification** on a form step (`"verifyEmail": true`). The visitor receives a 6-digit code and the funnel only records `email_verified: true` once the server confirms it — a fake address cannot claim to be verified.
 
-### Step 5: Publish & Collect Leads
+### Step 7: Publish & Collect Leads
 Share your live funnel link (`/f/your-funnel-slug`). Review submitted leads in your **Lead Inbox** (`/leads`) or download them via **Export CSV**.
 
 ---
@@ -145,9 +198,12 @@ Share your live funnel link (`/f/your-funnel-slug`). Review submitted leads in y
 4. **Explore local routes (default port `3000`):**
    - **Unified App Console**: `/app`
    - **Visual Builder**: `/builder`
+   - **Template Library**: `/templates`
    - **Lead Inbox**: `/leads`
    - **Analytics Dashboard**: `/analytics`
+   - **Settings**: `/settings`
    - **Live Mobile Demo**: `/f/lead-gen`
+   - **Landing Page Demo**: `/f/agency-landing`
 
 5. **Run test suite:**
    ```bash
@@ -232,6 +288,8 @@ SMTP_FROM="OpenFunnel <noreply@yourdomain.com>"
 
 # Global Webhook Forwarding (Zapier, Make, GoHighLevel, CRMs)
 WEBHOOK_URL=https://hooks.zapier.com/hooks/catch/...
+# Legacy alias for WEBHOOK_URL, still read as a fallback.
+ZAPIER_WEBHOOK_URL=
 # Sent as the X-Webhook-Secret header so your automation can verify the sender.
 WEBHOOK_SECRET=
 
@@ -246,12 +304,111 @@ SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 # so see "Third-party data sharing" below before enabling it.
 META_PIXEL_ID=
 META_CAPI_TOKEN=
+
+# AI copilot (Optional) — fallback key for the admin-only /api/ai/* routes.
+# The console can supply its own key per request, in which case this is unused.
+OPENAI_API_KEY=
+
+# "production" enables the 60s funnel cache and long-lived asset caching.
+# Anything else (including unset) is treated as development, where the funnel
+# cache is disabled so editing a JSON and reloading just works.
+NODE_ENV=
+
+# Execute <script> pasted into a funnel's Custom head/body fields. OFF by
+# default: funnel pages share an origin with the console, so a script here can
+# read your admin token. Opting in allows only the exact scripts you pasted
+# (by SHA-256) — never a blanket 'unsafe-inline'. See "Custom Code Injection".
+ALLOW_CUSTOM_SCRIPTS=
+# Extra origins a pasted loader pulls further scripts from (space/comma list).
+CUSTOM_SCRIPT_ORIGINS=
 ```
+
+> **The AI copilot falls back silently.** With no usable key, `/api/ai/generate`
+> returns a **hardcoded built-in funnel** rather than an error — a `200` does not
+> mean a model ran. If the generated funnel looks generic, check the key before
+> assuming the model ignored your prompt. The built-in generator is also the
+> default (`Built-in generator — no key needed`), so this is the expected path
+> until you configure a provider.
 
 > **Browser pixels are not configured here.** Meta, GA4/GTM and TikTok pixel ids
 > live in each funnel document under `integrations` — set them per funnel in the
 > console's Pixels modal. There are no `NEXT_PUBLIC_*` pixel variables; the
 > engine reads pixel ids from the funnel JSON, never from the environment.
+
+---
+
+### AI Copilot — Bring Your Own Model
+
+**Settings → AI & Global Injection** picks the provider, model and key. The
+routes are admin-only, and the key travels from the console to your own server —
+never to the funnel page.
+
+| Provider | Key format | Default model |
+| :--- | :--- | :--- |
+| **Built-in generator** (default) | none | — returns a fixed 5-step funnel |
+| **OpenAI** | `sk-…` | `gpt-4o` |
+| **Anthropic Claude** | `sk-ant-…` | `claude-3-7-sonnet-20250219` |
+| **Google Gemini** | Google AI Studio key | `gemini-2.0-flash` |
+| **DeepSeek** | DeepSeek key | `deepseek-chat` |
+| **Custom / BYO** | any | falls through to the OpenAI-compatible chat-completions shape |
+
+The model field is free text with suggestions, so any identifier your provider
+accepts works — routing is decided by the provider you pick, with the model
+prefix (`claude-`, `gemini-`, `deepseek-`) and key prefix (`sk-ant-`) as
+fallbacks. Two admin-only routes use it: `/api/ai/generate` builds a whole funnel
+from a prompt, and `/api/ai/improve-copy` powers **Suggest headlines** in the
+step inspector.
+
+> The console stores your API key in that browser's `localStorage`. It is a
+> per-browser convenience credential, not shared server config — on a shared
+> machine, clear it when you are done.
+
+### Custom Code Injection
+
+**Pixels & Tracking** has three fields written onto the funnel document
+(`customCss`, `customHead`, `customBody`) and injected into the published funnel
+page. What actually survives is governed by the funnel page's strict CSP:
+
+| Field | Injected into | Default |
+| :--- | :--- | :--- |
+| **Custom CSS** | a `<style>` in `<head>` | ✅ Applied |
+| **Custom `<head>` HTML** | end of `<head>` | ✅ Markup (meta, link) — `<script>` needs the opt-in below |
+| **Custom `<body>` HTML** | end of `<body>` | ✅ Markup — `<script>` needs the opt-in below |
+
+**Scripts are refused until you opt in**, and that default is load-bearing rather
+than an oversight: a funnel page is served from the **same origin as the
+console**, and your admin token lives in that origin's `localStorage`. A script
+running on a funnel page can therefore read it and drain `/api/admin/*` — your
+whole lead database. Funnel documents also get imported from templates and bug
+reports (see [Treat a funnel document as code](#treat-a-funnel-document-as-code-not-as-data)),
+so executing whatever a document carries would turn "I imported a funnel JSON"
+into console takeover.
+
+To enable it:
+
+```bash
+ALLOW_CUSTOM_SCRIPTS=1
+# Optional: origins a pasted loader pulls *further* scripts from, which cannot
+# be read off the snippet itself.
+CUSTOM_SCRIPT_ORIGINS="https://www.clarity.ms https://static.hotjar.com"
+```
+
+Opting in does **not** drop the policy to `'unsafe-inline'`. Each inline script
+is allowed by the SHA-256 of its exact bytes, and each external one by its own
+origin (granted on both `script-src` and `connect-src`, so the script can beacon
+home rather than loading and silently reporting nothing). Only what you pasted
+runs — an injected `step.consent`, or an XSS in a future renderer, still cannot
+execute, because their content was never hashed into the policy.
+
+> **With the flag off, a funnel carrying script logs a warning server-side** at
+> request time naming the funnel and the number of tags refused. It used to fail
+> completely silently: a CSP violation in the visitor's console, nothing on the
+> server, and a field that saved as if it had worked.
+
+For Meta / GA4 / GTM / TikTok, prefer the first-class **Pixels** fields — they
+add their own origins to the policy and need no opt-in. Note that anything GTM
+loads at runtime is subject to the same policy, so a container pulling arbitrary
+vendor tags will need those origins in `CUSTOM_SCRIPT_ORIGINS`.
 
 ---
 
@@ -270,6 +427,23 @@ The core engine (`packages/engine`) has **zero dependencies** and can be mounted
     slug: "lead-gen",
     theme: { primary: "#4f46e5", mode: "light" },
     steps: [
+      {
+        id: "home",
+        type: "landing",
+        layout: "centered",
+        height: "tall",
+        eyebrow: "Free 60-second quiz",
+        headline: "We find the leaks in your ad account",
+        subtext: "Answer three questions and get a personalised breakdown.",
+        background: { gradient: "linear-gradient(160deg,#4f46e5,#020617)", ink: "light" },
+        cta: { label: "Start my free audit", note: "No credit card" },
+        stickyCta: true,
+        // `blocks` on a landing step is the page body below the hero.
+        blocks: [
+          { type: "stats", items: [{ value: "4.8×", label: "Median ROAS" }] },
+          { type: "faq", items: [{ q: "Is it free?", a: "Yes." }] }
+        ]
+      },
       {
         id: "q1",
         type: "choice",
@@ -315,6 +489,23 @@ public deployment fails closed instead of quietly exposing your leads. A request
 arriving through a proxy is never treated as local, so putting nginx or a CDN in
 front does not accidentally grant access.
 
+### ⚠️ Terminate HTTPS in front of it
+
+This server speaks plain HTTP — it has no TLS of its own, by design, because
+every recommended host already terminates TLS for you. That means **you must not
+expose it directly on a public IP over `http://`**. Two things travel in the
+clear if you do:
+
+- your `ADMIN_TOKEN`, sent as an `Authorization: Bearer` header on every console
+  request — anyone able to observe the traffic gets your whole lead inbox;
+- the leads themselves: names, emails and phone numbers, in request bodies.
+
+On Render, Railway, Fly.io or DigitalOcean App Platform this is handled for you —
+just set `TRUST_PROXY=1` so per-IP limits see the real client address. On a bare
+VPS, put nginx, Caddy or Cloudflare in front with a certificate (Caddy issues one
+automatically) and bind this process to `127.0.0.1` so it is only reachable
+through the proxy.
+
 ### What the runtime does for you
 
 - **Local data ownership**: leads and events stay in `.data/leads.jsonl` unless you route them outward.
@@ -328,6 +519,10 @@ front does not accidentally grant access.
   operator-facing page, so a lure page cannot overlay an invisible console and borrow your session.
   Funnel pages deliberately stay framable — being embeddable is the point.
 - **Escaped output**: lead data is escaped into notification emails, the lead inbox, and the funnel HTML shell.
+- **Request bodies are capped at 64KB** at the transport layer, so a public
+  endpoint cannot be made to buffer a large body — with the cap left to the JSON
+  parser alone, a chunked request sends no `Content-Length` and the whole body is
+  read into memory before anything can reject it.
 - **Path-traversal validation** (`SLUG_RE` plus an `isInside()` containment check that requires a path separator, so a sibling directory sharing the root's name cannot be reached) on every route that touches a file.
 - **Outbound destinations are filtered**: webhook targets are refused for loopback, private, link-local, CGNAT and cloud-metadata addresses, including IPv4-mapped IPv6 and the decimal/hex IP spellings.
 - **No third-party sharing until you configure it**: pixels fire only for the ids
@@ -340,6 +535,27 @@ front does not accidentally grant access.
   is skipped until the visitor accepts. The server reads `consent.enabled` from
   your funnel document, so stripping the field out of a request does not turn the
   gate off. See [Third-party data sharing](#third-party-data-sharing).
+
+### Treat a funnel document as code, not as data
+
+A funnel JSON is **operator-authored input that the engine trusts**. One field is
+rendered as raw HTML on purpose — a form step's `consent`, so you can put a link
+to your privacy policy in it — and nothing sanitises it.
+
+That is safe for funnels you wrote, and it is why the write path is locked down
+(admin gate + cross-site refusal). It has two consequences worth knowing:
+
+- **Don't import a funnel JSON you didn't write** — from a gist, a template pack,
+  or a bug report — without reading it first. On a page served by this runtime the
+  strict CSP stops it executing script, so the realistic damage is injected markup
+  (a phishing link, a third-party tracking pixel) rather than code execution.
+- **If you embed the engine in your own page** (the section above), that CSP is
+  *yours* to set, and without one an untrusted `consent` field is straightforward
+  XSS on your origin. Serve embedded funnels with a `script-src` that does not
+  include `'unsafe-inline'`, or only embed documents you control.
+
+Anyone who can reach the console can write a funnel document, which is the real
+reason `ADMIN_TOKEN` matters — see above.
 
 ### Third-party data sharing
 
@@ -378,6 +594,28 @@ enabling it is the only thing that changes behaviour.
 > shared store. The console has no multi-user accounts or audit log; the admin
 > token is all-or-nothing access. Direct SMTP is not implemented — use Resend or
 > an HTTP relay via `SMTP_RELAY_URL`.
+
+### Known gaps — settings that exist in the UI but nothing reads yet
+
+The console will happily save these. They are honest TODOs, not working
+features, and are listed here so you don't ship a campaign depending on one:
+
+- **Google Ads and LinkedIn pixel fields** (Pixels & Tracking). Saved onto the
+  funnel document, but the engine's pixel layer only implements Meta, GA4, GTM
+  and TikTok — nothing fires for either. (A Pinterest handler exists in the
+  console's code with no input field to drive it, so that one is inert twice
+  over.)
+- **Custom `<head>` / `<body>` scripts** — injected, but not executed until you
+  set `ALLOW_CUSTOM_SCRIPTS=1`. This one is a deliberate default rather than a
+  TODO; see [Custom Code Injection](#custom-code-injection) above for why.
+- **Workspace currency, language, notification email and "global code"**
+  (Settings). Stored in that browser's `localStorage` only. They are per-browser
+  values, so they can never reach a visitor — anything visitor-facing has to live
+  on the funnel document, the way the consent bar and the branding toggle now do.
+- **The `select` and `file` form field types.** The engine renders `select`, but
+  the console has no editor for its options, so it is deliberately absent from
+  the field-type dropdown rather than offered as an empty dropdown. Nothing in
+  the ingest path stores an uploaded file.
 
 ---
 

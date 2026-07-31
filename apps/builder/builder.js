@@ -169,6 +169,7 @@ function renderStepsList() {
       currentStepIndex = idx;
       renderStepsList();
       renderInspector();
+      updatePreview();
     });
 
     stepsList.appendChild(item);
@@ -296,10 +297,16 @@ function renderInspector() {
 function renderTypeSpecificInspector(step) {
   if (step.type === "choice" || step.type === "multiselect") {
     const optionsHtml = (step.options || []).map((opt, i) => `
-      <div class="of-option-card">
-        <div class="of-option-row">
-          <input type="text" class="of-input opt-label" data-idx="${i}" value="${esc(opt.label)}" placeholder="Label" />
+      <div class="of-option-card" style="display:flex; flex-direction:column; gap:0.4rem; padding:0.6rem; margin-bottom:0.5rem; border:1px solid #e2e8f0; border-radius:8px">
+        <div class="of-option-row" style="display:flex; gap:0.5rem">
+          <input type="text" class="of-input opt-label" data-idx="${i}" value="${esc(opt.label)}" placeholder="Label" style="flex:1" />
           <input type="text" class="of-input opt-icon" data-idx="${i}" value="${esc(opt.icon || "")}" style="width:60px" placeholder="Icon" />
+        </div>
+        <div class="of-option-row">
+          <input type="text" class="of-input opt-subtext" data-idx="${i}" value="${esc(opt.subtext || "")}" placeholder="Subtext / Description (Optional)" />
+        </div>
+        <div class="of-option-row">
+          <input type="text" class="of-input opt-badge" data-idx="${i}" value="${esc(opt.badge || "")}" placeholder="Badge tag (e.g. Popular)" />
         </div>
         <div class="of-option-row">
           <input type="text" class="of-input opt-next" data-idx="${i}" value="${esc(opt.next || "")}" placeholder="Branch target next (Optional)" />
@@ -308,6 +315,15 @@ function renderTypeSpecificInspector(step) {
     `).join("");
 
     return `
+      <div class="of-field">
+        <label>Option Layout</label>
+        <select id="stepLayout" class="of-select">
+          <option value="list" ${step.layout === "list" || !step.layout ? "selected" : ""}>Stacked List</option>
+          <option value="grid" ${step.layout === "grid" ? "selected" : ""}>2-Column Grid</option>
+          <option value="grid3" ${step.layout === "grid3" ? "selected" : ""}>3-Column Grid</option>
+        </select>
+      </div>
+
       <div class="of-field">
         <label>Options / Cards</label>
         ${optionsHtml}
@@ -350,15 +366,34 @@ function renderTypeSpecificInspector(step) {
 function bindTypeSpecificListeners(step) {
   if (step.type === "choice" || step.type === "multiselect") {
     step.options ||= [];
+    const layoutSel = document.getElementById("stepLayout");
+    if (layoutSel) {
+      layoutSel.addEventListener("change", (e) => {
+        step.layout = e.target.value;
+        updatePreview();
+      });
+    }
     document.querySelectorAll(".opt-label").forEach((input) => {
       input.addEventListener("input", (e) => {
         step.options[e.target.dataset.idx].label = e.target.value;
         updatePreview();
       });
     });
+    document.querySelectorAll(".opt-subtext").forEach((input) => {
+      input.addEventListener("input", (e) => {
+        step.options[e.target.dataset.idx].subtext = e.target.value || undefined;
+        updatePreview();
+      });
+    });
+    document.querySelectorAll(".opt-badge").forEach((input) => {
+      input.addEventListener("input", (e) => {
+        step.options[e.target.dataset.idx].badge = e.target.value || undefined;
+        updatePreview();
+      });
+    });
     document.querySelectorAll(".opt-icon").forEach((input) => {
       input.addEventListener("input", (e) => {
-        step.options[e.target.dataset.idx].icon = e.target.value;
+        step.options[e.target.dataset.idx].icon = e.target.value || undefined;
         updatePreview();
       });
     });
@@ -428,18 +463,15 @@ function updateTheme(patch) {
 }
 
 function updatePreview() {
-  if (!currentFunnel) return;
-  const iframeDoc = previewIframe.contentDocument || previewIframe.contentWindow?.document;
-  if (!iframeDoc) return;
-
-  const script = iframeDoc.getElementById("of-funnel");
-  if (script) {
-    script.textContent = JSON.stringify(currentFunnel);
-    // Trigger reload inside iframe to re-mount engine with fresh funnel document
-    previewIframe.contentWindow.location.reload();
-  } else {
-    reloadIframe();
-  }
+  if (!currentFunnel || !previewIframe) return;
+  previewIframe.contentWindow?.postMessage(
+    {
+      type: "of:preview",
+      funnel: JSON.parse(JSON.stringify(currentFunnel)),
+      stepIndex: currentStepIndex,
+    },
+    "*"
+  );
 }
 
 function reloadIframe() {

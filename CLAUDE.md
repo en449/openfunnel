@@ -52,7 +52,20 @@ The engine mounts into any container in any framework and mutates nothing else.
   `lead`; mounts chrome; runs transitions; emits events; persists progress.
 - `src/render/index.js` — builds the shared header, then dispatches on
   `step.type` to `choice` / `multiselect` / `form` / `content` / `loader` /
-  `success`.
+  `success`. `landing` is the one exception and returns *before* the header is
+  built — see below.
+- `src/render/landing.js` — the `landing` step: a full marketing page (hero,
+  background media, nav, sticky CTA, sections, footer) whose CTAs advance into
+  the quiz. It is what a cold ad click lands on, so a funnel is "landing page →
+  questions → lead" in one document. Two rules it breaks on purpose:
+  it owns the whole screen (no shared header — the hero draws its own eyebrow /
+  headline / subtext, and drawing both prints the headline twice), and
+  `step.blocks` is the page body *below* the hero rather than content above an
+  interaction. Every section a page could want is therefore an ordinary
+  `ContentBlock`, not a landing-only field, so adding one benefits every step
+  type at once. The progress bar defaults to hidden on a landing step
+  (`progress: true` overrides), and `width: "wide"` breaks the 9:16 phone frame
+  on desktop via `data-width` on the root.
 - `src/branching.js` — `resolveNext()`. Precedence: the interaction's `next` →
   the step's own `next` → linear fall-through. `null` ends the funnel.
 - `src/piping.js` — `{{token}}` substitution from `lead` first, then `answers`.
@@ -214,6 +227,28 @@ closed hole for an untestable one. Use `resolveSafeTarget()` for any new outboun
 call to an operator-supplied URL; `isSafeWebhookTarget()` alone is the textual
 check only.
 
+**Operator-pasted script is opt-in, and never `'unsafe-inline'`.** A funnel's
+`customHead` / `customBody` are injected raw, but script inside them is refused
+unless `ALLOW_CUSTOM_SCRIPTS=1`. The default is load-bearing: `/f/:slug` is served
+from the SAME ORIGIN as the console, and `of.adminToken` lives in that origin's
+`localStorage` — so a script on a funnel page reads the token and drains
+`/api/admin/*`. Funnel documents are imported from templates and bug reports, so
+executing what a document carries turns an import into console takeover.
+
+When enabled, `funnelCsp` allows each inline script by the SHA-256 of its exact
+bytes and each external one by its origin (added to `script-src` *and*
+`connect-src` — an origin that can load but not beacon is a script that silently
+reports nothing). `step.consent` and any future renderer XSS stay blocked,
+because their content was never hashed in. Two rules:
+
+- `funnelPage()` and `funnelCsp()` must read the fields through `customCode()`.
+  They ran the same `||` chain separately at first; the moment those drift, the
+  hash covers different bytes than are served and every pasted script is refused
+  with nothing logged.
+- With the flag off, a document carrying script logs a warning naming the funnel.
+  Do not remove it — the failure was previously invisible server-side, and the
+  operator only saw a CSP violation in the *visitor's* console.
+
 **Funnel pages carry a strict CSP.** `script-src` is pinned to the SHA-256 of the
 inline boot script, which is why `FUNNEL_BOOT_SCRIPT` must stay free of
 interpolation — put a funnel value in it and every funnel page stops running its
@@ -315,8 +350,20 @@ URL still serves the shell), and add a `<section id="view-<name>">` to
 `src/analytics.js` (extend `EVENT_MAP`), then add the input to the Pixels modal
 in `apps/app/index.html` and to the `pixelFields` table in `app.js`.
 
+**Add a content block:** add the typedef to `src/types.js` and the `ContentBlock`
+union → render it in `renderBlock()` in `src/render/blocks.js` → style it in
+`src/styles.css` → add an entry to `BLOCK_SCHEMA` in `apps/app/app.js` so the
+section editor can create and edit it → mirror the type into
+`packages/engine/types/index.d.ts`.
+
 **Add a funnel:** drop a JSON file in `examples/` — `/api/funnels` lists the
 directory, so it appears in the console with no registration step.
+
+**Add a template:** add an entry to `FUNNEL_TEMPLATES` in `apps/app/templates.js`.
+Set `category` — the filter pills in `index.html` match on it exactly, and a
+template without one only ever appears under "All". Use the field names the
+engine actually reads (`ctaLabel`, `submitLabel`, `buttonLabel`/`redirectUrl`);
+a `buttonText` key is silently ignored and the button falls back to "Continue".
 
 ## Style
 
@@ -358,13 +405,29 @@ TODOs, not working features:
 These work in the engine but the builder cannot create them, so they are reachable
 only through a template or hand-edited funnel JSON:
 
-- The `calculator` content block (`src/calculator.js` + the `CalculatorBlock`
-  typedef) — the string `"calculator"` appears nowhere in `apps/app/`. The
-  `solar-calculator` template in `templates.js` is the only thing that emits one.
-- The `address` form field type — handled by `src/render/form.js`, but
-  `FIELD_TYPES` in `apps/app/app.js` is only `["text", "email", "tel"]`, so the
-  field-type dropdown cannot produce it (nor `textarea`, `select`, `date`,
-  `number`, `file`).
+- The `select` form field type — `form.js` renders it, but the console has no
+  editor for its `options`, so offering it in `FIELD_TYPES` would only ever
+  produce an empty dropdown. Add the options editor and the type together.
+  (`file` is likewise absent: nothing in the ingest path stores an upload.)
+
+Content blocks used to sit here too — none of them were reachable outside a
+template. The section editor in the inspector (`BLOCK_SCHEMA` +
+`renderSectionEditor` in `apps/app/app.js`) now covers all 20 block types on
+every step type, `calculator` included. `BLOCK_SCHEMA` is the table to extend
+when the engine gains a block; its field `key`s are the JSON keys the engine
+reads, so they have to track `ContentBlock` in `types.js` or the console writes
+a key nothing consumes.
+
+The landing panel and the section editor both address the step by JSON path
+(`data-path="blocks.2.items.0.title"`) through `readPath`/`writePath`, rather
+than a named `data-*` attribute per field — which is why adding a field is a
+line of schema and no wiring. Two consequences worth knowing: text edits
+deliberately do **not** re-render the inspector (it is rebuilt from scratch, so
+repainting per keystroke would move focus out of the field being typed in), and
+`bindInspector` must drop its previous delegated listeners via `_ofUnbind`.
+Those listeners live on `#inspector`, which survives the `innerHTML` swap, so
+without that every render adds another set and one click on "add section" fires
+once per accumulated listener.
 
 ## Gotchas
 

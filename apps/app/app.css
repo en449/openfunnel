@@ -973,16 +973,19 @@ a { color: inherit; }
 /* Device — a bezel, not a toy. No drawn notch, speaker grille, or camera lens;
    the point is the funnel inside it. */
 .device {
-  --bezel: 9px;
-  --screen-r: 30px;
   position: relative;
+  /* Bezel geometry driven by data-chassis */
+  --bezel: 14px;
+  --screen-r: 40px;
+
+  box-sizing: border-box;
   padding: var(--bezel);
   background: #0b0d10;
   border-radius: calc(var(--screen-r) + var(--bezel));
-  box-shadow: var(--shadow-3), inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  box-shadow: var(--shadow-3), 0 24px 70px -16px color-mix(in srgb, var(--accent, #4f46e5) 30%, transparent), inset 0 0 0 1px rgba(255, 255, 255, 0.08);
   height: min(788px, calc(100vh - var(--bar-1) - var(--bar-2) - 150px));
   aspect-ratio: 390 / 844;
-  transition: aspect-ratio 0.24s var(--ease), height 0.24s var(--ease), border-radius 0.24s var(--ease);
+  transition: aspect-ratio 0.24s var(--ease), height 0.24s var(--ease), border-radius 0.24s var(--ease), box-shadow 0.3s ease;
 }
 .device-screen {
   width: 100%;
@@ -996,7 +999,7 @@ a { color: inherit; }
 /* On a dark stage the bezel would merge into the background, so give it an edge. */
 [data-theme="dark"] .device {
   background: #05070a;
-  box-shadow: var(--shadow-3), inset 0 0 0 1px rgba(255, 255, 255, 0.14), 0 0 0 1px var(--line);
+  box-shadow: var(--shadow-3), 0 24px 80px -16px color-mix(in srgb, var(--accent, #6366f1) 35%, transparent), inset 0 0 0 1px rgba(255, 255, 255, 0.14), 0 0 0 1px var(--line);
 }
 
 .device[data-chassis="tablet"] { --screen-r: 16px; --bezel: 12px; aspect-ratio: 834 / 1112; }
@@ -1023,6 +1026,132 @@ a { color: inherit; }
   margin-bottom: 12px;
 }
 
+/* Segmented Picker & Badge Chips */
+.seg-picker {
+  display: flex;
+  gap: 3px;
+  padding: 3px;
+  background: var(--surface-2);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-sm);
+  width: 100%;
+}
+.seg-btn {
+  flex: 1;
+  padding: 6px 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-2);
+  background: transparent;
+  border: 0;
+  border-radius: calc(var(--r-sm) - 2px);
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+.seg-btn:hover { color: var(--text-1); background: rgba(255,255,255,0.04); }
+.seg-btn.is-active {
+  background: var(--surface);
+  color: var(--accent);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.12), 0 0 0 1px var(--line);
+  font-weight: 700;
+}
+
+.badge-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 5px;
+}
+.badge-chip {
+  padding: 2px 7px;
+  font-size: 10.5px;
+  font-weight: 600;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+  color: var(--text-2);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.badge-chip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  transform: translateY(-1px);
+}
+
+/* The landing layout picker has five options, so it wraps rather than squeezing
+   each label to three illegible characters. */
+.seg-wrap { flex-wrap: wrap; }
+.seg-wrap .seg-btn { flex: 1 1 30%; }
+
+/* Two stacked actions under the spine (add landing page / add question). */
+.pane-foot-stack { display: flex; flex-direction: column; gap: 6px; }
+
+/* Collapsible groups in the landing panel — it has far more options than fits
+   on one screen, so everything past the hero and CTA starts folded. */
+.ins-group {
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  margin-bottom: 8px;
+}
+.ins-group-head {
+  padding: 9px 12px;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-2);
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.ins-group-head::-webkit-details-marker { display: none; }
+.ins-group-head::after { content: "+"; font-size: 14px; color: var(--text-3); }
+.ins-group[open] .ins-group-head::after { content: "−"; }
+.ins-group[open] .ins-group-head { border-bottom: 1px solid var(--line-soft); color: var(--text-1); }
+.ins-group-body { padding: 12px; }
+.ins-group-body .field:last-child { margin-bottom: 0; }
+
+/* Section (content block) cards + the palette that creates them. */
+.block-card { padding-bottom: 4px; }
+.block-card-type {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--text-2);
+  letter-spacing: 0.01em;
+}
+.block-palette {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 10px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line);
+}
+.block-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+  color: var(--text-2);
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease, transform 0.15s ease;
+}
+.block-chip:hover { border-color: var(--accent); color: var(--accent); transform: translateY(-1px); }
+.block-chip-glyph { font-size: 12px; opacity: 0.8; }
+
 /* Repeatable rows: choice options, form fields. */
 .repeat {
   position: relative;
@@ -1031,6 +1160,11 @@ a { color: inherit; }
   background: var(--surface-2);
   border: 1px solid var(--line-soft);
   border-radius: var(--r-sm);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.repeat:hover {
+  border-color: var(--line);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.04);
 }
 .repeat-head {
   display: flex;
@@ -1465,11 +1599,15 @@ a { color: inherit; }
 
 /* ---- Drag & Drop Spine & Options ---------------------------------------- */
 .spine-row[draggable="true"],
-.option-edit-card[draggable="true"] {
+.option-edit-card[draggable="true"],
+.block-card[draggable="true"],
+.block-chip[draggable="true"] {
   cursor: grab;
 }
 .spine-row[draggable="true"]:active,
-.option-edit-card[draggable="true"]:active {
+.option-edit-card[draggable="true"]:active,
+.block-card[draggable="true"]:active,
+.block-chip[draggable="true"]:active {
   cursor: grabbing;
 }
 
@@ -1486,22 +1624,248 @@ a { color: inherit; }
   transition: opacity 0.12s var(--ease);
 }
 .spine-row:hover .drag-handle,
-.option-edit-card:hover .drag-handle {
+.option-edit-card:hover .drag-handle,
+.block-card:hover .drag-handle {
   opacity: 1;
 }
 
-.spine-row.is-dragging,
-.option-edit-card.is-dragging {
-  opacity: 0.4;
-  border-style: dashed;
+/* ---- Inspector Tabs & Clean Drag UI --------------------------------------- */
+.inspector-tabs {
+  display: flex;
+  gap: 2px;
   background: var(--surface-2);
+  padding: 3px;
+  border-radius: var(--r-md);
+  margin-bottom: 12px;
+  border: 1px solid var(--line);
 }
 
-.spine-row.drag-over,
-.option-edit-card.drag-over {
+.ins-tab {
+  flex: 1;
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 6px 8px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.12s var(--ease);
+  white-space: nowrap;
+}
+.ins-tab:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+.ins-tab.is-active {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+}
+
+.drag-handle-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  padding: 2px 7px;
+  border-radius: 999px;
+  cursor: grab;
+  user-select: none;
+  transition: all 0.12s var(--ease);
+}
+.drag-handle-pill:hover,
+.spine-row:hover .drag-handle-pill,
+.option-edit-card:hover .drag-handle-pill,
+.block-card:hover .drag-handle-pill {
+  color: var(--accent);
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+
+.block-drop-hint {
+  font-size: 11.5px;
+  color: var(--text-2);
+  background: var(--accent-soft);
+  border: 1px dashed var(--accent-line);
+  padding: 8px 12px;
+  border-radius: var(--r-sm);
+  margin-bottom: 12px;
+  line-height: 1.4;
+}
+
+.spine-row.is-dragging,
+.option-edit-card.is-dragging,
+.block-card.is-dragging {
+  opacity: 0.35;
+  border-style: dashed !important;
+  background: var(--surface-2) !important;
+}
+
+/* Drag drop insertion indicators */
+.spine-row,
+.option-edit-card,
+.block-card {
+  position: relative;
+  transition: transform 0.12s var(--ease), border-color 0.12s var(--ease);
+}
+
+.spine-row.drop-before::before,
+.option-edit-card.drop-before::before,
+.block-card.drop-before::before {
+  content: "";
+  position: absolute;
+  top: -3px;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: var(--accent);
+  border-radius: 2px;
+  box-shadow: 0 0 8px var(--accent);
+  z-index: 10;
+}
+
+.spine-row.drop-after::after,
+.option-edit-card.drop-after::after,
+.block-card.drop-after::after {
+  content: "";
+  position: absolute;
+  bottom: -3px;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: var(--accent);
+  border-radius: 2px;
+  box-shadow: 0 0 8px var(--accent);
+  z-index: 10;
+}
+
+.block-card-type {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-2);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ---- Badge & Token Chips ------------------------------------------------ */
+.badge-chips,
+.token-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.badge-chip,
+.token-chip {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 7px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.12s var(--ease);
+}
+.badge-chip:hover,
+.token-chip:hover {
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-soft);
-  transform: translateY(2px);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.token-chip {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+
+/* ---- Step Archetypes Modal ------------------------------------------------ */
+.archetype-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+@media (max-width: 600px) {
+  .archetype-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.archetype-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  background: var(--surface);
+  cursor: pointer;
+  transition: all 0.15s var(--ease);
+}
+.archetype-card:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.archetype-icon {
+  font-size: 22px;
+  line-height: 1;
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.archetype-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.archetype-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+
+.archetype-desc {
+  font-size: 11.5px;
+  color: var(--text-2);
+  line-height: 1.35;
+}
+
+/* ---- Spine Enhancements --------------------------------------------------- */
+.spine-type-badge {
+  font-size: 9.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--text-3);
+  margin-left: auto;
+}
+.spine-row:hover .spine-type-badge {
+  color: var(--text-2);
+}
+.spine-dup-btn {
+  opacity: 0;
+  transition: opacity 0.12s var(--ease);
+}
+.spine-row:hover .spine-dup-btn {
+  opacity: 1;
 }
 
 /* ---- Symbol & Icon Picker Modal ------------------------------------------ */
@@ -1536,4 +1900,5 @@ a { color: inherit; }
   background: var(--accent-soft);
   box-shadow: 0 0 0 2px var(--accent-line);
 }
+
 

@@ -38,8 +38,355 @@ const ROUTES = {
   settings: "/settings",
 };
 
-const STEP_TYPES = ["content", "choice", "multiselect", "form", "loader", "success"];
-const FIELD_TYPES = ["text", "email", "tel"];
+const STEP_TYPES = ["landing", "content", "choice", "multiselect", "form", "loader", "success"];
+// `select` is deliberately absent: `form.js` renders it, but the console has no
+// editor for its `options`, so offering it here would only ever produce an empty
+// dropdown. Add the options editor and the type in the same change.
+const FIELD_TYPES = ["text", "email", "tel", "textarea", "number", "date", "address"];
+
+/* ========================================================================== *
+ *  Section (content block) schema
+ *
+ *  The inspector builds its section editor from this table rather than from
+ *  hand-written markup per block type, so a new engine block becomes editable by
+ *  adding one entry. Field `key`s are the JSON keys the engine reads — keep them
+ *  in step with `ContentBlock` in `packages/engine/src/types.js`, or the console
+ *  will happily write a key nothing consumes.
+ *
+ *  Field kinds: text | area | url | num | bool | pick | lines (newline-separated
+ *  string[]) | list (array of objects, edited with a nested repeater) | group
+ *  (a nested object).
+ * ========================================================================== */
+
+const BLOCK_SCHEMA = {
+  heading: {
+    label: "Section heading",
+    glyph: "H",
+    make: () => ({ type: "heading", eyebrow: "Why us", value: "A headline for this section" }),
+    fields: [
+      { key: "eyebrow", label: "Eyebrow", kind: "text" },
+      { key: "value", label: "Title", kind: "text" },
+      { key: "sub", label: "Supporting line", kind: "area" },
+      { key: "align", label: "Align", kind: "pick", options: ["center", "left"] },
+    ],
+  },
+  text: {
+    label: "Paragraph",
+    glyph: "¶",
+    make: () => ({ type: "text", value: "Say something persuasive here." }),
+    fields: [
+      { key: "value", label: "Text", kind: "area" },
+      { key: "size", label: "Size", kind: "pick", options: ["md", "sm", "lg"] },
+      { key: "align", label: "Align", kind: "pick", options: ["center", "left"] },
+    ],
+  },
+  image: {
+    label: "Image",
+    glyph: "🖼",
+    make: () => ({ type: "image", src: "" }),
+    fields: [
+      { key: "src", label: "Image URL", kind: "url" },
+      { key: "alt", label: "Alt text", kind: "text" },
+      { key: "aspect", label: "Aspect ratio", kind: "text", placeholder: "16/9" },
+      { key: "fit", label: "Fit", kind: "pick", options: ["cover", "contain"] },
+    ],
+  },
+  video: {
+    label: "Video / VSL",
+    glyph: "▶",
+    make: () => ({ type: "video", src: "" }),
+    fields: [
+      { key: "src", label: "Video or YouTube/Vimeo URL", kind: "url" },
+      { key: "poster", label: "Poster image URL", kind: "url" },
+      { key: "autoplay", label: "Autoplay (muted)", kind: "bool" },
+    ],
+  },
+  features: {
+    label: "Feature cards",
+    glyph: "▦",
+    make: () => ({
+      type: "features",
+      columns: 1,
+      items: [
+        { icon: "⚡", title: "Fast to launch", text: "Live in under an hour." },
+        { icon: "🎯", title: "Built for ads", text: "Every step is a conversion point." },
+      ],
+    }),
+    fields: [
+      { key: "columns", label: "Columns", kind: "pick", options: ["1", "2", "3"], num: true },
+      {
+        key: "items",
+        label: "Features",
+        kind: "list",
+        add: () => ({ icon: "✦", title: "New feature" }),
+        item: [
+          { key: "icon", label: "Icon", kind: "text" },
+          { key: "title", label: "Title", kind: "text" },
+          { key: "text", label: "Description", kind: "area" },
+          { key: "image", label: "Image URL (replaces icon)", kind: "url" },
+        ],
+      },
+    ],
+  },
+  steps: {
+    label: "How it works",
+    glyph: "①",
+    make: () => ({
+      type: "steps",
+      items: [
+        { title: "Answer 4 questions", text: "Takes about 60 seconds." },
+        { title: "Get your match", text: "We calculate it instantly." },
+        { title: "Book your call", text: "Pick any slot that suits you." },
+      ],
+    }),
+    fields: [
+      {
+        key: "items",
+        label: "Steps",
+        kind: "list",
+        add: () => ({ title: "Next step" }),
+        item: [
+          { key: "title", label: "Title", kind: "text" },
+          { key: "text", label: "Description", kind: "area" },
+        ],
+      },
+    ],
+  },
+  stats: {
+    label: "Stat row",
+    glyph: "％",
+    make: () => ({
+      type: "stats",
+      columns: 3,
+      items: [
+        { value: "12,480", label: "Leads captured" },
+        { value: "4.8×", label: "Average ROAS" },
+        { value: "62%", label: "Completion rate" },
+      ],
+    }),
+    fields: [
+      { key: "columns", label: "Columns", kind: "pick", options: ["3", "2"], num: true },
+      {
+        key: "items",
+        label: "Stats",
+        kind: "list",
+        add: () => ({ value: "0", label: "Metric" }),
+        item: [
+          { key: "value", label: "Value", kind: "text" },
+          { key: "label", label: "Label", kind: "text" },
+        ],
+      },
+    ],
+  },
+  faq: {
+    label: "FAQ / objections",
+    glyph: "?",
+    make: () => ({
+      type: "faq",
+      items: [{ q: "How long does it take?", a: "About 60 seconds — four short questions." }],
+    }),
+    fields: [
+      {
+        key: "items",
+        label: "Questions",
+        kind: "list",
+        add: () => ({ q: "New question", a: "" }),
+        item: [
+          { key: "q", label: "Question", kind: "text" },
+          { key: "a", label: "Answer", kind: "area" },
+        ],
+      },
+    ],
+  },
+  pricing: {
+    label: "Pricing plans",
+    glyph: "$",
+    make: () => ({
+      type: "pricing",
+      plans: [
+        { name: "Starter", price: "$0", period: "/mo", features: ["1 funnel", "Unlimited leads"], ctaLabel: "Start free" },
+        { name: "Growth", price: "$49", period: "/mo", badge: "Popular", highlight: true, features: ["Unlimited funnels", "A/B testing"], ctaLabel: "Get started" },
+      ],
+    }),
+    fields: [
+      {
+        key: "plans",
+        label: "Plans",
+        kind: "list",
+        add: () => ({ name: "New plan", price: "$0" }),
+        item: [
+          { key: "name", label: "Name", kind: "text" },
+          { key: "price", label: "Price", kind: "text" },
+          { key: "period", label: "Period", kind: "text", placeholder: "/mo" },
+          { key: "badge", label: "Badge", kind: "text" },
+          { key: "features", label: "Features (one per line)", kind: "lines" },
+          { key: "ctaLabel", label: "Button label", kind: "text" },
+          { key: "highlight", label: "Highlight this plan", kind: "bool" },
+          { key: "next", label: "Branch to step ID", kind: "text", list: "stepIds" },
+        ],
+      },
+    ],
+  },
+  reviews: {
+    label: "Review cards",
+    glyph: "★",
+    make: () => ({
+      type: "reviews",
+      items: [{ name: "Sarah M.", text: "Booked three calls the first week.", rating: 5 }],
+    }),
+    fields: [
+      {
+        key: "items",
+        label: "Reviews",
+        kind: "list",
+        add: () => ({ name: "Customer", text: "" }),
+        item: [
+          { key: "text", label: "Quote", kind: "area" },
+          { key: "name", label: "Name", kind: "text" },
+          { key: "rating", label: "Rating (0–5)", kind: "num" },
+          { key: "avatar", label: "Avatar URL", kind: "url" },
+        ],
+      },
+    ],
+  },
+  quote: {
+    label: "Pull quote",
+    glyph: "❝",
+    make: () => ({ type: "quote", text: "This paid for itself in a week.", name: "Alex R.", rating: 5 }),
+    fields: [
+      { key: "text", label: "Quote", kind: "area" },
+      { key: "name", label: "Name", kind: "text" },
+      { key: "role", label: "Role / company", kind: "text" },
+      { key: "rating", label: "Rating (0–5)", kind: "num" },
+      { key: "avatar", label: "Avatar URL", kind: "url" },
+    ],
+  },
+  gallery: {
+    label: "Image gallery",
+    glyph: "▤",
+    make: () => ({ type: "gallery", layout: "scroll", items: [{ src: "" }] }),
+    fields: [
+      { key: "layout", label: "Layout", kind: "pick", options: ["scroll", "grid"] },
+      {
+        key: "items",
+        label: "Images",
+        kind: "list",
+        add: () => ({ src: "" }),
+        item: [
+          { key: "src", label: "Image URL", kind: "url" },
+          { key: "caption", label: "Caption", kind: "text" },
+          { key: "alt", label: "Alt text", kind: "text" },
+        ],
+      },
+    ],
+  },
+  compare: {
+    label: "Us vs. them",
+    glyph: "⇄",
+    make: () => ({
+      type: "compare",
+      left: { title: "The old way", items: ["Slow forms", "Cold leads"] },
+      right: { title: "With us", items: ["60-second quiz", "Pre-qualified leads"] },
+    }),
+    fields: [
+      {
+        key: "left",
+        label: "Left column (✕)",
+        kind: "group",
+        item: [
+          { key: "title", label: "Title", kind: "text" },
+          { key: "items", label: "Points (one per line)", kind: "lines" },
+        ],
+      },
+      {
+        key: "right",
+        label: "Right column (✓)",
+        kind: "group",
+        item: [
+          { key: "title", label: "Title", kind: "text" },
+          { key: "items", label: "Points (one per line)", kind: "lines" },
+        ],
+      },
+    ],
+  },
+  list: {
+    label: "Checklist",
+    glyph: "✓",
+    make: () => ({ type: "list", items: [{ text: "Something you get" }] }),
+    fields: [
+      {
+        key: "items",
+        label: "Items",
+        kind: "list",
+        add: () => ({ text: "New item" }),
+        item: [
+          { key: "icon", label: "Icon", kind: "text" },
+          { key: "text", label: "Text", kind: "text" },
+        ],
+      },
+    ],
+  },
+  trust: {
+    label: "Trust badges",
+    glyph: "🛡",
+    make: () => ({ type: "trust", items: [{ label: "Trusted by 200+ brands" }] }),
+    fields: [
+      {
+        key: "items",
+        label: "Badges",
+        kind: "list",
+        add: () => ({ label: "New badge" }),
+        item: [
+          { key: "label", label: "Label", kind: "text" },
+          { key: "src", label: "Logo URL (replaces label)", kind: "url" },
+        ],
+      },
+    ],
+  },
+  countdown: {
+    label: "Countdown timer",
+    glyph: "⏱",
+    make: () => ({ type: "countdown", minutes: 15, label: "Offer expires in" }),
+    fields: [
+      { key: "label", label: "Label", kind: "text" },
+      { key: "minutes", label: "Minutes", kind: "num" },
+    ],
+  },
+  calculator: {
+    label: "Calculator",
+    glyph: "＝",
+    make: () => ({ type: "calculator", label: "Your estimated saving", currency: "$", formula: "1000" }),
+    fields: [
+      { key: "label", label: "Label", kind: "text" },
+      { key: "currency", label: "Currency symbol", kind: "text" },
+      { key: "formula", label: "Formula", kind: "text", hint: "Pipe answers in, e.g. {{bill}} * 12 * 0.7" },
+    ],
+  },
+  cta: {
+    label: "Call to action",
+    glyph: "➔",
+    make: () => ({ type: "cta", label: "Start now", note: "Takes 60 seconds" }),
+    fields: [
+      { key: "label", label: "Button label", kind: "text" },
+      { key: "note", label: "Microcopy under the button", kind: "text" },
+      { key: "variant", label: "Style", kind: "pick", options: ["solid", "outline"] },
+      { key: "next", label: "Branch to step ID", kind: "text", list: "stepIds" },
+      { key: "url", label: "External URL (instead of advancing)", kind: "url" },
+    ],
+  },
+  divider: {
+    label: "Divider",
+    glyph: "—",
+    make: () => ({ type: "divider" }),
+    fields: [{ key: "label", label: "Caption (optional)", kind: "text" }],
+  },
+  spacer: {
+    label: "Spacer",
+    glyph: "␣",
+    make: () => ({ type: "spacer", size: 24 }),
+    fields: [{ key: "size", label: "Height (px)", kind: "num" }],
+  },
+};
 
 /* ========================================================================== *
  *  Small helpers
@@ -281,6 +628,7 @@ function setWorkingFunnel(funnel) {
   renderThemeModal();
   renderPixelsModal();
   renderDashboard();
+  loadSettings();
   mountPreview(true);
   renderAnalytics();
 }
@@ -627,11 +975,12 @@ function renderSpine() {
         <span class="spine-body">
           <span class="spine-title">${esc(stepTitle(step))}</span>
           <span class="spine-meta">
-            <span class="spine-type">${esc(step.type || "content")}</span>
+            <span class="spine-type-badge">${esc(step.type || "content")}</span>
             ${branches}
           </span>
         </span>
         <span class="spine-tools">
+          <button class="btn btn-ghost btn-icon btn-sm spine-dup-btn" data-dup-step="${i}" title="Duplicate step" aria-label="Duplicate step">${icon("copy", 11)}</button>
           ${
             i > 0
               ? `<button class="btn btn-ghost btn-icon btn-sm" data-move="${i}" data-dir="-1" title="Move up" aria-label="Move up">${icon("up", 12)}</button>`
@@ -653,6 +1002,7 @@ function selectStep(index) {
   state.stepIndex = Math.max(0, Math.min(index, (state.funnel?.steps.length || 1) - 1));
   renderSpine();
   renderInspector();
+  pushPreview();
 }
 
 function moveStep(from, delta) {
@@ -666,21 +1016,181 @@ function moveStep(from, delta) {
   onFunnelEdited();
 }
 
-function addStep() {
+function duplicateStep(index) {
+  if (!state.funnel?.steps[index]) return;
+  const original = state.funnel.steps[index];
+  const clone = JSON.parse(JSON.stringify(original));
+  const timestamp = Date.now().toString(36).slice(-4);
+  clone.id = `${original.id || "step"}_copy_${timestamp}`;
+  if (clone.headline) clone.headline = `${clone.headline} (Copy)`;
+  state.funnel.steps.splice(index + 1, 0, clone);
+  state.stepIndex = index + 1;
+  renderSpine();
+  renderInspector();
+  onFunnelEdited();
+  toast("Step duplicated", "success");
+}
+
+function createStepFromArchetype(archetype) {
   if (!state.funnel) return;
-  state.funnel.steps.push({
-    id: `step_${Date.now().toString(36).slice(-4)}`,
-    type: "choice",
-    headline: "New question",
-    options: [
-      { id: "opt_1", label: "Option one" },
-      { id: "opt_2", label: "Option two" },
-    ],
-  });
+  const timestamp = Date.now().toString(36).slice(-4);
+  let newStep;
+
+  if (archetype === "choice") {
+    newStep = {
+      id: `q_${timestamp}`,
+      type: "choice",
+      headline: "Which goal matters most to you right now?",
+      subtext: "Select one option to continue.",
+      autoAdvance: true,
+      layout: "list",
+      options: [
+        { id: "opt_1", label: "Scale qualified leads & sales", icon: "⚡", badge: "🔥 Popular", subtext: "For high-ticket offers and services" },
+        { id: "opt_2", label: "Automate prospect qualification", icon: "🎯", badge: "⭐ Recommended", subtext: "Filter out low quality leads automatically" },
+        { id: "opt_3", label: "Boost funnel conversion rates", icon: "📈", subtext: "Turn cold ad traffic into paying clients" }
+      ]
+    };
+  } else if (archetype === "multiselect") {
+    newStep = {
+      id: `multi_${timestamp}`,
+      type: "multiselect",
+      headline: "What features are essential for your funnel?",
+      subtext: "Select all options that apply.",
+      options: [
+        { id: "m1", label: "Interactive quiz branching", icon: "🔀" },
+        { id: "m2", label: "Meta & GA4 pixel tracking", icon: "📊" },
+        { id: "m3", label: "Anti-spam OTP verification", icon: "🛡️" },
+        { id: "m4", label: "Instant CRM & Zapier sync", icon: "⚡" }
+      ],
+      ctaLabel: "Continue to Next Step ➔"
+    };
+  } else if (archetype === "form") {
+    newStep = {
+      id: `lead_form_${timestamp}`,
+      type: "form",
+      headline: "Where should we send your custom report?",
+      subtext: "Enter your contact details below to get instant access.",
+      verifyEmail: true,
+      fields: [
+        { name: "name", label: "Full Name", type: "text", required: true },
+        { name: "email", label: "Work Email", type: "email", required: true },
+        { name: "phone", label: "Phone Number", type: "phone", required: false }
+      ],
+      submitLabel: "Get Instant Access ➔"
+    };
+  } else if (archetype === "vsl") {
+    newStep = {
+      id: `vsl_${timestamp}`,
+      type: "content",
+      headline: "Watch This 2-Minute Demo Before Continuing",
+      subtext: "Discover how our interactive funnel system drives 3x conversions.",
+      blocks: [
+        { type: "video", src: "https://www.youtube.com/watch?v=dQw4w9WgXcQ", autoplay: false },
+        {
+          type: "features",
+          columns: 2,
+          items: [
+            { icon: "⚡", title: "Instant Setup", text: "Launch in under 10 minutes." },
+            { icon: "🎯", title: "High Conversion", text: "Optimized for mobile paid traffic." }
+          ]
+        }
+      ],
+      ctaLabel: "Claim Your Strategy Session ➔"
+    };
+  } else if (archetype === "calculator") {
+    newStep = {
+      id: `calc_${timestamp}`,
+      type: "content",
+      headline: "Your Projected ROI & Savings",
+      subtext: "Based on your inputs, here is your estimated monthly output:",
+      blocks: [
+        { type: "calculator", label: "Estimated Monthly Growth", currency: "$", formula: "2500 * 1.5" },
+        { type: "trust", items: [{ label: "Verified 4.9/5 Rating" }, { label: "100% Guaranteed Accuracy" }] }
+      ],
+      ctaLabel: "Lock In Your Projected Rate ➔"
+    };
+  } else if (archetype === "reviews") {
+    newStep = {
+      id: `proof_${timestamp}`,
+      type: "content",
+      headline: "See What Top Performers Are Saying",
+      subtext: "Join 1,200+ businesses who switched to openFunnel.",
+      blocks: [
+        {
+          type: "reviews",
+          items: [
+            { name: "Alex R., Agency Lead", text: "This quiz funnel doubled our lead quality in less than 48 hours.", rating: 5 },
+            { name: "Sarah M., SaaS Founder", text: "Best conversion improvement we have made all year.", rating: 5 }
+          ]
+        },
+        { type: "stats", columns: 3, items: [{ value: "12,400+", label: "Leads Captured" }, { value: "4.8x", label: "Average ROAS" }, { value: "98%", label: "Satisfaction" }] }
+      ],
+      ctaLabel: "Start Your Quiz Now ➔"
+    };
+  } else if (archetype === "pricing") {
+    newStep = {
+      id: `offer_${timestamp}`,
+      type: "content",
+      headline: "Choose Your Growth Package",
+      subtext: "Select the option best suited for your current scale.",
+      blocks: [
+        {
+          type: "pricing",
+          plans: [
+            { name: "Starter", price: "$490", period: "/one-time", features: ["1 Custom Quiz Funnel", "Webhook Integration", "Basic Analytics"], ctaLabel: "Select Starter" },
+            { name: "Pro Scale", price: "$990", period: "/one-time", badge: "🔥 Most Popular", highlight: true, features: ["Unlimited Funnels", "A/B Split Testing", "Priority 24/7 Support"], ctaLabel: "Select Pro Scale" }
+          ]
+        }
+      ]
+    };
+  } else if (archetype === "landing") {
+    return addLandingStep();
+  } else {
+    newStep = {
+      id: `step_${timestamp}`,
+      type: "choice",
+      headline: "New question",
+      options: [
+        { id: "opt_1", label: "Option one" },
+        { id: "opt_2", label: "Option two" }
+      ]
+    };
+  }
+
+  state.funnel.steps.push(newStep);
   state.stepIndex = state.funnel.steps.length - 1;
   renderSpine();
   renderInspector();
   onFunnelEdited();
+  toast("New step added", "success");
+}
+
+function addStep() {
+  createStepFromArchetype("choice");
+}
+
+/**
+ * A landing page goes in *front* of the funnel, not on the end — it is what the
+ * ad click lands on. Appending it like any other step would put a hero screen
+ * after the thank-you page, which is never what was meant.
+ */
+function addLandingStep() {
+  if (!state.funnel) return;
+  state.funnel.steps.unshift({
+    id: `landing_${Date.now().toString(36).slice(-4)}`,
+    type: "landing",
+    ...blankLanding(),
+    blocks: [
+      BLOCK_SCHEMA.stats.make(),
+      BLOCK_SCHEMA.features.make(),
+      BLOCK_SCHEMA.faq.make(),
+    ],
+  });
+  state.stepIndex = 0;
+  renderSpine();
+  renderInspector();
+  onFunnelEdited();
+  toast("Landing page added as step 1");
 }
 
 function deleteStep() {
@@ -706,65 +1216,127 @@ function renderInspector() {
     return;
   }
 
-  host.innerHTML = `
-    <div class="inspector-section">
-      <div class="repeat-grid" style="grid-template-columns:1fr 1fr;gap:8px">
-        <div class="field" style="margin:0">
-          <label for="insType">Type</label>
-          <span class="select-wrap">
-            <select id="insType" class="select">
-              ${STEP_TYPES.map(
-                (t) => `<option value="${t}"${step.type === t ? " selected" : ""}>${t}</option>`
-              ).join("")}
-            </select>
-            <span class="select-caret">${icon("chevron")}</span>
-          </span>
-        </div>
-        <div class="field" style="margin:0">
-          <label for="insId">Step ID</label>
-          <input id="insId" class="input input-mono" type="text" value="${esc(step.id || "")}" />
-        </div>
-      </div>
-    </div>
+  const activeTab = state.inspectorTab || "content";
 
-    <div class="inspector-section">
-      <div class="field">
-        <label for="insHeadline">Headline</label>
-        <input id="insHeadline" class="input" type="text" value="${esc(step.headline || "")}" placeholder="Ask one clear question" />
-        <p class="field-hint">Use <code>{{name}}</code> to pipe in an earlier answer.</p>
-        <div id="headlineVariants" style="margin-top:8px"></div>
-      </div>
-      <div class="field">
-        <label for="insSubtext">Supporting text</label>
-        <textarea id="insSubtext" class="textarea" rows="2" placeholder="Optional">${esc(step.subtext || "")}</textarea>
-      </div>
-      <div class="field">
-        <label for="insHeroImage">Step Hero Photo / Media URL</label>
-        <input id="insHeroImage" class="input input-mono" type="text" value="${esc(step.image || step.heroImage || "")}" placeholder="https://images.unsplash.com/photo-…" />
-        <p class="field-hint">Optional hero photo displayed at the top of this step.</p>
-      </div>
-      <button id="rewriteBtn" class="btn btn-sm">${icon("ai", 13)} Suggest headlines</button>
-    </div>
-
-    ${renderStepBody(step)}
-
-    <div class="inspector-section">
-      <div class="inspector-head"><span class="eyebrow">Flow</span></div>
-      <div class="field">
-        <label for="insNext">Next step</label>
-        <input id="insNext" class="input input-mono" type="text" value="${esc(step.next || "")}" placeholder="${esc(nextStepHint())}" list="stepIds" />
-        <p class="field-hint">Leave empty to continue in order. Options can override this individually.</p>
-      </div>
-      <datalist id="stepIds">
-        ${state.funnel.steps.map((s) => `<option value="${esc(s.id)}"></option>`).join("")}
-      </datalist>
-    </div>
-
-    <div class="inspector-section">
-      <button id="deleteStepBtn" class="btn btn-sm btn-danger">${icon("trash", 13)} Delete step</button>
+  const tabsNav = `
+    <div class="inspector-tabs" id="insTabs">
+      <button type="button" class="ins-tab${activeTab === "content" ? " is-active" : ""}" data-ins-tab="content">✏️ Content</button>
+      <button type="button" class="ins-tab${activeTab === "design" ? " is-active" : ""}" data-ins-tab="design">🎨 Design</button>
+      <button type="button" class="ins-tab${activeTab === "blocks" ? " is-active" : ""}" data-ins-tab="blocks">🧩 Blocks</button>
+      <button type="button" class="ins-tab${activeTab === "logic" ? " is-active" : ""}" data-ins-tab="logic">🔀 Logic</button>
     </div>
   `;
 
+  let tabBody = "";
+
+  if (activeTab === "content") {
+    tabBody = `
+      <div class="inspector-section">
+        <div class="repeat-grid" style="grid-template-columns:1fr 1fr;gap:8px">
+          <div class="field" style="margin:0">
+            <label for="insType">Step Type</label>
+            <span class="select-wrap">
+              <select id="insType" class="select">
+                ${STEP_TYPES.map(
+                  (t) => `<option value="${t}"${step.type === t ? " selected" : ""}>${t}</option>`
+                ).join("")}
+              </select>
+              <span class="select-caret">${icon("chevron")}</span>
+            </span>
+          </div>
+          <div class="field" style="margin:0">
+            <label for="insId">Step ID</label>
+            <input id="insId" class="input input-mono" type="text" value="${esc(step.id || "")}" />
+          </div>
+        </div>
+      </div>
+
+      <div class="inspector-section">
+        <div class="field">
+          <label for="insHeadline">Headline</label>
+          <input id="insHeadline" class="input" type="text" value="${esc(step.headline || "")}" placeholder="Ask one clear question" />
+          <div class="token-chips" style="margin-top:6px">
+            <span style="font-size:11px;color:var(--text-3);line-height:20px">Pipe:</span>
+            <button type="button" class="token-chip" data-insert-token="{{name}}">{{name}}</button>
+            <button type="button" class="token-chip" data-insert-token="{{email}}">{{email}}</button>
+            <button type="button" class="token-chip" data-insert-token="{{answers.budget}}">{{answers.budget}}</button>
+            <button type="button" class="token-chip" data-insert-token="{{score}}">{{score}}</button>
+          </div>
+          <div id="headlineVariants" style="margin-top:8px"></div>
+        </div>
+        <div class="field">
+          <label for="insSubtext">Supporting text</label>
+          <textarea id="insSubtext" class="textarea" rows="2" placeholder="Optional subtext">${esc(step.subtext || "")}</textarea>
+        </div>
+        <button id="rewriteBtn" class="btn btn-sm">${icon("ai", 13)} Suggest headlines</button>
+      </div>
+
+      ${renderStepBody(step)}
+    `;
+  } else if (activeTab === "design") {
+    tabBody = `
+      <div class="inspector-section">
+        ${
+          step.type === "choice" || step.type === "multiselect"
+            ? `<div class="field" style="margin-bottom:14px">
+                <label>Option Layout</label>
+                <div class="seg-picker" id="insLayoutSeg">
+                  <button type="button" class="seg-btn${step.layout === "list" || !step.layout ? " is-active" : ""}" data-layout="list">☰ Stacked</button>
+                  <button type="button" class="seg-btn${step.layout === "grid" ? " is-active" : ""}" data-layout="grid">⊞ 2-Col</button>
+                  <button type="button" class="seg-btn${step.layout === "grid3" ? " is-active" : ""}" data-layout="grid3">▦ 3-Col</button>
+                </div>
+              </div>`
+            : ""
+        }
+        ${
+          step.type === "choice"
+            ? `<div class="field row-between" style="margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--line)">
+                <div>
+                  <div style="font-weight:600;font-size:12px">Auto-Advance on Click</div>
+                  <p class="field-hint" style="margin:0">Advance step immediately when prospect selects an option.</p>
+                </div>
+                <label class="switch">
+                  <input id="insAutoAdvance" type="checkbox"${step.autoAdvance !== false ? " checked" : ""} />
+                  <span class="switch-track"></span>
+                </label>
+              </div>`
+            : ""
+        }
+        <div class="field">
+          <label for="insHeroImage">Step Hero Photo / Media URL</label>
+          <input id="insHeroImage" class="input input-mono" type="text" value="${esc(step.image || step.heroImage || "")}" placeholder="https://images.unsplash.com/photo-…" />
+          <p class="field-hint">Optional hero photo displayed at top of step.</p>
+        </div>
+      </div>
+    `;
+  } else if (activeTab === "blocks") {
+    tabBody = `
+      <div class="block-drop-hint">
+        <strong>💡 Drag & Drop Enabled:</strong> Drag block chips below directly into your step sections, or drag section cards up/down to reorder.
+      </div>
+      ${renderSectionEditor(step)}
+    `;
+  } else if (activeTab === "logic") {
+    tabBody = `
+      <div class="inspector-section">
+        <div class="inspector-head"><span class="eyebrow">Flow & Branching</span></div>
+        <div class="field">
+          <label for="insNext">Default next step target</label>
+          <input id="insNext" class="input input-mono" type="text" value="${esc(step.next || "")}" placeholder="${esc(nextStepHint())}" list="stepIds" />
+          <p class="field-hint">Fallback next step if option doesn't override.</p>
+        </div>
+        <datalist id="stepIds">
+          ${state.funnel.steps.map((s) => `<option value="${esc(s.id)}"></option>`).join("")}
+        </datalist>
+      </div>
+
+      <div class="inspector-section" style="margin-top:20px">
+        <button id="deleteStepBtn" class="btn btn-sm btn-danger" style="width:100%">${icon("trash", 13)} Delete step</button>
+      </div>
+    `;
+  }
+
+  host.innerHTML = tabsNav + tabBody;
   bindInspector(step);
 }
 
@@ -773,41 +1345,416 @@ function nextStepHint() {
   return next ? next.id : "end of funnel";
 }
 
+/* ---- Path-addressed editing ---------------------------------------------
+ * The landing panel and the section editor both write deep into the step
+ * (`cta.label`, `blocks.2.items.0.title`), which is far too much shape to hang
+ * a named `data-*` attribute off. Every control instead carries the JSON path it
+ * owns, and one delegated handler applies it. Adding a field is then a line of
+ * schema, not a line of schema plus a line of wiring.
+ * ------------------------------------------------------------------------- */
+
+/** @returns {any} The value at `a.b.0.c`, or undefined. */
+function readPath(root, path) {
+  return path.split(".").reduce((node, key) => (node == null ? undefined : node[key]), root);
+}
+
+/**
+ * Write `a.b.0.c`, creating intermediates (an array when the next segment is an
+ * index, an object otherwise). `undefined` deletes the key rather than storing
+ * it: a field the operator emptied should leave the funnel JSON as it was before
+ * they touched it, not seed it with `""` that the engine then has to treat as set.
+ */
+function writePath(root, path, value) {
+  const keys = path.split(".");
+  const last = keys.pop();
+  let node = root;
+  keys.forEach((key, i) => {
+    const nextKey = i + 1 < keys.length ? keys[i + 1] : last;
+    if (node[key] == null) node[key] = /^\d+$/.test(nextKey) ? [] : {};
+    node = node[key];
+  });
+  if (value === undefined) delete node[last];
+  else node[last] = value;
+}
+
+/** Read one control's value back out in the shape its `kind` implies. */
+function valueFromControl(el) {
+  const kind = el.dataset.kind || "text";
+  if (kind === "bool") return el.checked || undefined;
+  if (kind === "num") {
+    const n = Number(el.value);
+    return el.value === "" || !Number.isFinite(n) ? undefined : n;
+  }
+  if (kind === "lines") {
+    const lines = el.value.split("\n").map((s) => s.trim()).filter(Boolean);
+    return lines.length ? lines : undefined;
+  }
+  return el.value.trim() === "" ? undefined : el.value;
+}
+
+/** One labelled control for a schema field. `base` is its parent's JSON path. */
+function fieldControl(field, base, parent) {
+  const path = base ? `${base}.${field.key}` : field.key;
+  const raw = parent?.[field.key];
+  const attrs = `data-path="${esc(path)}" data-kind="${esc(field.kind === "area" || field.kind === "url" ? "text" : field.kind === "pick" ? (field.num ? "num" : "text") : field.kind)}"`;
+  const hint = field.hint ? `<p class="field-hint">${esc(field.hint)}</p>` : "";
+
+  if (field.kind === "bool") {
+    return `<label class="repeat-check">
+      <input type="checkbox" ${attrs}${raw ? " checked" : ""} /> ${esc(field.label)}
+    </label>`;
+  }
+
+  if (field.kind === "pick") {
+    const options = field.options
+      .map((o) => `<option value="${esc(o)}"${String(raw ?? "") === String(o) ? " selected" : ""}>${esc(o)}</option>`)
+      .join("");
+    return `<div class="field">
+      <label>${esc(field.label)}</label>
+      <span class="select-wrap"><select class="select" ${attrs}>${options}</select>
+      <span class="select-caret">${icon("chevron")}</span></span>${hint}
+    </div>`;
+  }
+
+  if (field.kind === "area" || field.kind === "lines") {
+    const value = field.kind === "lines" ? (Array.isArray(raw) ? raw.join("\n") : "") : raw || "";
+    return `<div class="field">
+      <label>${esc(field.label)}</label>
+      <textarea class="textarea" rows="2" ${attrs} placeholder="${esc(field.placeholder || "")}">${esc(value)}</textarea>${hint}
+    </div>`;
+  }
+
+  if (field.kind === "group") {
+    return `<div class="field">
+      <label>${esc(field.label)}</label>
+      <div class="repeat">${renderFields(field.item, path, raw || {})}</div>${hint}
+    </div>`;
+  }
+
+  if (field.kind === "list") {
+    const items = Array.isArray(raw) ? raw : [];
+    const tpl = esc(JSON.stringify(field.add ? field.add() : {}));
+    const rows = items
+      .map(
+        (item, i) => `<div class="repeat">
+          <div class="repeat-head">
+            <span class="repeat-num">${String(i + 1).padStart(2, "0")}</span>
+            <button type="button" class="btn btn-ghost btn-icon btn-sm" data-item-move="${esc(path)}.${i}" data-dir="-1" title="Move up" aria-label="Move up" style="margin-left:auto">${icon("up", 11)}</button>
+            <button type="button" class="btn btn-ghost btn-icon btn-sm" data-item-move="${esc(path)}.${i}" data-dir="1" title="Move down" aria-label="Move down">${icon("down", 11)}</button>
+            <button type="button" class="btn btn-ghost btn-icon btn-sm" data-item-del="${esc(path)}.${i}" title="Remove" aria-label="Remove">${icon("close", 11)}</button>
+          </div>
+          ${renderFields(field.item, `${path}.${i}`, item)}
+        </div>`
+      )
+      .join("");
+    return `<div class="field">
+      <div class="inspector-head">
+        <span class="eyebrow">${esc(field.label)}</span>
+        <button type="button" class="btn btn-ghost btn-sm" data-item-add="${esc(path)}" data-item-tpl="${tpl}">${icon("plus", 12)} Add</button>
+      </div>
+      ${rows || `<p class="field-hint">Nothing here yet.</p>`}
+    </div>`;
+  }
+
+  const mono = field.kind === "url" ? " input-mono" : "";
+  const type = field.kind === "num" ? "number" : "text";
+  const list = field.list ? ` list="${esc(field.list)}"` : "";
+  return `<div class="field">
+    <label>${esc(field.label)}</label>
+    <input class="input${mono}" type="${type}" ${attrs}${list} value="${esc(raw ?? "")}" placeholder="${esc(field.placeholder || "")}" />${hint}
+  </div>`;
+}
+
+/** @param {any[]} fields */
+function renderFields(fields, base, parent) {
+  return fields.map((f) => fieldControl(f, base, parent)).join("");
+}
+
+/** Split `nav.links.2` into the array it lives in and the index within it. */
+function splitIndexPath(root, path) {
+  const cut = path.lastIndexOf(".");
+  const list = readPath(root, path.slice(0, cut));
+  return { list: Array.isArray(list) ? list : null, index: +path.slice(cut + 1) };
+}
+
+/** @returns {boolean} Whether the move happened (false at either end). */
+function moveWithin(list, from, delta) {
+  const to = from + delta;
+  if (!Array.isArray(list) || to < 0 || to >= list.length) return false;
+  [list[from], list[to]] = [list[to], list[from]];
+  return true;
+}
+
+/* ---- Sections (content blocks) ------------------------------------------ */
+
+/**
+ * The section editor. Available on every step type — `step.blocks` has always
+ * rendered above the interaction on a choice or form step, there was simply no
+ * way to author one outside a template — and it is the entire body of a landing
+ * page, where blocks render below the hero.
+ */
+function renderSectionEditor(step) {
+  const blocks = step.blocks || [];
+  const isPage = step.type === "landing";
+
+  const menu = Object.entries(BLOCK_SCHEMA)
+    .map(
+      ([type, spec]) =>
+        `<button type="button" class="block-chip" draggable="true" data-block-add="${type}" title="Click or drag into sections list: ${esc(spec.label)}">
+          <span class="block-chip-glyph">${esc(spec.glyph)}</span>${esc(spec.label)}
+        </button>`
+    )
+    .join("");
+
+  const cards = blocks
+    .map((block, i) => {
+      const spec = BLOCK_SCHEMA[block.type];
+      const body = spec
+        ? renderFields(spec.fields, `blocks.${i}`, block)
+        : `<p class="field-hint">No editor for <code>${esc(block.type)}</code> yet — edit it in the JSON view.</p>`;
+      return `<div class="repeat block-card" draggable="true" data-block-index="${i}">
+        <div class="repeat-head">
+          <span class="drag-handle" title="Drag to reorder section">${icon("grid", 12)}</span>
+          <span class="repeat-num">${String(i + 1).padStart(2, "0")}</span>
+          <span class="block-card-type">${esc(spec?.glyph || "•")} ${esc(spec?.label || block.type)}</span>
+          <button type="button" class="btn btn-ghost btn-icon btn-sm" data-block-move="${i}" data-dir="-1" title="Move up" aria-label="Move section up" style="margin-left:auto">${icon("up", 12)}</button>
+          <button type="button" class="btn btn-ghost btn-icon btn-sm" data-block-move="${i}" data-dir="1" title="Move down" aria-label="Move section down">${icon("down", 12)}</button>
+          <button type="button" class="btn btn-ghost btn-icon btn-sm" data-block-del="${i}" title="Remove section" aria-label="Remove section">${icon("close", 12)}</button>
+        </div>
+        ${body}
+      </div>`;
+    })
+    .join("");
+
+  return `<div class="inspector-section">
+    <div class="inspector-head">
+      <span class="eyebrow">${isPage ? "Page sections" : "Content blocks"}</span>
+      <span class="field-hint" style="margin:0">${count(blocks.length, "section")}</span>
+    </div>
+    <p class="field-hint" style="margin-top:0">
+      ${isPage ? "Everything below the hero. Drag sections or click palette chips below." : "Rendered above this step's interaction. Drag sections to reorder."}
+    </p>
+    ${cards}
+    <div class="block-palette">${menu}</div>
+  </div>`;
+}
+
+/* ---- Landing page panel -------------------------------------------------- */
+
+/** A landing step that already looks like something, so the preview is never blank. */
+function blankLanding() {
+  return {
+    layout: "centered",
+    height: "tall",
+    eyebrow: "Free 60-second quiz",
+    headline: "The headline that sells the click",
+    subtext: "One sentence on what they get and why it is worth a minute of their time.",
+    cta: { label: "Start now", note: "No credit card required" },
+    proof: { rating: 5, text: "Rated 4.9/5 by 1,200+ customers" },
+    stickyCta: true,
+  };
+}
+
+const LANDING_FIELDS = {
+  hero: [
+    { key: "eyebrow", label: "Eyebrow badge", kind: "text", placeholder: "Free 60-second quiz" },
+    { key: "height", label: "Hero height", kind: "pick", options: ["auto", "tall", "full"] },
+    { key: "width", label: "Canvas width (desktop)", kind: "pick", options: ["phone", "wide"], hint: "\"wide\" breaks out of the 9:16 phone frame." },
+    { key: "scrollHint", label: "Show scroll arrow", kind: "bool" },
+  ],
+  media: [
+    { key: "media.type", label: "Media type", kind: "pick", options: ["image", "video"] },
+    { key: "media.src", label: "Media URL", kind: "url", hint: "Shown beside the copy on a split layout, below it otherwise." },
+  ],
+  background: [
+    { key: "background.image", label: "Background image URL", kind: "url" },
+    { key: "background.video", label: "Background video URL", kind: "url", hint: "Muted, looping, autoplaying." },
+    { key: "background.color", label: "Background colour", kind: "text", placeholder: "#0b1020" },
+    { key: "background.gradient", label: "Background gradient (CSS)", kind: "text", placeholder: "linear-gradient(160deg,#4f46e5,#0f172a)" },
+    { key: "background.overlay", label: "Scrim over media (0–1)", kind: "num" },
+    { key: "background.blur", label: "Media blur (px)", kind: "num" },
+    { key: "background.ink", label: "Text colour", kind: "pick", options: ["", "light", "dark"] },
+  ],
+  cta: [
+    { key: "cta.label", label: "Primary button", kind: "text", placeholder: "Start now" },
+    { key: "cta.note", label: "Microcopy under the button", kind: "text" },
+    { key: "cta.icon", label: "Button icon", kind: "text" },
+    { key: "cta.next", label: "Branch to step ID", kind: "text", list: "stepIds" },
+    { key: "cta.url", label: "External URL (instead of advancing)", kind: "url" },
+    { key: "stickyCta", label: "Repeat the button in a sticky bar", kind: "bool" },
+    { key: "secondaryCta.label", label: "Secondary button", kind: "text" },
+    { key: "secondaryCta.variant", label: "Secondary style", kind: "pick", options: ["outline", "ghost", "solid"] },
+    { key: "secondaryCta.url", label: "Secondary URL", kind: "url" },
+    { key: "secondaryCta.next", label: "Secondary branch to step ID", kind: "text", list: "stepIds" },
+  ],
+  proof: [
+    { key: "proof.text", label: "Proof line", kind: "text", placeholder: "Joined by 12,480 homeowners" },
+    { key: "proof.rating", label: "Star rating (0–5)", kind: "num" },
+    { key: "proof.avatars", label: "Face pile image URLs (one per line)", kind: "lines" },
+  ],
+  nav: [
+    { key: "nav.brand", label: "Brand name", kind: "text" },
+    { key: "nav.logo", label: "Logo URL", kind: "url" },
+    { key: "nav.ctaLabel", label: "Nav button label", kind: "text" },
+    {
+      key: "nav.links",
+      label: "Nav links",
+      kind: "list",
+      add: () => ({ label: "Link", href: "" }),
+      item: [
+        { key: "label", label: "Label", kind: "text" },
+        { key: "href", label: "URL", kind: "url" },
+      ],
+    },
+  ],
+  footer: [
+    { key: "footer.text", label: "Footer text", kind: "text", placeholder: "© 2026 Acme Inc." },
+    {
+      key: "footer.links",
+      label: "Footer links",
+      kind: "list",
+      add: () => ({ label: "Privacy", href: "" }),
+      item: [
+        { key: "label", label: "Label", kind: "text" },
+        { key: "href", label: "URL", kind: "url" },
+      ],
+    },
+  ],
+};
+
+const LANDING_LAYOUTS = [
+  ["centered", "◎ Centred"],
+  ["left", "◧ Left"],
+  ["split", "⬓ Split"],
+  ["fullBleed", "▣ Full bleed"],
+  ["minimal", "○ Minimal"],
+];
+
+/**
+ * `fieldControl` addresses values relative to a base path, but the landing
+ * fields above already carry their full dotted path from the step (`cta.label`),
+ * so they are rendered with an empty base and the parent object resolved per
+ * field. This keeps one flat table instead of a tree of nested groups.
+ */
+function renderLandingFields(step, fields) {
+  return fields
+    .map((f) => {
+      const dot = f.key.lastIndexOf(".");
+      if (dot === -1) return fieldControl(f, "", step);
+      const parentPath = f.key.slice(0, dot);
+      const leaf = { ...f, key: f.key.slice(dot + 1) };
+      return fieldControl(leaf, parentPath, readPath(step, parentPath) || {});
+    })
+    .join("");
+}
+
+function renderLandingPanel(step) {
+  const group = (title, fields, open = false) => `<details class="ins-group"${open ? " open" : ""}>
+    <summary class="ins-group-head">${esc(title)}</summary>
+    <div class="ins-group-body">${renderLandingFields(step, fields)}</div>
+  </details>`;
+
+  return `<div class="inspector-section">
+    <div class="field">
+      <label>Hero layout</label>
+      <div class="seg-picker seg-wrap">
+        ${LANDING_LAYOUTS.map(
+          ([value, label]) =>
+            `<button type="button" class="seg-btn${(step.layout || "centered") === value ? " is-active" : ""}" data-landing-layout="${value}">${esc(label)}</button>`
+        ).join("")}
+      </div>
+    </div>
+    ${group("Hero", LANDING_FIELDS.hero, true)}
+    ${group("Call to action", LANDING_FIELDS.cta, true)}
+    ${group("Background", LANDING_FIELDS.background)}
+    ${group("Hero media", LANDING_FIELDS.media)}
+    ${group("Social proof", LANDING_FIELDS.proof)}
+    ${group("Top nav", LANDING_FIELDS.nav)}
+    ${group("Footer", LANDING_FIELDS.footer)}
+  </div>`;
+}
+
 function renderStepBody(step) {
+  if (step.type === "landing") {
+    return renderLandingPanel(step) + renderSectionEditor(step);
+  }
+
   if (step.type === "choice" || step.type === "multiselect") {
     const options = (step.options || [])
       .map(
         (opt, i) => `<div class="repeat option-edit-card" draggable="true" data-opt-index="${i}">
           <div class="repeat-head">
-            <span class="drag-handle" title="Drag to reorder option">${icon("grid", 12)}</span>
+            <span class="drag-handle-pill" title="Drag to reorder option">⋮⋮ Drag</span>
             <span class="repeat-num">${String(i + 1).padStart(2, "0")}</span>
-            <button type="button" class="btn btn-ghost btn-sm" data-pick-symbol="${i}" title="Pick symbol / icon" style="margin-left:auto">
-              <span style="font-size:14px;line-height:1">${esc(opt.icon || "⚡")}</span>
-              <span style="font-size:11.5px">Symbol</span>
+            <button type="button" class="btn btn-ghost btn-icon btn-sm" data-move-opt="${i}" data-dir="-1" title="Move up" aria-label="Move up" style="margin-left:auto">${icon("up", 11)}</button>
+            <button type="button" class="btn btn-ghost btn-icon btn-sm" data-move-opt="${i}" data-dir="1" title="Move down" aria-label="Move down">${icon("down", 11)}</button>
+            <button type="button" class="btn btn-ghost btn-icon btn-sm" data-dup-opt="${i}" title="Duplicate option" aria-label="Duplicate option">${icon("copy", 11)}</button>
+            <button type="button" class="btn btn-ghost btn-icon btn-sm" data-del-opt="${i}" title="Remove option" aria-label="Remove option">${icon("close", 11)}</button>
+          </div>
+          <div class="repeat-grid" style="grid-template-columns:1fr auto;gap:6px">
+            <input class="input" type="text" data-opt-label="${i}" value="${esc(opt.label || "")}" placeholder="Option label" />
+            <button type="button" class="btn btn-ghost btn-sm" data-pick-symbol="${i}" title="Pick icon">
+              <span style="font-size:14px;line-height:1">${esc(opt.icon || "⚡")}</span> Icon
             </button>
-            <button type="button" class="btn btn-ghost btn-icon btn-sm" data-del-opt="${i}" title="Remove option" aria-label="Remove option">${icon("close", 12)}</button>
           </div>
-          <div class="repeat-grid">
-            <input class="input" type="text" data-opt-label="${i}" value="${esc(opt.label || "")}" placeholder="Label" />
-            <input class="input" type="text" data-opt-icon="${i}" value="${esc(opt.icon || "")}" placeholder="Icon (emoji/symbol)" />
+          <div class="repeat-row" style="margin-top:4px">
+            <input class="input input-mono" type="text" data-opt-next="${i}" value="${esc(opt.next || "")}" placeholder="Branch to step ID (optional)" list="stepIds" />
           </div>
-          <div class="repeat-row">
-            <input class="input input-mono" type="text" data-opt-image="${i}" value="${esc(opt.image || "")}" placeholder="Image URL (optional photo card)" />
-          </div>
-          <div class="repeat-row">
-            <input class="input input-mono" type="text" data-opt-next="${i}" value="${esc(opt.next || "")}" placeholder="Branch to step ID" list="stepIds" />
-          </div>
+          <details class="ins-group" style="margin-top:6px">
+            <summary class="ins-group-head" style="font-size:11px">Advanced (Badge, Subtext, Image)</summary>
+            <div class="ins-group-body" style="padding-top:6px">
+              <div class="field" style="margin-bottom:6px">
+                <label style="font-size:11px">Description / Subtext</label>
+                <input class="input" type="text" data-opt-subtext="${i}" value="${esc(opt.subtext || "")}" placeholder="Description line" />
+              </div>
+              <div class="field" style="margin-bottom:6px">
+                <label style="font-size:11px">Badge Tag</label>
+                <input class="input" type="text" data-opt-badge="${i}" value="${esc(opt.badge || "")}" placeholder="e.g. Popular, Recommended" />
+                <div class="badge-chips" data-opt-idx="${i}" style="margin-top:4px">
+                  <button type="button" class="badge-chip" data-set-badge="🔥 Popular">🔥 Popular</button>
+                  <button type="button" class="badge-chip" data-set-badge="⭐ Best Value">⭐ Best Value</button>
+                  <button type="button" class="badge-chip" data-set-badge="⚡ Recommended">⚡ Recommended</button>
+                </div>
+              </div>
+              <div class="field" style="margin-bottom:0">
+                <label style="font-size:11px">Card Photo Image URL</label>
+                <input class="input input-mono" type="text" data-opt-image="${i}" value="${esc(opt.image || "")}" placeholder="https://..." />
+              </div>
+            </div>
+          </details>
         </div>`
       )
       .join("");
 
     return `<div class="inspector-section">
+      ${
+        step.type === "choice"
+          ? `<div class="field row-between" style="margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--line)">
+              <div>
+                <div style="font-weight:600;font-size:12px">Auto-Advance on Click</div>
+                <p class="field-hint" style="margin:0">Advance step immediately when prospect selects an option.</p>
+              </div>
+              <label class="switch">
+                <input id="insAutoAdvance" type="checkbox"${step.autoAdvance !== false ? " checked" : ""} />
+                <span class="switch-track"></span>
+              </label>
+            </div>`
+          : ""
+      }
+      <div class="field" style="margin-bottom:12px">
+        <label>Option Layout</label>
+        <div class="seg-picker" id="insLayoutSeg">
+          <button type="button" class="seg-btn${step.layout === "list" || !step.layout ? " is-active" : ""}" data-layout="list">☰ Stacked</button>
+          <button type="button" class="seg-btn${step.layout === "grid" ? " is-active" : ""}" data-layout="grid">⊞ 2-Col</button>
+          <button type="button" class="seg-btn${step.layout === "grid3" ? " is-active" : ""}" data-layout="grid3">▦ 3-Col</button>
+        </div>
+      </div>
       <div class="inspector-head">
         <span class="eyebrow">Options</span>
         <button id="addOptBtn" class="btn btn-ghost btn-sm">${icon("plus", 12)} Add</button>
       </div>
       ${options || `<p class="field-hint">No options yet.</p>`}
-    </div>`;
+    </div>${renderSectionEditor(step)}`;
   }
 
   if (step.type === "form") {
@@ -855,7 +1802,7 @@ function renderStepBody(step) {
           <span class="switch-track"></span>
         </label>
       </div>
-    </div>`;
+    </div>${renderSectionEditor(step)}`;
   }
 
   if (step.type === "loader") {
@@ -865,10 +1812,33 @@ function renderStepBody(step) {
         <input id="insDuration" class="input input-mono" type="number" min="200" step="100" value="${esc(step.durationMs ?? 2000)}" />
         <p class="field-hint">How long the progress animation runs before advancing.</p>
       </div>
-    </div>`;
+    </div>${renderSectionEditor(step)}`;
   }
 
-  return "";
+  if (step.type === "content") {
+    return `<div class="inspector-section">
+      <div class="field">
+        <label for="insCtaLabel">Button label</label>
+        <input id="insCtaLabel" class="input" type="text" value="${esc(step.ctaLabel || "")}" placeholder="Continue" />
+      </div>
+    </div>${renderSectionEditor(step)}`;
+  }
+
+  if (step.type === "success") {
+    return `<div class="inspector-section">
+      <div class="field">
+        <label for="insButtonLabel">Button label</label>
+        <input id="insButtonLabel" class="input" type="text" value="${esc(step.buttonLabel || "")}" placeholder="Done" />
+      </div>
+      <div class="field">
+        <label for="insRedirectUrl">Redirect URL</label>
+        <input id="insRedirectUrl" class="input input-mono" type="text" value="${esc(step.redirectUrl || "")}" placeholder="https://calendly.com/…" />
+        <p class="field-hint">Where the button sends them. Leave empty to stop here.</p>
+      </div>
+    </div>${renderSectionEditor(step)}`;
+  }
+
+  return renderSectionEditor(step);
 }
 
 function bindInspector(step) {
@@ -892,6 +1862,14 @@ function bindInspector(step) {
     }
     if (step.type === "form" && !step.fields) {
       step.fields = [{ name: "email", type: "email", label: "Email", required: true }];
+    }
+    // A landing step with no hero, CTA or copy previews as an empty white
+    // canvas, which reads as a broken editor rather than an empty one.
+    if (step.type === "landing" && !step.cta) {
+      const seed = blankLanding();
+      if (step.headline) delete seed.headline;
+      if (step.subtext) delete seed.subtext;
+      Object.assign(step, seed);
     }
     renderSpine();
     renderInspector();
@@ -929,12 +1907,62 @@ function bindInspector(step) {
     });
   }
 
-  inspector.addEventListener("input", (e) => {
+  // `ctaLabel` / `buttonLabel` / `redirectUrl` are read by the engine but had no
+  // console control, so a content step's button always said "Continue" and a
+  // success step could not be pointed at a booking link without the JSON view.
+  if ($("insCtaLabel")) {
+    $("insCtaLabel").addEventListener("input", (e) => {
+      step.ctaLabel = e.target.value.trim() || undefined;
+      onEdit();
+    });
+  }
+
+  if ($("insButtonLabel")) {
+    $("insButtonLabel").addEventListener("input", (e) => {
+      step.buttonLabel = e.target.value.trim() || undefined;
+      onEdit();
+    });
+  }
+
+  if ($("insRedirectUrl")) {
+    $("insRedirectUrl").addEventListener("input", (e) => {
+      step.redirectUrl = e.target.value.trim() || undefined;
+      onEdit();
+    });
+  }
+
+  if ($("insLayout")) {
+    $("insLayout").addEventListener("change", (e) => {
+      step.layout = e.target.value;
+      onEdit();
+    });
+  }
+
+  // These three are delegated onto `#inspector` itself, which survives the
+  // `innerHTML` swap in `renderInspector()` — so without dropping the previous
+  // set they accumulate one per render, and a single click on "add section" or
+  // "add option" fires once per accumulated listener. Two renders in and every
+  // structural edit is silently doubled.
+  if (inspector._ofUnbind) inspector._ofUnbind();
+
+  const onInput = (e) => {
     const t = e.target;
     const opts = step.options || [];
     const fields = step.fields || [];
 
+    // Path-addressed controls (landing panel + section editor) write themselves.
+    // Deliberately no re-render here: the inspector is rebuilt from scratch each
+    // time, so repainting on every keystroke would move focus out of the field
+    // being typed into. Structural edits below re-render; text edits do not.
+    if (t.dataset.path !== undefined) {
+      writePath(step, t.dataset.path, valueFromControl(t));
+      onEdit();
+      return;
+    }
+
     if (t.dataset.optLabel !== undefined) opts[+t.dataset.optLabel].label = t.value;
+    else if (t.dataset.optSubtext !== undefined) opts[+t.dataset.optSubtext].subtext = t.value || undefined;
+    else if (t.dataset.optBadge !== undefined) opts[+t.dataset.optBadge].badge = t.value || undefined;
     else if (t.dataset.optIcon !== undefined) opts[+t.dataset.optIcon].icon = t.value || undefined;
     else if (t.dataset.optImage !== undefined) opts[+t.dataset.optImage].image = t.value.trim() || undefined;
     else if (t.dataset.optNext !== undefined) {
@@ -946,19 +1974,144 @@ function bindInspector(step) {
     else return;
 
     onEdit();
-  });
+  };
 
-  inspector.addEventListener("change", (e) => {
+  const onChange = (e) => {
     const t = e.target;
-    if (t.dataset.fType !== undefined) step.fields[+t.dataset.fType].type = t.value;
-    else if (t.dataset.fReq !== undefined) step.fields[+t.dataset.fReq].required = t.checked || undefined;
-    else return;
+    if (t.dataset.path !== undefined) {
+      writePath(step, t.dataset.path, valueFromControl(t));
+      onEdit();
+      return;
+    }
+    if (t.id === "insLayout") {
+      step.layout = t.value;
+    } else if (t.dataset.fType !== undefined) {
+      step.fields[+t.dataset.fType].type = t.value;
+    } else if (t.dataset.fReq !== undefined) {
+      step.fields[+t.dataset.fReq].required = t.checked || undefined;
+    } else return;
     onEdit();
-  });
+  };
 
-  inspector.addEventListener("click", (e) => {
+  const onClick = (e) => {
     const btn = e.target.closest("button");
     if (!btn) return;
+
+    if (btn.dataset.insTab !== undefined) {
+      state.inspectorTab = btn.dataset.insTab;
+      renderInspector();
+      return;
+    }
+
+    if (btn.dataset.dupOpt !== undefined) {
+      const idx = +btn.dataset.dupOpt;
+      if (step.options?.[idx]) {
+        const clone = JSON.parse(JSON.stringify(step.options[idx]));
+        clone.id = `opt_${Date.now().toString(36).slice(-4)}`;
+        clone.label = `${clone.label} (Copy)`;
+        step.options.splice(idx + 1, 0, clone);
+        renderInspector();
+        onEdit();
+      }
+      return;
+    }
+
+    if (btn.dataset.moveOpt !== undefined) {
+      const idx = +btn.dataset.moveOpt;
+      const dir = +btn.dataset.dir;
+      if (moveWithin(step.options, idx, dir)) {
+        renderInspector();
+        onEdit();
+      }
+      return;
+    }
+
+    if (btn.dataset.layout !== undefined) {
+      step.layout = btn.dataset.layout;
+      renderInspector();
+      onEdit();
+      return;
+    }
+
+    if (btn.dataset.landingLayout !== undefined) {
+      step.layout = btn.dataset.landingLayout;
+      renderInspector();
+      onEdit();
+      return;
+    }
+
+    /* ----- sections ---------------------------------------------------- */
+
+    if (btn.dataset.blockAdd !== undefined) {
+      const spec = BLOCK_SCHEMA[btn.dataset.blockAdd];
+      if (!spec) return;
+      step.blocks ||= [];
+      step.blocks.push(spec.make());
+      renderInspector();
+      onEdit();
+      // Scroll the new section into view — the palette sits at the bottom of a
+      // long panel, so without this the card is added off-screen above.
+      inspector.querySelector(".block-card:last-of-type")?.scrollIntoView({ block: "nearest" });
+      return;
+    }
+
+    if (btn.dataset.blockDel !== undefined) {
+      step.blocks?.splice(+btn.dataset.blockDel, 1);
+      if (!step.blocks?.length) delete step.blocks;
+      renderInspector();
+      onEdit();
+      return;
+    }
+
+    if (btn.dataset.blockMove !== undefined) {
+      if (moveWithin(step.blocks, +btn.dataset.blockMove, +btn.dataset.dir)) {
+        renderInspector();
+        onEdit();
+      }
+      return;
+    }
+
+    /* ----- repeated items inside a section or the landing panel ---------- */
+
+    if (btn.dataset.itemAdd !== undefined) {
+      const path = btn.dataset.itemAdd;
+      const list = readPath(step, path);
+      const item = JSON.parse(btn.dataset.itemTpl || "{}");
+      if (Array.isArray(list)) list.push(item);
+      else writePath(step, path, [item]);
+      renderInspector();
+      onEdit();
+      return;
+    }
+
+    if (btn.dataset.itemDel !== undefined) {
+      const { list, index } = splitIndexPath(step, btn.dataset.itemDel);
+      if (list) {
+        list.splice(index, 1);
+        renderInspector();
+        onEdit();
+      }
+      return;
+    }
+
+    if (btn.dataset.itemMove !== undefined) {
+      const { list, index } = splitIndexPath(step, btn.dataset.itemMove);
+      if (moveWithin(list, index, +btn.dataset.dir)) {
+        renderInspector();
+        onEdit();
+      }
+      return;
+    }
+
+    if (btn.dataset.setBadge !== undefined) {
+      const idx = +btn.closest(".badge-chips")?.dataset.optIdx;
+      if (step.options?.[idx]) {
+        step.options[idx].badge = btn.dataset.setBadge;
+        renderInspector();
+        onEdit();
+      }
+      return;
+    }
 
     if (btn.dataset.pickSymbol !== undefined) {
       const idx = +btn.dataset.pickSymbol;
@@ -990,9 +2143,40 @@ function bindInspector(step) {
     renderInspector();
     renderSpine();
     onEdit();
+  };
+
+  if ($("insAutoAdvance")) {
+    $("insAutoAdvance").addEventListener("change", (e) => {
+      step.autoAdvance = e.target.checked;
+      onEdit();
+    });
+  }
+
+  qsa("[data-insert-token]", inspector).forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const token = btn.dataset.insertToken;
+      const input = $("insHeadline");
+      if (input) {
+        const start = input.selectionStart || input.value.length;
+        input.value = input.value.slice(0, start) + token + input.value.slice(start);
+        step.headline = input.value;
+        onEdit();
+        input.focus();
+      }
+    });
   });
 
+  inspector.addEventListener("input", onInput);
+  inspector.addEventListener("change", onChange);
+  inspector.addEventListener("click", onClick);
+  inspector._ofUnbind = () => {
+    inspector.removeEventListener("input", onInput);
+    inspector.removeEventListener("change", onChange);
+    inspector.removeEventListener("click", onClick);
+  };
+
   bindOptionDragAndDrop();
+  bindBlockDragAndDrop();
 }
 
 /** Offer alternatives rather than silently overwriting what the user wrote. */
@@ -1009,7 +2193,13 @@ async function suggestHeadlines() {
     const res = await apiFetch("/api/ai/improve-copy", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ headline: step.headline || "", tone: localStorage.getItem("of.ai.tone") || "direct" }),
+      body: JSON.stringify({
+        headline: step.headline || "",
+        apiKey: localStorage.getItem("of.ai.key") || "",
+        provider: localStorage.getItem("of.ai.provider") || "builtin",
+        model: localStorage.getItem("of.ai.model") || "gpt-4o",
+        tone: localStorage.getItem("of.ai.tone") || "direct",
+      }),
     });
     if (!res.ok) throw new Error("failed");
     const data = await res.json();
@@ -1074,7 +2264,11 @@ function mountPreview(force = false) {
 function pushPreview() {
   if (!previewReady || !state.funnel) return;
   $("previewFrame").contentWindow?.postMessage(
-    { type: "of:preview", funnel: JSON.parse(JSON.stringify(state.funnel)) },
+    {
+      type: "of:preview",
+      funnel: JSON.parse(JSON.stringify(state.funnel)),
+      stepIndex: state.stepIndex,
+    },
     location.origin
   );
 }
@@ -1366,13 +2560,13 @@ function renderAnalytics() {
  * ========================================================================== */
 
 function renderTemplates(filterCat = "all") {
-  const entries = Object.entries(FUNNEL_TEMPLATES).filter(([key, tpl]) => {
-    if (!filterCat || filterCat === "all") return true;
-    if (filterCat === "lead-gen") return key.includes("lead") || key.includes("consultation") || key.includes("qualifier");
-    if (filterCat === "quiz") return key.includes("quiz") || key.includes("assessment") || key.includes("fitness");
-    if (filterCat === "booking") return key.includes("booking") || key.includes("demo") || key.includes("appointment");
-    return true;
-  });
+  // Filter on the template's declared `category`. This used to guess from the
+  // key ("does it contain 'lead'?"), which quietly mis-filed anything whose name
+  // didn't happen to contain the right word — and silently showed everything
+  // under every pill once the library grew past a handful.
+  const entries = Object.entries(FUNNEL_TEMPLATES).filter(
+    ([, tpl]) => !filterCat || filterCat === "all" || tpl.category === filterCat,
+  );
 
   $("templateGrid").innerHTML = entries
     .map(([key, tpl]) => {
@@ -1400,6 +2594,9 @@ let lastFocused = null;
 function openModal(id) {
   lastFocused = document.activeElement;
   $(id).hidden = false;
+  if (id === "aiOverlay" && $("aiModelSelect")) {
+    $("aiModelSelect").value = localStorage.getItem("of.ai.model") || $("setModel")?.value || "gpt-4o";
+  }
   const focusable = $(id).querySelector("input,textarea,select,button");
   focusable?.focus();
 }
@@ -1447,16 +2644,25 @@ function renderPixelsModal() {
   if ($("pxPinterest")) $("pxPinterest").value = i.pinterestPixelId || "";
   if ($("pxWebhook")) $("pxWebhook").value = i.webhookUrl || "";
   if ($("pxWebhookSecret")) $("pxWebhookSecret").value = i.webhookSecret || "";
+  if ($("pxCustomCss")) $("pxCustomCss").value = state.funnel?.customCss || i.customCss || "";
+  if ($("pxCustomHead")) $("pxCustomHead").value = state.funnel?.customHead || i.customHead || "";
+  if ($("pxCustomBody")) $("pxCustomBody").value = state.funnel?.customBody || i.customBody || "";
 }
 
 function patchIntegrations(patch) {
   if (!state.funnel) return;
   state.funnel.integrations = { ...(state.funnel.integrations || {}), ...patch };
-  markDirty(true);
+  if (patch.customCss !== undefined) state.funnel.customCss = patch.customCss;
+  if (patch.customHead !== undefined) state.funnel.customHead = patch.customHead;
+  if (patch.customBody !== undefined) state.funnel.customBody = patch.customBody;
+  onFunnelEdited();
 }
 
 async function generateFunnel() {
   const prompt = $("aiPrompt").value.trim();
+  const selectedModel = $("aiModelSelect")?.value.trim() || localStorage.getItem("of.ai.model") || "gpt-4o";
+  localStorage.setItem("of.ai.model", selectedModel);
+
   if (!prompt) {
     toast("Describe the offer first", "error");
     return;
@@ -1473,7 +2679,8 @@ async function generateFunnel() {
       body: JSON.stringify({
         prompt,
         apiKey: localStorage.getItem("of.ai.key") || "",
-        model: localStorage.getItem("of.ai.model") || "",
+        provider: localStorage.getItem("of.ai.provider") || "builtin",
+        model: selectedModel,
         tone: localStorage.getItem("of.ai.tone") || "direct",
       }),
     });
@@ -1587,7 +2794,7 @@ const SETTINGS = [
   ["setGlobalCode", "of.globalCode", ""],
   ["setBrandVoice", "of.ai.brandVoice", ""],
   ["setProvider", "of.ai.provider", "builtin"],
-  ["setModel", "of.ai.model", "claude-opus-4-5"],
+  ["setModel", "of.ai.model", "gpt-4o"],
   ["setApiKey", "of.ai.key", ""],
 ];
 
@@ -1596,14 +2803,28 @@ function loadSettings() {
     const el = $(id);
     if (el) el.value = localStorage.getItem(key) ?? fallback;
   });
-  // Consent lives on the funnel document, not in localStorage: the funnel page is
-  // rendered for visitors from that JSON, so a per-browser value here could never
-  // reach them. Disabled until a funnel is open, since there is nothing to write to.
+  if ($("aiModelSelect")) $("aiModelSelect").value = localStorage.getItem("of.ai.model") || "gpt-4o";
+
+  if ($("setBranding")) {
+    const isHidden = state.funnel?.branding?.hidden ?? (localStorage.getItem("of.branding.hidden") === "true");
+    $("setBranding").checked = Boolean(isHidden);
+  }
   if ($("setGdpr")) {
     $("setGdpr").checked = Boolean(state.funnel?.consent?.enabled);
     $("setGdpr").disabled = !state.funnel;
   }
-  if ($("setBranding")) $("setBranding").checked = localStorage.getItem("of.branding.hidden") === "true";
+  if ($("setAllowBack")) {
+    $("setAllowBack").checked = Boolean(state.funnel?.settings?.allowBack ?? true);
+    $("setAllowBack").disabled = !state.funnel;
+  }
+  if ($("setPersistProgress")) {
+    $("setPersistProgress").checked = Boolean(state.funnel?.settings?.persist ?? true);
+    $("setPersistProgress").disabled = !state.funnel;
+  }
+  if ($("setEnableSwipe")) {
+    $("setEnableSwipe").checked = Boolean(state.funnel?.settings?.enableSwipe ?? true);
+    $("setEnableSwipe").disabled = !state.funnel;
+  }
   loadEmailSettings();
 }
 
@@ -1612,13 +2833,26 @@ function saveSettings() {
     const el = $(id);
     if (el) localStorage.setItem(key, el.value);
   });
-  if ($("setGdpr") && state.funnel) {
-    const enabled = $("setGdpr").checked;
-    if (enabled) state.funnel.consent = { ...state.funnel.consent, enabled: true };
-    else if (state.funnel.consent) state.funnel.consent.enabled = false;
-    onFunnelEdited(); // still needs a funnel save to reach visitors
+  if ($("setBranding")) {
+    const hidden = $("setBranding").checked;
+    localStorage.setItem("of.branding.hidden", String(hidden));
+    if (state.funnel) {
+      state.funnel.branding = { ...(state.funnel.branding || {}), hidden };
+    }
   }
-  if ($("setBranding")) localStorage.setItem("of.branding.hidden", String($("setBranding").checked));
+  if (state.funnel) {
+    if ($("setGdpr")) {
+      const enabled = $("setGdpr").checked;
+      state.funnel.consent = { ...(state.funnel.consent || {}), enabled };
+    }
+    state.funnel.settings = {
+      ...(state.funnel.settings || {}),
+      allowBack: $("setAllowBack") ? $("setAllowBack").checked : true,
+      persist: $("setPersistProgress") ? $("setPersistProgress").checked : true,
+      enableSwipe: $("setEnableSwipe") ? $("setEnableSwipe").checked : true,
+    };
+    onFunnelEdited();
+  }
   saveEmailSettingsFromUI();
 }
 
@@ -1815,7 +3049,8 @@ function bindDashboard() {
 }
 
 function bindBuilder() {
-  $("addStepBtn").addEventListener("click", addStep);
+  $("addStepBtn").addEventListener("click", () => openModal("stepArchetypeOverlay"));
+  $("addLandingBtn")?.addEventListener("click", addLandingStep);
   $("aiStepBtn")?.addEventListener("click", () => openModal("aiOverlay"));
   $("themeModalBtn").addEventListener("click", () => openModal("themeOverlay"));
   $("pixelsModalBtn").addEventListener("click", () => openModal("pixelsOverlay"));
@@ -1825,7 +3060,20 @@ function bindBuilder() {
     openModal("jsonOverlay");
   });
 
+  $("archetypeGrid")?.addEventListener("click", (e) => {
+    const card = e.target.closest("[data-archetype]");
+    if (!card) return;
+    const archetype = card.dataset.archetype;
+    createStepFromArchetype(archetype);
+    closeModal("stepArchetypeOverlay");
+  });
+
   $("stepSpine").addEventListener("click", (e) => {
+    const dup = e.target.closest("[data-dup-step]");
+    if (dup) {
+      e.stopPropagation();
+      return duplicateStep(+dup.dataset.dupStep);
+    }
     const move = e.target.closest("[data-move]");
     if (move) {
       e.stopPropagation();
@@ -1888,6 +3136,10 @@ function bindModals() {
   });
 
   $("aiSubmitBtn").addEventListener("click", generateFunnel);
+  $("aiModelSelect")?.addEventListener("change", (e) => {
+    const isCustom = e.target.value === "custom";
+    if ($("aiCustomModelWrap")) $("aiCustomModelWrap").hidden = !isCustom;
+  });
   $("aiPrompt").addEventListener("keydown", (e) => {
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") generateFunnel();
   });
@@ -1924,9 +3176,12 @@ function bindModals() {
     ["pxPinterest", "pinterestPixelId"],
     ["pxWebhook", "webhookUrl"],
     ["pxWebhookSecret", "webhookSecret"],
+    ["pxCustomCss", "customCss"],
+    ["pxCustomHead", "customHead"],
+    ["pxCustomBody", "customBody"],
   ];
   pixelFields.forEach(([id, key]) =>
-    $(id)?.addEventListener("input", (e) => patchIntegrations({ [key]: e.target.value.trim() || undefined }))
+    $(id)?.addEventListener("input", (e) => patchIntegrations({ [key]: e.target.value || undefined }))
   );
 
   $("copyJsonBtn").addEventListener("click", async () => {
@@ -1963,7 +3218,38 @@ function bindModals() {
     renderTemplates(pill.dataset.cat);
   });
 
+function purgeCredentials() {
+  localStorage.removeItem("of.ai.key");
+  localStorage.removeItem("of.adminToken");
+  localStorage.removeItem("of.webhookSecret");
+  if ($("setApiKey")) $("setApiKey").value = "";
+  if ($("setAdminToken")) $("setAdminToken").value = "";
+  toast("All stored API keys & admin tokens purged cleanly from browser storage", "info");
+}
+
   $("saveSettingsBtn").addEventListener("click", saveSettings);
+  $("purgeKeysBtn")?.addEventListener("click", purgeCredentials);
+  $("setProvider")?.addEventListener("change", (e) => {
+    const provider = e.target.value;
+    const modelInput = $("setModel");
+    if (!modelInput) return;
+    const defaults = {
+      openai: "gpt-4o",
+      anthropic: "claude-3-7-sonnet-20250219",
+      google: "gemini-2.0-flash",
+      deepseek: "deepseek-chat",
+    };
+    if (!modelInput.value.trim() && defaults[provider]) {
+      modelInput.value = defaults[provider];
+      if ($("aiModelSelect")) $("aiModelSelect").value = defaults[provider];
+    }
+  });
+  $("setModel")?.addEventListener("input", (e) => {
+    if ($("aiModelSelect")) $("aiModelSelect").value = e.target.value;
+  });
+  $("aiModelSelect")?.addEventListener("input", (e) => {
+    if ($("setModel")) $("setModel").value = e.target.value;
+  });
   $("setEmailProvider")?.addEventListener("change", (e) => toggleEmailProviderFields(e.target.value));
   $("setAutoresponderEnabled")?.addEventListener("change", (e) => toggleAutoresponderFields(e.target.checked));
   $("saveEmailBtn")?.addEventListener("click", saveEmailSettingsFromUI);
@@ -2011,25 +3297,33 @@ function bindSpineDragAndDrop() {
   });
 
   host.addEventListener("dragover", (e) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
     const row = e.target.closest(".spine-row");
     if (!row) return;
-    qsa(".spine-row", host).forEach((r) => r.classList.remove("drag-over"));
-    row.classList.add("drag-over");
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    qsa(".spine-row", host).forEach((r) => r.classList.remove("drop-before", "drop-after"));
+    const rect = row.getBoundingClientRect();
+    const isAfter = e.clientY > rect.top + rect.height / 2;
+    row.classList.add(isAfter ? "drop-after" : "drop-before");
   });
 
   host.addEventListener("dragleave", (e) => {
     const row = e.target.closest(".spine-row");
-    if (row) row.classList.remove("drag-over");
+    if (row) row.classList.remove("drop-before", "drop-after");
   });
 
   host.addEventListener("drop", (e) => {
     e.preventDefault();
-    qsa(".spine-row", host).forEach((r) => r.classList.remove("drag-over", "is-dragging"));
     const row = e.target.closest(".spine-row");
     if (!row || draggedSpineIndex === null) return;
-    const targetIndex = Number(row.dataset.step);
+    const rect = row.getBoundingClientRect();
+    const isAfter = e.clientY > rect.top + rect.height / 2;
+    qsa(".spine-row", host).forEach((r) => r.classList.remove("drop-before", "drop-after", "is-dragging"));
+
+    let targetIndex = Number(row.dataset.step);
+    if (isAfter) targetIndex++;
+    if (draggedSpineIndex < targetIndex) targetIndex--;
+
     if (draggedSpineIndex !== targetIndex && state.funnel) {
       const steps = state.funnel.steps;
       const [moved] = steps.splice(draggedSpineIndex, 1);
@@ -2043,7 +3337,7 @@ function bindSpineDragAndDrop() {
   });
 
   host.addEventListener("dragend", () => {
-    qsa(".spine-row", host).forEach((r) => r.classList.remove("is-dragging", "drag-over"));
+    qsa(".spine-row", host).forEach((r) => r.classList.remove("is-dragging", "drop-before", "drop-after"));
     draggedSpineIndex = null;
   });
 }
@@ -2069,21 +3363,29 @@ function bindOptionDragAndDrop() {
     if (!card) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
-    qsa(".option-edit-card", host).forEach((c) => c.classList.remove("drag-over"));
-    card.classList.add("drag-over");
+    qsa(".option-edit-card", host).forEach((c) => c.classList.remove("drop-before", "drop-after"));
+    const rect = card.getBoundingClientRect();
+    const isAfter = e.clientY > rect.top + rect.height / 2;
+    card.classList.add(isAfter ? "drop-after" : "drop-before");
   });
 
   host.addEventListener("dragleave", (e) => {
     const card = e.target.closest(".option-edit-card");
-    if (card) card.classList.remove("drag-over");
+    if (card) card.classList.remove("drop-before", "drop-after");
   });
 
   host.addEventListener("drop", (e) => {
-    e.preventDefault();
-    qsa(".option-edit-card", host).forEach((c) => c.classList.remove("drag-over", "is-dragging"));
     const card = e.target.closest(".option-edit-card");
     if (!card || draggedOptIndex === null) return;
-    const targetIndex = Number(card.dataset.optIndex);
+    e.preventDefault();
+    const rect = card.getBoundingClientRect();
+    const isAfter = e.clientY > rect.top + rect.height / 2;
+    qsa(".option-edit-card", host).forEach((c) => c.classList.remove("drop-before", "drop-after", "is-dragging"));
+
+    let targetIndex = Number(card.dataset.optIndex);
+    if (isAfter) targetIndex++;
+    if (draggedOptIndex < targetIndex) targetIndex--;
+
     const step = state.funnel?.steps[state.stepIndex];
     if (step && (step.type === "choice" || step.type === "multiselect") && step.options) {
       if (draggedOptIndex !== targetIndex) {
@@ -2097,8 +3399,103 @@ function bindOptionDragAndDrop() {
   });
 
   host.addEventListener("dragend", () => {
-    qsa(".option-edit-card", host).forEach((c) => c.classList.remove("is-dragging", "drag-over"));
+    qsa(".option-edit-card", host).forEach((c) => c.classList.remove("is-dragging", "drop-before", "drop-after"));
     draggedOptIndex = null;
+  });
+}
+
+let draggedBlockIndex = null;
+let draggedBlockType = null;
+
+function bindBlockDragAndDrop() {
+  const host = $("inspector");
+  if (!host || host.dataset.blockDragBound) return;
+  host.dataset.blockDragBound = "true";
+
+  host.addEventListener("dragstart", (e) => {
+    const chip = e.target.closest(".block-chip");
+    if (chip) {
+      draggedBlockType = chip.dataset.blockAdd;
+      draggedBlockIndex = null;
+      chip.classList.add("is-dragging");
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = "copy";
+        e.dataTransfer.setData("text/plain", `block-add:${draggedBlockType}`);
+      }
+      return;
+    }
+    const card = e.target.closest(".block-card");
+    if (card) {
+      draggedBlockIndex = Number(card.dataset.blockIndex);
+      draggedBlockType = null;
+      card.classList.add("is-dragging");
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", `block-move:${draggedBlockIndex}`);
+      }
+    }
+  });
+
+  host.addEventListener("dragover", (e) => {
+    const card = e.target.closest(".block-card");
+    const container = e.target.closest(".inspector-section");
+    if (!card && !container) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = draggedBlockType ? "copy" : "move";
+
+    qsa(".block-card", host).forEach((c) => c.classList.remove("drop-before", "drop-after"));
+    if (card) {
+      const rect = card.getBoundingClientRect();
+      const isAfter = e.clientY > rect.top + rect.height / 2;
+      card.classList.add(isAfter ? "drop-after" : "drop-before");
+    }
+  });
+
+  host.addEventListener("dragleave", (e) => {
+    const card = e.target.closest(".block-card");
+    if (card) card.classList.remove("drop-before", "drop-after");
+  });
+
+  host.addEventListener("drop", (e) => {
+    const card = e.target.closest(".block-card");
+    const container = e.target.closest(".inspector-section");
+    if (!card && !container) return;
+    e.preventDefault();
+
+    const isAfter = card ? e.clientY > card.getBoundingClientRect().top + card.getBoundingClientRect().height / 2 : true;
+    qsa(".block-card, .block-chip", host).forEach((c) => c.classList.remove("drop-before", "drop-after", "is-dragging"));
+
+    const step = state.funnel?.steps[state.stepIndex];
+    if (!step) return;
+    if (!step.blocks) step.blocks = [];
+
+    let targetIdx = card ? (isAfter ? Number(card.dataset.blockIndex) + 1 : Number(card.dataset.blockIndex)) : step.blocks.length;
+
+    if (draggedBlockType) {
+      const make = BLOCK_SCHEMA[draggedBlockType]?.make;
+      if (make) {
+        step.blocks.splice(targetIdx, 0, make());
+        renderInspector();
+        onFunnelEdited();
+        toast("Block added", "success");
+      }
+    } else if (draggedBlockIndex !== null) {
+      if (draggedBlockIndex < targetIdx) targetIdx--;
+      if (draggedBlockIndex !== targetIdx) {
+        const [moved] = step.blocks.splice(draggedBlockIndex, 1);
+        step.blocks.splice(targetIdx, 0, moved);
+        renderInspector();
+        onFunnelEdited();
+      }
+    }
+    draggedBlockIndex = null;
+    draggedBlockType = null;
+  });
+
+  host.addEventListener("dragend", () => {
+    qsa(".block-card, .block-chip", host).forEach((c) => c.classList.remove("is-dragging", "drop-before", "drop-after"));
+    draggedBlockIndex = null;
+    draggedBlockType = null;
   });
 }
 

@@ -279,10 +279,14 @@
               <span class="eyebrow">Steps <span id="stepCount"></span></span>
             </div>
             <div class="pane-body"><div id="stepSpine" class="spine"></div></div>
-            <div class="pane-foot">
+            <div class="pane-foot pane-foot-stack">
+              <button id="addLandingBtn" class="btn btn-sm" style="width: 100%">
+                <svg width="13" height="13"><use href="#i-plus" /></svg>
+                Add landing page
+              </button>
               <button id="addStepBtn" class="btn btn-sm" style="width: 100%">
                 <svg width="13" height="13"><use href="#i-plus" /></svg>
-                Add step
+                Add question
               </button>
             </div>
           </aside>
@@ -436,8 +440,12 @@
             <div id="templateCategories" class="category-pills">
               <button class="cat-pill is-active" data-cat="all">All</button>
               <button class="cat-pill" data-cat="lead-gen">Lead Gen</button>
-              <button class="cat-pill" data-cat="quiz">Quiz</button>
               <button class="cat-pill" data-cat="booking">Booking</button>
+              <button class="cat-pill" data-cat="ecommerce">E-commerce</button>
+              <button class="cat-pill" data-cat="saas">SaaS</button>
+              <button class="cat-pill" data-cat="local">Local Services</button>
+              <button class="cat-pill" data-cat="coaching">Coaching</button>
+              <button class="cat-pill" data-cat="webinar">Webinar</button>
             </div>
           </div>
           <div id="templateGrid" class="grid"></div>
@@ -508,27 +516,53 @@
                   <input id="setNotifyEmail" class="input" type="email" placeholder="leads@yourcompany.com" />
                   <p class="field-hint">Receive instant email alerts whenever a new lead completes a funnel.</p>
                 </div>
-                <div class="field row-between">
+                <div class="field row-between" style="margin-top:14px">
+                  <div>
+                    <div style="font-weight: 600">Hide OpenFunnel Branding / Logo</div>
+                    <p class="field-hint">Removes “⚡ Powered by OpenFunnel” logo badge from published funnels.</p>
+                  </div>
+                  <label class="switch">
+                    <input id="setBranding" type="checkbox" aria-label="Hide OpenFunnel Logo Branding" />
+                    <span class="switch-track"></span>
+                  </label>
+                </div>
+                <div class="field row-between" style="margin-top:14px">
                   <div>
                     <div style="font-weight: 600">GDPR &amp; Privacy Consent Bar</div>
-                    <p class="field-hint">
-                      Ask visitors before firing ad pixels or forwarding conversions to Meta.
-                      Lead capture and your own drop-off analytics keep working either way.
-                      Saved on <strong>the funnel you have open</strong> — save the funnel to publish it.
-                    </p>
+                    <p class="field-hint">Ask visitors before firing ad pixels or forwarding conversions to Meta.</p>
                   </div>
                   <label class="switch">
                     <input id="setGdpr" type="checkbox" aria-label="Show GDPR banner" />
                     <span class="switch-track"></span>
                   </label>
                 </div>
-                <div class="field row-between" style="margin-top:10px">
+                <div class="field row-between" style="margin-top:14px">
                   <div>
-                    <div style="font-weight: 600">Hide the OpenFunnel badge</div>
-                    <p class="field-hint">Removes “Powered by OpenFunnel” from the bottom of every funnel.</p>
+                    <div style="font-weight: 600">Allow Back Navigation</div>
+                    <p class="field-hint">Lets visitors tap the back button to change previous step answers.</p>
                   </div>
                   <label class="switch">
-                    <input id="setBranding" type="checkbox" aria-label="Hide the OpenFunnel badge" />
+                    <input id="setAllowBack" type="checkbox" aria-label="Allow back navigation" />
+                    <span class="switch-track"></span>
+                  </label>
+                </div>
+                <div class="field row-between" style="margin-top:14px">
+                  <div>
+                    <div style="font-weight: 600">Persist Visitor Session Progress</div>
+                    <p class="field-hint">Resumes incomplete funnel steps if a visitor reopens the page.</p>
+                  </div>
+                  <label class="switch">
+                    <input id="setPersistProgress" type="checkbox" aria-label="Persist session progress" />
+                    <span class="switch-track"></span>
+                  </label>
+                </div>
+                <div class="field row-between" style="margin-top:14px">
+                  <div>
+                    <div style="font-weight: 600">Touch Swipe Gestures</div>
+                    <p class="field-hint">Enables mobile swipe left/right between funnel steps.</p>
+                  </div>
+                  <label class="switch">
+                    <input id="setEnableSwipe" type="checkbox" aria-label="Enable swipe navigation" />
                     <span class="switch-track"></span>
                   </label>
                 </div>
@@ -629,26 +663,41 @@
                   <span class="select-wrap">
                     <select id="setProvider" class="select">
                       <option value="builtin">Built-in generator — no key needed</option>
-                      <option value="byo">Your own API key</option>
+                      <option value="openai">OpenAI</option>
+                      <option value="anthropic">Anthropic Claude</option>
+                      <option value="google">Google Gemini</option>
+                      <option value="deepseek">DeepSeek</option>
+                      <option value="byo">Custom API / BYO Model Key</option>
                     </select>
                     <span class="select-caret"><svg width="14" height="14"><use href="#i-chevron" /></svg></span>
                   </span>
                 </div>
                 <div class="field">
-                  <label for="setModel">Model</label>
-                  <span class="select-wrap">
-                    <select id="setModel" class="select">
-                      <option value="claude-opus-4-5">Claude Opus 4.5</option>
-                      <option value="claude-sonnet-4-5">Claude Sonnet 4.5</option>
-                      <option value="gpt-4o">GPT-4o</option>
-                      <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
-                    </select>
-                    <span class="select-caret"><svg width="14" height="14"><use href="#i-chevron" /></svg></span>
-                  </span>
+                  <label for="setModel">AI Model Identifier</label>
+                  <input id="setModel" class="input input-mono" list="modelSuggestions" type="text" placeholder="e.g. gpt-4o, o3-mini, claude-3-7-sonnet, deepseek-chat..." />
+                  <datalist id="modelSuggestions">
+                    <option value="gpt-4o">GPT-4o (OpenAI Flagship Multimodal)</option>
+                    <option value="gpt-4o-mini">GPT-4o Mini (OpenAI Fast & Cost-Efficient)</option>
+                    <option value="o3-mini">o3-mini (OpenAI Fast Reasoning)</option>
+                    <option value="o1">o1 (OpenAI High-Reasoning Flagship)</option>
+                    <option value="gpt-4.5-preview">GPT-4.5 Preview (OpenAI)</option>
+                    <option value="claude-3-7-sonnet-20250219">Claude 3.7 Sonnet (Anthropic Hybrid Reasoning)</option>
+                    <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet (Anthropic Flagship)</option>
+                    <option value="claude-3-5-haiku-20241022">Claude 3.5 Haiku (Anthropic Fast & Compact)</option>
+                    <option value="claude-3-opus-20240229">Claude 3 Opus (Anthropic Deep Analysis)</option>
+                    <option value="gemini-2.0-flash">Gemini 2.0 Flash (Google Fast Multimodal)</option>
+                    <option value="gemini-1.5-pro">Gemini 1.5 Pro (Google Complex Reasoning)</option>
+                    <option value="gemini-1.5-flash">Gemini 1.5 Flash (Google Lightweight)</option>
+                    <option value="deepseek-chat">deepseek-chat (DeepSeek V3 Flagship)</option>
+                    <option value="deepseek-reasoner">deepseek-reasoner (DeepSeek R1 Reasoning)</option>
+                    <option value="llama-3.3-70b-instruct">Llama 3.3 70B Instruct (Meta Open Source Flagship)</option>
+                    <option value="mistral-large-latest">Mistral Large (Mistral AI Flagship)</option>
+                  </datalist>
+                  <p class="field-hint">Type any model identifier supported by your provider or custom API endpoint.</p>
                 </div>
                 <div class="field">
                   <label for="setApiKey">API Key</label>
-                  <input id="setApiKey" class="input input-mono" type="password" placeholder="sk-…" autocomplete="off" />
+                  <input id="setApiKey" class="input input-mono" type="password" placeholder="sk-… / key-…" autocomplete="off" />
                 </div>
                 <div class="field">
                   <label for="setBrandVoice">Brand Voice / Custom AI Instructions</label>
@@ -656,8 +705,13 @@
                 </div>
                 <div class="field">
                   <label for="setGlobalCode">Global Custom Head / CSS Code</label>
-                  <textarea id="setGlobalCode" class="textarea input-mono" rows="2" placeholder="<script>/* Crisp / Intercom chat widget */</script>"></textarea>
+                  <textarea id="setGlobalCode" class="textarea input-mono" rows="3" placeholder="<script>/* Crisp / Intercom chat widget */</script>"></textarea>
                   <p class="field-hint">Injected globally across all published funnels.</p>
+                </div>
+                <div style="margin-top:16px;display:flex;justify-content:flex-end">
+                  <button id="purgeKeysBtn" type="button" class="btn btn-ghost btn-sm btn-danger">
+                    Purge Stored API Keys & Tokens
+                  </button>
                 </div>
               </div>
             </div>
@@ -708,6 +762,10 @@
           </button>
         </div>
         <div class="modal-body">
+          <div class="field" style="margin-bottom:10px">
+            <label for="aiModelSelect">AI Model Identifier</label>
+            <input id="aiModelSelect" class="input input-mono" list="modelSuggestions" type="text" placeholder="e.g. gpt-4o, o3-mini, claude-3-7-sonnet, deepseek-chat..." value="gpt-4o" />
+          </div>
           <div class="field">
             <label for="aiPrompt">What is the offer, and who is it for?</label>
             <textarea id="aiPrompt" class="textarea" rows="4" placeholder="Roof replacement for homeowners in Austin. Qualify by roof age and whether they own the home."></textarea>
@@ -773,6 +831,18 @@
             <label for="pxWebhookSecret">Webhook Secret Token (Header: X-Webhook-Secret)</label>
             <input id="pxWebhookSecret" class="input input-mono" type="text" placeholder="whsec_xxxxxxxxxxxx" />
             <p class="field-hint">Secures lead data posted to Zapier / Make / n8n.</p>
+          </div>
+          <div class="field" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--line)">
+            <label for="pxCustomCss">Custom CSS Rules</label>
+            <textarea id="pxCustomCss" class="textarea input-mono" rows="3" placeholder=".of-root { --of-radius: 20px; }"></textarea>
+          </div>
+          <div class="field">
+            <label for="pxCustomHead">Custom &lt;head&gt; HTML / Scripts</label>
+            <textarea id="pxCustomHead" class="textarea input-mono" rows="3" placeholder="<!-- Hotjar, Clarity, or Custom Pixel -->"></textarea>
+          </div>
+          <div class="field">
+            <label for="pxCustomBody">Custom &lt;body&gt; Scripts</label>
+            <textarea id="pxCustomBody" class="textarea input-mono" rows="3" placeholder="<!-- Chat widget or tracking script -->"></textarea>
           </div>
         </div>
         <div class="modal-foot"><button class="btn btn-primary" data-close>Done</button></div>
@@ -880,6 +950,83 @@
         <div class="modal-foot" style="justify-content:space-between">
           <button id="clearSymbolBtn" class="btn btn-ghost btn-sm btn-danger">Clear symbol</button>
           <button class="btn btn-primary btn-sm" data-close>Done</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="stepArchetypeOverlay" class="overlay" hidden>
+      <div class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="archetypeTitle" style="max-width: 680px">
+        <div class="modal-head">
+          <div>
+            <span class="modal-title" id="archetypeTitle">Add Conversion Step</span>
+            <p class="field-hint" style="margin: 2px 0 0">Choose a high-converting step archetype tailored for modern sales & quiz funnels.</p>
+          </div>
+          <button class="btn btn-ghost btn-icon btn-sm" data-close aria-label="Close">
+            <svg width="14" height="14"><use href="#i-close" /></svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <div class="archetype-grid" id="archetypeGrid">
+            <div class="archetype-card" data-archetype="choice">
+              <div class="archetype-icon">⚡</div>
+              <div class="archetype-info">
+                <div class="archetype-name">Single Choice Quiz</div>
+                <div class="archetype-desc">Micro-commitment single choice question with auto-advance and badge tags.</div>
+              </div>
+            </div>
+            <div class="archetype-card" data-archetype="multiselect">
+              <div class="archetype-icon">☑️</div>
+              <div class="archetype-info">
+                <div class="archetype-name">Multi-Select Step</div>
+                <div class="archetype-desc">Allow prospects to select multiple options before continuing.</div>
+              </div>
+            </div>
+            <div class="archetype-card" data-archetype="form">
+              <div class="archetype-icon">📋</div>
+              <div class="archetype-info">
+                <div class="archetype-name">Lead Capture Form</div>
+                <div class="archetype-desc">Capture contact details (name, email, phone) with optional anti-spam OTP.</div>
+              </div>
+            </div>
+            <div class="archetype-card" data-archetype="vsl">
+              <div class="archetype-icon">▶️</div>
+              <div class="archetype-info">
+                <div class="archetype-name">VSL / Video Presentation</div>
+                <div class="archetype-desc">Video pitch with headline, key benefits, and high-converting CTA.</div>
+              </div>
+            </div>
+            <div class="archetype-card" data-archetype="calculator">
+              <div class="archetype-icon">🧮</div>
+              <div class="archetype-info">
+                <div class="archetype-name">ROI / Savings Calculator</div>
+                <div class="archetype-desc">Calculate estimated savings, score, or quote based on previous answers.</div>
+              </div>
+            </div>
+            <div class="archetype-card" data-archetype="reviews">
+              <div class="archetype-icon">⭐</div>
+              <div class="archetype-info">
+                <div class="archetype-name">Social Proof & Testimonials</div>
+                <div class="archetype-desc">Highlight real customer reviews, star ratings, and trust badges.</div>
+              </div>
+            </div>
+            <div class="archetype-card" data-archetype="pricing">
+              <div class="archetype-icon">💎</div>
+              <div class="archetype-info">
+                <div class="archetype-name">Offer / Pricing Comparison</div>
+                <div class="archetype-desc">Showcase offer tiers, features list, and clear action buttons.</div>
+              </div>
+            </div>
+            <div class="archetype-card" data-archetype="landing">
+              <div class="archetype-icon">🚀</div>
+              <div class="archetype-info">
+                <div class="archetype-name">Landing Page Section</div>
+                <div class="archetype-desc">Full hero section with custom media, proof line, and sticky CTA.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-foot">
+          <button class="btn" data-close>Cancel</button>
         </div>
       </div>
     </div>

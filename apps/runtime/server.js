@@ -1168,14 +1168,36 @@ function themeVars(theme = {}) {
  */
 // `leadEndpoint` deliberately stays: it is a plain path the engine needs in
 // order to know where to POST, and it carries no secret.
-const SERVER_ONLY_INTEGRATIONS = ["webhookUrl", "webhook", "webhookSecret"];
+const SERVER_ONLY_INTEGRATIONS = [
+  "webhookUrl",
+  "webhook",
+  "webhookSecret",
+  "apiKey",
+  "aiKey",
+  "openaiKey",
+  "resendApiKey",
+  "smtpPass",
+  "smtpUser",
+  "smtpHost",
+  "secret",
+  "secretToken",
+];
 
 /** @param {any} funnel @returns {any} a copy safe to hand to a browser. */
 function publicFunnel(funnel) {
-  if (!funnel?.integrations) return funnel;
-  const integrations = { ...funnel.integrations };
-  for (const key of SERVER_ONLY_INTEGRATIONS) delete integrations[key];
-  return { ...funnel, integrations };
+  if (!funnel) return funnel;
+  const clean = { ...funnel };
+  delete clean.apiKey;
+  delete clean.aiKey;
+  delete clean.openaiKey;
+  delete clean.secret;
+  delete clean.secretToken;
+  if (clean.integrations) {
+    const integrations = { ...clean.integrations };
+    for (const key of SERVER_ONLY_INTEGRATIONS) delete integrations[key];
+    clean.integrations = integrations;
+  }
+  return clean;
 }
 
 /**
@@ -1210,18 +1232,21 @@ const FUNNEL_BOOT_SCRIPT = `
       if (window.parent !== window) {
         addEventListener("message", (e) => {
           if (e.origin !== location.origin || e.data?.type !== "of:preview") return;
-          try {
-            live.destroy();
-          } catch {}
-          mount.innerHTML = "";
-          live = createFunnel(mount, e.data.funnel, {
-            isPreview: true,
-            // Only this same-origin handshake turns on canvas drag-to-reorder,
-            // so a visitor appending ?preview=1 never sees editor chrome.
-            isEditor: true,
-            trackEvents: false,
-            resume: false,
-          });
+          if (live && typeof live.updateFunnel === "function") {
+            live.updateFunnel(e.data.funnel, e.data.stepIndex);
+          } else {
+            try {
+              if (live) live.destroy();
+            } catch {}
+            mount.innerHTML = "";
+            live = createFunnel(mount, e.data.funnel, {
+              stepIndex: e.data.stepIndex,
+              isPreview: true,
+              isEditor: true,
+              trackEvents: false,
+              resume: false,
+            });
+          }
         });
         parent.postMessage({ type: "of:preview-ready" }, location.origin);
       }
@@ -1255,6 +1280,112 @@ const PIXEL_CSP_HOSTS = {
     connect: ["https://analytics.tiktok.com"],
   },
 };
+
+/* ===== operator-pasted custom code ====================================== *
+ *
+ *  The console can attach `customCss` / `customHead` / `customBody` to a funnel
+ *  document, and `funnelPage()` injects them raw. Script inside them is refused
+ *  by default, and that default is load-bearing rather than an oversight:
+ *
+ *  a funnel page is served from the SAME ORIGIN as the console, and the admin
+ *  token lives in that origin's `localStorage`. So a script running on a funnel
+ *  page can read the token and call `/api/admin/*` — the entire lead database.
+ *  Funnel documents are also imported from templates, gists and bug reports, and
+ *  the README tells operators to expect that. Executing whatever a document
+ *  carries would turn "I imported a funnel JSON" into console takeover.
+ *
+ *  `ALLOW_CUSTOM_SCRIPTS=1` opts in, and even then the policy is not widened to
+ *  `'unsafe-inline'`: each inline script is allowed by the SHA-256 of its exact
+ *  bytes, and each external one by its own origin. Only what the operator pasted
+ *  runs — `step.consent` and any XSS a future renderer introduces stay blocked,
+ *  because their content was never hashed into the policy.
+ * ======================================================================== */
+
+const ALLOW_CUSTOM_SCRIPTS = /^(1|true|yes|on)$/i.test(process.env.ALLOW_CUSTOM_SCRIPTS || "");
+
+/** Extra origins a pasted loader pulls further scripts from (it cannot be predicted). */
+const CUSTOM_SCRIPT_ORIGINS = (process.env.CUSTOM_SCRIPT_ORIGINS || "")
+  .split(/[\s,]+/)
+  .filter(Boolean)
+  .flatMap((raw) => {
+    try {
+      return [new URL(raw).origin];
+    } catch {
+      console.warn(`[openfunnel] ignoring unparseable CUSTOM_SCRIPT_ORIGINS entry: ${raw}`);
+      return [];
+    }
+  });
+
+// Non-greedy body, mirroring how the HTML parser ends a script at the first
+// `</script>` — so the captured text is what the browser hashes.
+const SCRIPT_TAG_RE = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
+const ATTR_RE = (name) => new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i");
+const TYPE_ATTR = ATTR_RE("type");
+const SRC_ATTR = ATTR_RE("src");
+// Anything else (application/json, text/template) is data the browser never
+// executes, so it needs no grant.
+const EXECUTABLE_TYPES = new Set(["", "module", "text/javascript", "application/javascript"]);
+
+/** @param {RegExpMatchArray|null} m */
+const attrValue = (m) => (m ? (m[1] ?? m[2] ?? m[3] ?? "") : "");
+
+/**
+ * The custom code attached to a funnel, resolved once.
+ *
+ * Both `funnelPage()` and `funnelCsp()` MUST read it through here. They ran the
+ * same `||` chain independently at first, and the moment those two drift the
+ * hash is computed over different bytes than are served — which does not fail
+ * loudly, it just silently stops the operator's script running.
+ *
+ * @param {any} funnel
+ */
+function customCode(funnel) {
+  const i = funnel?.integrations || {};
+  return {
+    css: funnel?.customCss || i.customCss || "",
+    head: funnel?.customHead || i.customHead || "",
+    body: funnel?.customBody || i.customBody || "",
+  };
+}
+
+/**
+ * Hashes for the inline scripts in `markup`, and origins for the external ones.
+ *
+ * A malformed tag this regex mis-reads yields a hash that matches nothing, so
+ * the script is refused rather than wrongly allowed — the failure mode is a
+ * script that does not run, never a policy that permits more than intended.
+ *
+ * @param {string} markup
+ * @returns {{ hashes: string[], origins: string[], executable: number }}
+ */
+function collectCustomScriptSources(markup) {
+  /** @type {string[]} */ const hashes = [];
+  /** @type {string[]} */ const origins = [];
+  let executable = 0;
+  if (!markup) return { hashes, origins, executable };
+
+  for (const match of markup.matchAll(SCRIPT_TAG_RE)) {
+    const attrs = match[1] || "";
+    const type = attrValue(attrs.match(TYPE_ATTR)).trim().toLowerCase();
+    if (!EXECUTABLE_TYPES.has(type)) continue;
+    executable++;
+
+    const src = attrValue(attrs.match(SRC_ATTR)).trim();
+    if (src) {
+      // A relative src is same-origin and already covered by 'self'.
+      if (/^https?:\/\//i.test(src)) {
+        try {
+          origins.push(new URL(src).origin);
+        } catch {
+          /* unparseable — the browser will refuse it too */
+        }
+      }
+      continue; // `src` wins over any inline body, so no hash for this one.
+    }
+    hashes.push(`'sha256-${createHash("sha256").update(match[2], "utf8").digest("base64")}'`);
+  }
+  return { hashes, origins, executable };
+}
 
 /**
  * Content-Security-Policy for a funnel page.
@@ -1299,6 +1430,31 @@ function funnelCsp(funnel) {
     }
   }
 
+  // Operator-pasted script, only where the deployment has opted in.
+  const custom = customCode(funnel);
+  const pasted = collectCustomScriptSources(`${custom.head}\n${custom.body}`);
+  if (pasted.executable) {
+    if (ALLOW_CUSTOM_SCRIPTS) {
+      pasted.hashes.forEach((h) => script.add(h));
+      // Analytics scripts beacon back to their own host, so an origin allowed to
+      // load but not to connect is a script that runs and silently reports
+      // nothing — the exact failure this whole feature exists to stop being.
+      for (const origin of [...pasted.origins, ...CUSTOM_SCRIPT_ORIGINS]) {
+        script.add(origin);
+        connect.add(origin);
+      }
+    } else {
+      // Without this the operator gets a CSP violation in the visitor's console
+      // and nothing at all on the server — the field saves, the script never
+      // runs, and there is no way to tell from the app that it was refused.
+      console.warn(
+        `[openfunnel] funnel "${funnel?.slug || funnel?.id || "?"}" carries ${pasted.executable} custom <script> tag(s); ` +
+          "refusing to execute them. Funnel pages share an origin with the console, so a script here can read the " +
+          "admin token. Set ALLOW_CUSTOM_SCRIPTS=1 to allow the exact scripts you pasted.",
+      );
+    }
+  }
+
   return [
     "default-src 'none'",
     `script-src ${[...script].join(" ")}`,
@@ -1318,6 +1474,10 @@ function funnelPage(funnel) {
   const title = funnel.name || first.headline || "Get started";
   const description = first.subtext || "";
   const dark = funnel.theme?.mode === "dark";
+  // Resolved through the same helper `funnelCsp` uses. If these two ever read
+  // the fields differently, the hashes in the policy stop matching the bytes on
+  // the page and every pasted script is silently refused.
+  const { css: customCss, head: customHead, body: customBody } = customCode(funnel);
 
   return `<!doctype html>
 <html lang="${esc(funnel.lang || "en")}" style="${esc(themeVars(funnel.theme))}">
@@ -1333,12 +1493,15 @@ function funnelPage(funnel) {
     <link rel="preload" as="script" href="/_of/index.js" crossorigin />
     <link rel="stylesheet" href="/_of/styles.css" />
     <style>body{margin:0;background:var(--of-bg,#eef1f6)}</style>
+    ${customCss ? `<style id="of-custom-css">${customCss}</style>` : ""}
+    ${customHead ? customHead : ""}
   </head>
   <body>
     <main class="of-stage"><div id="app" class="of-root"></div></main>
 
     <script id="of-funnel" type="application/json">${jsonScript(publicFunnel(funnel))}</script>
     <script type="module">${FUNNEL_BOOT_SCRIPT}</script>
+    ${customBody ? customBody : ""}
 
     <noscript>
       <p style="font:16px/1.5 system-ui;padding:24px;text-align:center">
@@ -1406,8 +1569,7 @@ async function serveStaticFile(rootDir, prefix, pathname) {
     headers: {
       ...CONSOLE_HEADERS,
       "content-type": MIME[extname(target)] || "application/octet-stream",
-      // The console ships with the server, so it is only cached in production.
-      "cache-control": DEV ? "no-store" : "public, max-age=3600",
+      "cache-control": "no-cache, no-store, must-revalidate",
     },
   });
 }
@@ -1594,6 +1756,21 @@ function clientIp(req, server) {
 // own `server` argument, so nothing inside the router depends on this binding.
 const server = import.meta.main ? Bun.serve({
   port: PORT,
+
+  // Refuse an oversized body at the transport layer instead of buffering it.
+  //
+  // `readJson` already caps at MAX_BODY, but it can only do so after Bun has
+  // read the body into memory: a request with `Transfer-Encoding: chunked` sends
+  // no `content-length`, so the declared-size check reads 0 and `req.text()`
+  // buffers the lot. Bun's own default ceiling is 128MB, so an unauthenticated
+  // caller could make `/api/lead` allocate that much per request and repeat it.
+  // Setting the limit here makes Bun answer 413 before the handler runs.
+  //
+  // Behaviour-neutral: every route on this server takes small JSON and none
+  // accepts an upload, so anything above MAX_BODY was already rejected by
+  // `readJson` — this only moves the rejection earlier. The largest funnel
+  // document in `examples/` is under 4KB against a 64KB budget.
+  maxRequestBodySize: MAX_BODY,
 
   async fetch(req, server) {
     const url = new URL(req.url);
@@ -1904,34 +2081,138 @@ const server = import.meta.main ? Bun.serve({
     }
 
     // --- AI Funnel Copilot API ----------------------------------------------
-    if (path === "/api/ai/generate" && req.method === "POST") {
-      const body = await readJson(req);
-      const prompt = body?.prompt || "fitness lead gen";
-      const apiKey = body?.apiKey || process.env.OPENAI_API_KEY || "";
+function parseJsonFromAiText(text) {
+  if (!text) return null;
+  let cleaned = String(text).trim();
+  const fenceMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (fenceMatch) cleaned = fenceMatch[1].trim();
+  const match = cleaned.match(/\{[\s\S]*\}/);
+  if (!match) return null;
+  try {
+    return JSON.parse(match[0]);
+  } catch {
+    try {
+      const sanitized = match[0].replace(/,\s*([}\]])/g, "$1");
+      return JSON.parse(sanitized);
+    } catch {
+      return null;
+    }
+  }
+}
 
-      if (apiKey && apiKey.startsWith("sk-")) {
-        try {
-          const aiRes = await fetch("https://api.openai.com/v1/chat/completions", {
+    // --- AI Funnel Copilot API ----------------------------------------------
+    // --- AI Funnel Copilot API ----------------------------------------------
+    async function executeAiRequest({ provider, model, apiKey, systemPrompt, userPrompt }) {
+      if (!apiKey) return null;
+
+      try {
+        // Anthropic
+        if (provider === "anthropic" || model.startsWith("claude-") || apiKey.startsWith("sk-ant-")) {
+          const res = await fetch("https://api.anthropic.com/v1/messages", {
+            method: "POST",
+            headers: {
+              "x-api-key": apiKey,
+              "anthropic-version": "2023-06-01",
+              "content-type": "application/json"
+            },
+            body: JSON.stringify({
+              model: model || "claude-3-7-sonnet-20250219",
+              max_tokens: 2048,
+              system: systemPrompt,
+              messages: [{ role: "user", content: userPrompt }]
+            })
+          });
+          if (res.ok) {
+            const data = await res.json();
+            return data.content?.[0]?.text || "";
+          }
+        }
+
+        // DeepSeek
+        if (provider === "deepseek" || model.startsWith("deepseek-")) {
+          const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
             method: "POST",
             headers: {
               "authorization": `Bearer ${apiKey}`,
               "content-type": "application/json"
             },
             body: JSON.stringify({
-              model: body?.model || "gpt-4o",
+              model: model || "deepseek-chat",
               messages: [
-                { role: "system", content: "You are an expert sales funnel copywriter. Output valid OpenFunnel JSON with steps array." },
-                { role: "user", content: `Create an interactive quiz funnel for: ${prompt}` }
+                { role: "system", content: systemPrompt },
+                { role: "user", content: userPrompt }
               ]
             })
           });
-          if (aiRes.ok) {
-            const data = await aiRes.json();
-            const text = data.choices?.[0]?.message?.content || "";
-            const match = text.match(/\{[\s\S]*\}/);
-            if (match) return json({ funnel: JSON.parse(match[0]) });
+          if (res.ok) {
+            const data = await res.json();
+            return data.choices?.[0]?.message?.content || "";
           }
-        } catch {}
+        }
+
+        // Google Gemini
+        if (provider === "google" || model.startsWith("gemini-")) {
+          const geminiModel = model || "gemini-2.0-flash";
+          const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(geminiModel)}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              system_instruction: { parts: [{ text: systemPrompt }] },
+              contents: [{ parts: [{ text: userPrompt }] }]
+            })
+          });
+          if (res.ok) {
+            const data = await res.json();
+            return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+          }
+        }
+
+        // Standard OpenAI / OpenAI-compatible API
+        const res = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "authorization": `Bearer ${apiKey}`,
+            "content-type": "application/json"
+          },
+          body: JSON.stringify({
+            model: model || "gpt-4o",
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: userPrompt }
+            ]
+          })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          return data.choices?.[0]?.message?.content || "";
+        }
+      } catch (err) {
+        console.warn("[ai] api execution error:", errSummary(err));
+      }
+      return null;
+    }
+
+    if (path === "/api/ai/generate" && req.method === "POST") {
+      const body = await readJson(req);
+      const prompt = body?.prompt || "fitness lead gen";
+      const model = body?.model || "gpt-4o";
+      const provider = body?.provider || "openai";
+      const apiKey = body?.apiKey || process.env.OPENAI_API_KEY || "";
+
+      if (apiKey) {
+        const text = await executeAiRequest({
+          provider,
+          model,
+          apiKey,
+          systemPrompt: "You are an expert sales funnel copywriter. Output ONLY valid JSON representing an OpenFunnel document with 'id', 'name', 'theme', and a 'steps' array (containing choice, form, loader, and success steps).",
+          userPrompt: `Create an interactive quiz funnel for: ${prompt}`
+        });
+        if (text) {
+          const parsed = parseJsonFromAiText(text);
+          if (parsed && Array.isArray(parsed.steps) && parsed.steps.length) {
+            return json({ funnel: parsed });
+          }
+        }
       }
 
       // Built-in intelligent funnel generator fallback
@@ -1996,7 +2277,26 @@ const server = import.meta.main ? Bun.serve({
     if (path === "/api/ai/improve-copy" && req.method === "POST") {
       const body = await readJson(req);
       const headline = String(body?.headline || "").trim();
+      const model = body?.model || "gpt-4o-mini";
+      const provider = body?.provider || "openai";
+      const apiKey = body?.apiKey || process.env.OPENAI_API_KEY || "";
       if (!headline) return json({ hooks: [] });
+
+      if (apiKey) {
+        const text = await executeAiRequest({
+          provider,
+          model,
+          apiKey,
+          systemPrompt: "You are a master conversion copywriter. Give 3 high-converting, punchy headline variations as a JSON object: {\"hooks\": [\"variation 1\", \"variation 2\", \"variation 3\"]}",
+          userPrompt: `Improve this headline for an interactive quiz: "${headline}"`
+        });
+        if (text) {
+          const parsed = parseJsonFromAiText(text);
+          if (parsed?.hooks && Array.isArray(parsed.hooks) && parsed.hooks.length) {
+            return json({ hooks: parsed.hooks.slice(0, 3) });
+          }
+        }
+      }
 
       // Offline reframings only. This fallback never invents a claim the
       // operator has not made — no guarantees, no timeframes, no rankings.

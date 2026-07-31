@@ -37,6 +37,10 @@ export { pipe } from "./piping.js";
  * @property {boolean} [isEditor]     Enable in-canvas editing affordances
  *                                    (drag-to-reorder). Builder-only — never set
  *                                    this from a URL parameter.
+ * @property {number} [stepIndex]    Initial active step index.
+ * @property {boolean} [hideBranding] Suppress the "Powered by OpenFunnel" footer
+ *                                    for this mount. The funnel document's
+ *                                    `branding.hidden` does the same thing.
  */
 
 /**
