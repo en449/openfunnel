@@ -155,7 +155,7 @@ function renderStepsList() {
     item.className = `of-step-item ${idx === currentStepIndex ? "active" : ""}`;
     item.innerHTML = `
       <div class="of-step-info">
-        <span class="of-step-type-badge">${step.type}</span>
+        <span class="of-step-type-badge">${esc(step.type)}</span>
         <span class="of-step-title">${esc(step.headline || step.id)}</span>
       </div>
       <div class="of-step-actions">
@@ -476,7 +476,11 @@ function esc(val) {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(/"/g, "&quot;")
+    // Matches the console's escaper. Not required while every attribute here is
+    // double-quoted, but four near-identical escapers that differ is how one of
+    // them ends up being the wrong one to have copied.
+    .replace(/'/g, "&#39;");
 }
 
 document.addEventListener("DOMContentLoaded", init);
