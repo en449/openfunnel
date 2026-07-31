@@ -24,7 +24,7 @@ bun run demo           # zero-build static demo on :4321 (scripts/serve.mjs)
 
 Run a single test file: `bun test packages/engine/test/logic.test.js`.
 
-`bun test` (74 tests) and `bun run typecheck` both pass on `main` — keep it that
+`bun test` (78 tests) and `bun run typecheck` both pass on `main` — keep it that
 way. Two tests log expected warnings (`branch target "nope" not found`, an
 invalid-URL `submitLead` failure); those are assertions about failure tolerance,
 not breakage.
@@ -175,12 +175,18 @@ rotating a string. `clientIp()` returns the socket address by default and warns
 once if a forwarded header shows up without the flag. Anything keyed on a client
 address inherits this — do not read the header directly.
 
-**Webhook targets are checked after resolution, not just textually.**
-`isSafeWebhookTargetResolved()` rejects a hostname whose DNS answer lands on
-loopback, a private range, link-local or cloud metadata. A hostile resolver can
-still answer differently between the lookup and the socket (rebinding) and Bun
-cannot pin the address, so that residue stands — but the destination is
-operator-owned, not visitor-supplied.
+**Webhook targets are resolved, vetted, and then pinned.** `resolveSafeTarget()`
+rejects a hostname whose DNS answer lands on loopback, a private range,
+link-local or cloud metadata — and for `http://` it aims the request at the
+address it actually vetted, carrying the original `Host` so virtual-host routing
+still works. That closes DNS rebinding rather than documenting it: the resolver
+cannot answer differently between the check and the socket, because the socket no
+longer consults it. `https://` is deliberately left on the hostname — TLS already
+defeats the harmful case, since a rebound address cannot present a valid
+certificate for the operator's configured name, and overriding SNI would trade a
+closed hole for an untestable one. Use `resolveSafeTarget()` for any new outbound
+call to an operator-supplied URL; `isSafeWebhookTarget()` alone is the textual
+check only.
 
 **Funnel pages carry a strict CSP.** `script-src` is pinned to the SHA-256 of the
 inline boot script, which is why `FUNNEL_BOOT_SCRIPT` must stay free of

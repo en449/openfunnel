@@ -15,7 +15,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
-import { isInside, isSafeWebhookTarget, isSafeWebhookTargetResolved } from "../server.js";
+import { isInside, isSafeWebhookTarget, isSafeWebhookTargetResolved, resolveSafeTarget } from "../server.js";
 
 describe("isSafeWebhookTarget", () => {
   test("allows ordinary public destinations", () => {
@@ -132,5 +132,44 @@ describe("isSafeWebhookTargetResolved", () => {
 
   test("allows a public IP literal without a lookup", async () => {
     expect(await isSafeWebhookTargetResolved("https://8.8.8.8/hook")).toBe(true);
+  });
+});
+
+describe("resolveSafeTarget — DNS rebinding", () => {
+  /**
+   * Vetting a hostname and then handing the HOSTNAME to fetch leaves a window:
+   * the resolver can answer differently when the socket opens. For http:// the
+   * request is aimed at the address that was actually vetted, with the original
+   * Host preserved so virtual-host routing still works.
+   *
+   * These tolerate a machine with no DNS: an unresolvable name yields null,
+   * which is the safe outcome, so the assertions branch rather than flake.
+   */
+  test("http:// is pinned to the resolved address, preserving Host", async () => {
+    const target = await resolveSafeTarget("http://example.com/hook?t=1");
+    if (target === null) return; // no DNS available; refusing is the safe answer
+
+    expect(target.url).toMatch(/^http:\/\/(\d{1,3}\.){3}\d{1,3}|^http:\/\/\[/);
+    expect(target.url).toContain("/hook?t=1");
+    expect(target.headers.host).toBe("example.com");
+  });
+
+  test("https:// keeps the hostname — TLS already defeats the rebound case", async () => {
+    const target = await resolveSafeTarget("https://example.com/hook");
+    if (target === null) return;
+
+    expect(target.url).toBe("https://example.com/hook");
+    expect(target.headers.host).toBeUndefined();
+  });
+
+  test("an IP literal needs no lookup and is passed through unchanged", async () => {
+    const target = await resolveSafeTarget("https://8.8.8.8/hook");
+    expect(target).not.toBeNull();
+    expect(target?.url).toBe("https://8.8.8.8/hook");
+  });
+
+  test("a name resolving to the local network is still refused", async () => {
+    expect(await resolveSafeTarget("http://localtest.me/hook")).toBeNull();
+    expect(await resolveSafeTarget("http://169.254.169.254/latest/meta-data/")).toBeNull();
   });
 });

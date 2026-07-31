@@ -395,21 +395,64 @@ function hostOf(raw) {
  * @returns {Promise<boolean>}
  */
 async function isSafeWebhookTargetResolved(raw) {
-  if (!isSafeWebhookTarget(raw)) return false;
+  return (await resolveSafeTarget(raw)) !== null;
+}
 
-  const host = new URL(String(raw)).hostname.toLowerCase();
-  // An IP literal was already checked against the ranges directly.
-  if (host.startsWith("[") || /^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return true;
+/**
+ * Vet a webhook destination and return a request that connects to the exact
+ * address that was vetted.
+ *
+ * Checking the hostname and then handing the hostname to `fetch` leaves a gap:
+ * the resolver can answer differently when the socket actually opens, so a name
+ * that vetted clean resolves to 169.254.169.254 a moment later. That is DNS
+ * rebinding, and it is closed here rather than documented as unavoidable —
+ * for `http://` the request is aimed at the resolved IP with the original `Host`
+ * header preserved, so virtual-host routing still works but the destination
+ * cannot change underneath us.
+ *
+ * `https://` is deliberately left on the hostname. It does not need pinning:
+ * TLS already defeats the harmful case, because a rebound address would have to
+ * present a valid certificate for the operator's configured hostname, which the
+ * metadata endpoint and anything on the private network cannot do. Pinning it
+ * would mean overriding SNI and certificate validation on a path this project
+ * cannot exercise in tests, which is a worse trade than relying on TLS.
+ *
+ * @param {string} raw
+ * @returns {Promise<{ url: string, headers: Record<string,string> } | null>} null when unsafe.
+ */
+async function resolveSafeTarget(raw) {
+  if (!isSafeWebhookTarget(raw)) return null;
 
-  try {
-    const answers = await dnsLookup(host, { all: true, verbatim: true });
-    if (!answers.length) return false;
-    return answers.every(({ address, family }) =>
-      family === 6 ? !isBlockedIpv6(String(address).toLowerCase()) : !isBlockedIpv4(String(address))
-    );
-  } catch {
-    return false;
+  const url = new URL(String(raw));
+  const host = url.hostname.toLowerCase();
+
+  // An IP literal was already checked against the ranges directly — nothing to
+  // resolve, and nothing that can change.
+  if (host.startsWith("[") || /^\d{1,3}(\.\d{1,3}){3}$/.test(host)) {
+    return { url: url.toString(), headers: {} };
   }
+
+  /** @type {Array<{ address: string, family: number }>} */
+  let answers;
+  try {
+    answers = await dnsLookup(host, { all: true, verbatim: true });
+  } catch {
+    return null; // a destination we cannot resolve is one we cannot vet
+  }
+  if (!answers.length) return null;
+
+  const anyBlocked = answers.some(({ address, family }) =>
+    family === 6 ? isBlockedIpv6(String(address).toLowerCase()) : isBlockedIpv4(String(address))
+  );
+  if (anyBlocked) return null;
+
+  if (url.protocol !== "http:") return { url: url.toString(), headers: {} };
+
+  const { address, family } = answers[0];
+  const pinned = new URL(url);
+  pinned.hostname = family === 6 ? `[${address}]` : address;
+  // `url.host` keeps any non-default port, so the origin server still routes it.
+  return { url: pinned.toString(), headers: { host: url.host } };
 }
 
 async function forwardWebhook(record) {
@@ -430,7 +473,8 @@ async function forwardWebhook(record) {
   }
   if (!webhookUrl) return;
 
-  if (!(await isSafeWebhookTargetResolved(webhookUrl))) {
+  const target = await resolveSafeTarget(webhookUrl);
+  if (!target) {
     // Logs the host, not the URL: a webhook URL routinely carries a token in
     // its path, and this line would copy it into the log.
     console.warn(`[runtime] refusing webhook to blocked target: ${oneLine(hostOf(webhookUrl), 120)}`);
@@ -439,12 +483,14 @@ async function forwardWebhook(record) {
 
   try {
     /** @type {Record<string,string>} */
-    const headers = { "content-type": "application/json" };
+    // `target.headers` carries the original `Host` when the request was pinned
+    // to a resolved address, so the receiving vhost still routes it correctly.
+    const headers = { "content-type": "application/json", ...target.headers };
     // The console advertises this header, so send it: it lets the receiving
     // automation prove the delivery came from this server.
     if (webhookSecret) headers["x-webhook-secret"] = oneLine(webhookSecret, 512);
 
-    const res = await fetch(webhookUrl, {
+    const res = await fetch(target.url, {
       method: "POST",
       headers,
       body: JSON.stringify(record),
@@ -1947,4 +1993,4 @@ if (server) {
  *  Exports — for tests only. The server is started above when run directly.
  * ========================================================================== */
 
-export { isSafeWebhookTarget, isSafeWebhookTargetResolved, isInside, isPreviewRecord };
+export { isSafeWebhookTarget, isSafeWebhookTargetResolved, resolveSafeTarget, isInside, isPreviewRecord };
