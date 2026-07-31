@@ -9,7 +9,7 @@
  * keeps the funnel logic in one auditable place.
  */
 
-import { el, clear, uid, prefersReducedMotion, isNavigableUrl } from "./dom.js";
+import { el, clear, uid, prefersReducedMotion, isNavigableUrl, hasPreviewFlag } from "./dom.js";
 import { resolveNext } from "./branching.js";
 import { renderStep } from "./render/index.js";
 import { applyTheme, loadThemeFont } from "./theme.js";
@@ -344,7 +344,7 @@ export class Controller {
    * @param {Record<string, unknown>} [meta]
    */
   _emit(type, meta) {
-    if (this.options.isPreview || (typeof window !== "undefined" && (window.location.search.includes("preview=1") || window.location.search.includes("admin=1")))) {
+    if (this.options.isPreview || (typeof window !== "undefined" && hasPreviewFlag(window.location.search))) {
       return; // Skip analytics tracking for internal admin or preview views
     }
     const consent = consentSignal(this.funnel, this.key);

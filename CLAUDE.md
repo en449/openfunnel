@@ -24,7 +24,7 @@ bun run demo           # zero-build static demo on :4321 (scripts/serve.mjs)
 
 Run a single test file: `bun test packages/engine/test/logic.test.js`.
 
-`bun test` (78 tests) and `bun run typecheck` both pass on `main` — keep it that
+`bun test` (82 tests) and `bun run typecheck` both pass on `main` — keep it that
 way. Two tests log expected warnings (`branch target "nope" not found`, an
 invalid-URL `submitLead` failure); those are assertions about failure tolerance,
 not breakage.
@@ -140,6 +140,16 @@ fetch fallback and swallows errors.
 new code needs both: `Controller._emit()` bails when `isPreview` or
 `?preview=1` / `?admin=1`, and the server's `isPreviewRecord()` filters records
 out of `/api/admin/*`. The builder iframe depends on this.
+
+`isPreviewRecord` parses the query string; it must never substring-match.
+`referer.includes("preview=1")` also fires on
+`?utm_campaign=spring-preview=1-sale`, and because this predicate decides whether
+a lead is persisted at all, anyone circulating a link with those nine characters
+buried in it silently destroyed every lead that came through — no log, and a 202
+back to the visitor so the funnel looked fine. It is also type-guarded, because
+`meta.url` is attacker-supplied JSON and an unguarded `.includes` returned a 500
+from public ingest. `hasPreviewFlag()` exists on both sides (server and
+`dom.js`) for exactly this; use it rather than writing the check again.
 
 Ingest and the admin readers must use the SAME predicate. They drifted once: the
 ingest short-circuit checked three markers while `isPreviewRecord` checked six,

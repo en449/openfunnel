@@ -15,7 +15,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
-import { isInside, isSafeWebhookTarget, isSafeWebhookTargetResolved, resolveSafeTarget } from "../server.js";
+import { isInside, isPreviewRecord, isSafeWebhookTarget, isSafeWebhookTargetResolved, resolveSafeTarget } from "../server.js";
 
 describe("isSafeWebhookTarget", () => {
   test("allows ordinary public destinations", () => {
@@ -171,5 +171,54 @@ describe("resolveSafeTarget — DNS rebinding", () => {
   test("a name resolving to the local network is still refused", async () => {
     expect(await resolveSafeTarget("http://localtest.me/hook")).toBeNull();
     expect(await resolveSafeTarget("http://169.254.169.254/latest/meta-data/")).toBeNull();
+  });
+});
+
+describe("isPreviewRecord — suppression must need a real flag", () => {
+  /**
+   * This predicate decides whether a lead is persisted at all, so a false
+   * positive silently destroys the operator's primary asset. It used to
+   * substring-match, which meant anyone who circulated a link to the funnel with
+   * "preview=1" buried in an unrelated value — `?utm_campaign=spring-preview=1-sale`
+   * — discarded every lead that came through it, with no log and a 202 back to
+   * the visitor so the funnel looked fine.
+   */
+  test("a real preview flag suppresses", () => {
+    expect(isPreviewRecord({ preview: true })).toBe(true);
+    expect(isPreviewRecord({ isPreview: true })).toBe(true);
+    expect(isPreviewRecord({ meta: { preview: true } })).toBe(true);
+    expect(isPreviewRecord({ referer: "https://x.test/f/q?preview=1" })).toBe(true);
+    expect(isPreviewRecord({ referer: "https://x.test/f/q?admin=1" })).toBe(true);
+    expect(isPreviewRecord({ meta: { url: "https://x.test/f/q?a=b&preview=1" } })).toBe(true);
+  });
+
+  test("a coincidental substring does NOT suppress a real lead", () => {
+    for (const referer of [
+      "https://shop.test/f/q?utm_campaign=spring-preview=1-sale",
+      "https://shop.test/f/q?ref=badmin=1",
+      "https://shop.test/preview=1/landing",
+      "https://shop.test/f/q#preview=1",
+      "https://shop.test/f/q?notpreview=1",
+    ]) {
+      expect(isPreviewRecord({ referer })).toBe(false);
+    }
+    expect(isPreviewRecord({ meta: { url: "https://shop.test/f/q?utm_term=admin=1x" } })).toBe(false);
+  });
+
+  test("a non-string url or referer is not a crash", () => {
+    // `meta` is attacker-supplied JSON. An unguarded `.includes` threw out of the
+    // ingest handler and returned 500, breaking "ingest must never fail a visitor".
+    for (const url of [123, {}, null, ["x"], true]) {
+      expect(() => isPreviewRecord({ meta: { url } })).not.toThrow();
+      expect(isPreviewRecord({ meta: { url } })).toBe(false);
+    }
+    expect(isPreviewRecord(null)).toBe(false);
+    expect(isPreviewRecord("nonsense")).toBe(false);
+  });
+
+  test("a truthy non-boolean marker does not suppress", () => {
+    // Only an explicit `true` counts, so a stray string cannot discard a lead.
+    expect(isPreviewRecord({ preview: "no" })).toBe(false);
+    expect(isPreviewRecord({ isPreview: 0 })).toBe(false);
   });
 });

@@ -146,7 +146,11 @@ function isLoopbackRequest(req, server) {
   // attacker origin. Without this, `bun run dev` hands lead PII, mail settings
   // and funnel writes to any site the operator happens to visit.
   const host = (req.headers.get("host") || "").toLowerCase();
-  return LOOPBACK_HOST_RE.test(host) || ALLOWED_HOSTS.has(host);
+  if (LOOPBACK_HOST_RE.test(host)) return true;
+  // A browser always writes `name:port` on a non-default port, and the default
+  // here is 3000 — so comparing the raw header alone meant the documented
+  // ALLOWED_HOSTS example could never match. Accept either form.
+  return ALLOWED_HOSTS.has(host) || ALLOWED_HOSTS.has(host.replace(/:\d+$/, ""));
 }
 
 /**
@@ -528,6 +532,33 @@ async function forwardWebhook(record) {
 }
 
 /**
+ * Is `preview=1` or `admin=1` genuinely set as a query parameter?
+ *
+ * Parsed rather than substring-matched, and this is not a nicety: this predicate
+ * decides whether a lead is persisted at all. `referer.includes("preview=1")`
+ * also fires on `?utm_campaign=spring-preview=1-sale`, so anyone who circulated
+ * a link to the operator's funnel with those nine characters buried anywhere in
+ * it silently destroyed every lead that came through it — no log, no counter,
+ * and a 202 back to the visitor so the funnel looked fine.
+ *
+ * Type-guarded too. `meta.url` is attacker-supplied JSON, so a non-string threw
+ * out of the ingest handler and returned 500, breaking the "ingest must never
+ * fail a visitor" invariant.
+ *
+ * @param {unknown} value
+ * @returns {boolean}
+ */
+function hasPreviewFlag(value) {
+  if (typeof value !== "string" || !value) return false;
+  try {
+    const params = new URL(value, "http://openfunnel.invalid").searchParams;
+    return params.get("preview") === "1" || params.get("admin") === "1";
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Builder-preview and admin traffic must never reach analytics — neither the
  * console's own numbers nor an ad platform. Shared by the ingest fan-out and
  * the `/api/admin/*` readers so both agree on what counts as preview.
@@ -536,10 +567,12 @@ async function forwardWebhook(record) {
  * @returns {boolean}
  */
 function isPreviewRecord(r) {
+  if (!r || typeof r !== "object") return false;
   return Boolean(
-    r.preview || r.isPreview || r.meta?.preview || r.meta?.isPreview ||
-    (r.referer && (r.referer.includes("preview=1") || r.referer.includes("admin=1"))) ||
-    (r.meta?.url && (r.meta.url.includes("preview=1") || r.meta.url.includes("admin=1")))
+    r.preview === true || r.isPreview === true ||
+    r.meta?.preview === true || r.meta?.isPreview === true ||
+    hasPreviewFlag(r.referer) ||
+    hasPreviewFlag(r.meta?.url)
   );
 }
 
@@ -1161,8 +1194,8 @@ const FUNNEL_BOOT_SCRIPT = `
       const isPreview = Boolean(
         window.parent !== window ||
         window.self !== window.top ||
-        location.search.includes("preview=1") ||
-        location.search.includes("admin=1")
+        new URLSearchParams(location.search).get("preview") === "1" ||
+        new URLSearchParams(location.search).get("admin") === "1"
       );
       let live = createFunnel(mount, funnel, {
         isPreview: isPreview,
@@ -1796,8 +1829,13 @@ const server = import.meta.main ? Bun.serve({
 
     if (path === "/api/admin/email-settings" && req.method === "POST") {
       const body = await readJson(req);
-      const updated = await saveEmailSettings(body || {});
-      return json({ ok: true, settings: redactEmailSettings(updated) });
+      await saveEmailSettings(body || {});
+      // Re-resolve rather than echoing what was written: the saved object has
+      // env-provided secrets stripped out (so they are not persisted to disk),
+      // which would otherwise make this reply say "no key is set" at the exact
+      // moment the operator might type one in — and a typed key persists and
+      // shadows the env var, the failure that stripping exists to prevent.
+      return json({ ok: true, settings: redactEmailSettings(await getEmailSettings()) });
     }
 
     if (path === "/api/admin/test-email" && req.method === "POST") {

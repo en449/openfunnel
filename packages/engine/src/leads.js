@@ -9,6 +9,8 @@
  * fall back to `fetch(..., { keepalive: true })`.
  */
 
+import { hasPreviewFlag } from "./dom.js";
+
 function getUtmParams() {
   if (typeof location === "undefined" || !location.search) return {};
   try {
@@ -49,8 +51,7 @@ export async function submitLead(lead, answers, ctx = {}) {
     ctx.meta?.preview ||
     ctx.meta?.isPreview ||
     (typeof window !== "undefined" && (
-      window.location.search.includes("preview=1") ||
-      window.location.search.includes("admin=1")
+      hasPreviewFlag(window.location.search)
     ))
   );
   const endpoint = ctx.endpoint || "/api/lead"; // TODO: point at your deployment

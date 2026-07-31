@@ -30,6 +30,29 @@ export function isNavigableUrl(url) {
 }
 
 /**
+ * Is `preview=1` or `admin=1` genuinely set as a query parameter?
+ *
+ * Parsed, never substring-matched. `location.search.includes("preview=1")` also
+ * fires on `?utm_campaign=spring-preview=1-sale`, and this flag decides whether a
+ * lead is suppressed — so a competitor who circulates a link with those nine
+ * characters buried anywhere in it would silently destroy the operator's leads.
+ *
+ * Accepts a full URL or a bare query string.
+ *
+ * @param {unknown} value
+ * @returns {boolean}
+ */
+export function hasPreviewFlag(value) {
+  if (typeof value !== "string" || !value) return false;
+  try {
+    const params = new URL(value, "http://openfunnel.invalid").searchParams;
+    return params.get("preview") === "1" || params.get("admin") === "1";
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Create an element with attributes/props and children in one call.
  *
  * @param {string} tag
