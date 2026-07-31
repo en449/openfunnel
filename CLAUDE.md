@@ -24,7 +24,7 @@ bun run demo           # zero-build static demo on :4321 (scripts/serve.mjs)
 
 Run a single test file: `bun test packages/engine/test/logic.test.js`.
 
-`bun test` (58 tests) and `bun run typecheck` both pass on `main` — keep it that
+`bun test` (74 tests) and `bun run typecheck` both pass on `main` — keep it that
 way. Two tests log expected warnings (`branch target "nope" not found`, an
 invalid-URL `submitLead` failure); those are assertions about failure tolerance,
 not breakage.
@@ -96,11 +96,19 @@ page and the ingest endpoints are the entire public API surface.
 
 **Meta Conversions API.** `persist()` also forwards to Meta server-side via
 `forwardMetaCapi`, opt-in through `META_PIXEL_ID` + `META_CAPI_TOKEN` (env only,
-never per funnel, never from the request body). Two rules there: the token goes
-in the JSON **body** as `access_token`, not in the URL query string; and a fetch
-failure is logged through `errSummary(err)`, never as the error object — Bun puts
-the full request URL on `err.path`, so `console.warn("…", err)` would print the
-credential. `forwardWebhook` follows the same logging rule for the same reason.
+never per funnel, never from the request body).
+
+The token goes in the **URL query string**, because that is the only form Meta
+documents for a JSON payload to this endpoint. Moving it into the JSON body or an
+`Authorization` header looks tidier and was tried — but neither is verified for
+`/events`, and a silent `400` would disable conversion tracking with nothing but
+a status code in the log. Do not "fix" this.
+
+That puts a credential in the URL, so the containment is entirely on the logging
+side and is **not optional**: a fetch failure is logged through `errSummary(err)`,
+never as the error object, because Bun puts the full request URL on `err.path` and
+`console.warn("…", err)` would print the token. `forwardWebhook`, the relay, the
+Resend and Supabase calls all follow the same rule for the same reason.
 
 ### apps/app
 
