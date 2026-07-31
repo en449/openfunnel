@@ -29,6 +29,7 @@
 import { mkdir, readdir, readFile, writeFile, appendFile, unlink } from "node:fs/promises";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { createHash, randomInt, timingSafeEqual } from "node:crypto";
+import { lookup as dnsLookup } from "node:dns/promises";
 
 /* ========================================================================== *
  *  Config
@@ -364,6 +365,53 @@ function isSafeWebhookTarget(raw) {
   return !isBlockedIpv4(host);
 }
 
+/** Host of a URL, for log lines that must not carry the path or query. */
+function hostOf(raw) {
+  try {
+    return new URL(String(raw)).host;
+  } catch {
+    return "(unparseable)";
+  }
+}
+
+/**
+ * The literal check above, plus what the hostname actually RESOLVES to.
+ *
+ * `webhook.example.com` passes every textual test and can still have an A record
+ * pointing at 169.254.169.254. Resolving first and rejecting a private answer
+ * closes the practical version of that: a DNS entry aimed at the local network
+ * or the cloud metadata service no longer receives lead data.
+ *
+ * It does not close the theoretical version. Between this lookup and the socket
+ * connecting, a hostile resolver can answer differently (DNS rebinding), and Bun
+ * exposes no way to pin the resolved address for a `fetch`. Since the
+ * destination is operator-owned rather than visitor-supplied, what remains is a
+ * misconfiguration and compromised-DNS risk, not something a stranger can steer.
+ *
+ * A lookup failure is treated as unsafe: a destination we cannot resolve is one
+ * we cannot vet, and the `fetch` would fail anyway.
+ *
+ * @param {string} raw
+ * @returns {Promise<boolean>}
+ */
+async function isSafeWebhookTargetResolved(raw) {
+  if (!isSafeWebhookTarget(raw)) return false;
+
+  const host = new URL(String(raw)).hostname.toLowerCase();
+  // An IP literal was already checked against the ranges directly.
+  if (host.startsWith("[") || /^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return true;
+
+  try {
+    const answers = await dnsLookup(host, { all: true, verbatim: true });
+    if (!answers.length) return false;
+    return answers.every(({ address, family }) =>
+      family === 6 ? !isBlockedIpv6(String(address).toLowerCase()) : !isBlockedIpv4(String(address))
+    );
+  } catch {
+    return false;
+  }
+}
+
 async function forwardWebhook(record) {
   // Deliberately NOT read from the record. /api/lead is public, so honouring a
   // webhookUrl from the request body let any caller aim the server at a host of
@@ -382,8 +430,10 @@ async function forwardWebhook(record) {
   }
   if (!webhookUrl) return;
 
-  if (!isSafeWebhookTarget(webhookUrl)) {
-    console.warn(`[runtime] refusing webhook to blocked target: ${webhookUrl}`);
+  if (!(await isSafeWebhookTargetResolved(webhookUrl))) {
+    // Logs the host, not the URL: a webhook URL routinely carries a token in
+    // its path, and this line would copy it into the log.
+    console.warn(`[runtime] refusing webhook to blocked target: ${oneLine(hostOf(webhookUrl), 120)}`);
     return;
   }
 
@@ -1374,10 +1424,39 @@ async function readJson(req) {
   }
 }
 
-/** Client IP, trusting the proxy header a CDN/ingress sets. */
+/**
+ * Set when the server genuinely sits behind a proxy that rewrites the client
+ * address. Off by default because `x-forwarded-for` is a request header: anyone
+ * can send one, so honouring it unconditionally means every per-IP limit is
+ * bypassed by rotating a string.
+ */
+const TRUST_PROXY = /^(1|true|yes)$/i.test(process.env.TRUST_PROXY || "");
+
+let warnedAboutProxy = false;
+
+/**
+ * The address to attribute a request to, for rate-limit keys and lead records.
+ *
+ * With `TRUST_PROXY` set, the left-most `x-forwarded-for` entry — correct behind
+ * an ingress that appends it. Without it, the socket address, which a caller
+ * cannot forge.
+ *
+ * Deploying behind a proxy WITHOUT setting `TRUST_PROXY` is the one bad
+ * combination: every request then keys to the proxy's own address, so the
+ * per-IP limits apply to all traffic at once. That is loud rather than silent —
+ * the first forwarded request logs how to fix it.
+ */
 function clientIp(req, server) {
   const fwd = req.headers.get("x-forwarded-for");
-  if (fwd) return fwd.split(",")[0].trim();
+  if (fwd && TRUST_PROXY) return fwd.split(",")[0].trim();
+  if (fwd && !warnedAboutProxy) {
+    warnedAboutProxy = true;
+    console.warn(
+      "[runtime] x-forwarded-for seen but TRUST_PROXY is not set, so per-IP limits " +
+        "key on the socket address and will apply to all proxied traffic together. " +
+        "Set TRUST_PROXY=1 if this server really is behind a proxy you control."
+    );
+  }
   return server.requestIP(req)?.address || null;
 }
 
@@ -1863,4 +1942,4 @@ if (server) {
  *  Exports — for tests only. The server is started above when run directly.
  * ========================================================================== */
 
-export { isSafeWebhookTarget, isInside, isPreviewRecord };
+export { isSafeWebhookTarget, isSafeWebhookTargetResolved, isInside, isPreviewRecord };

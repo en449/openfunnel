@@ -75,7 +75,7 @@ OpenFunnel is designed to run in two modes depending on your workflow:
   - **VPS Hosting:** AWS, Hetzner, Linode, Vultr running Ubuntu + Bun
 - **How it works:** Point your custom domain (e.g., `https://quiz.yourdomain.com`) to your server.
 - **Live Tool Sync:** Operates 24/7 without needing your personal computer open. Automatically pushes leads to Zapier, GoHighLevel, HubSpot, and Supabase.
-- **⚠️ Required before going live:** set `ADMIN_TOKEN` in your server environment, or the console APIs stay locked to localhost and you will not be able to reach your lead inbox remotely. See [Security & Privacy](#-security--privacy).
+- **⚠️ Required before going live:** set `ADMIN_TOKEN` (and `TRUST_PROXY=1` if your host terminates TLS in front of you) in your server environment, or the console APIs stay locked to localhost and you will not be able to reach your lead inbox remotely. See [Security & Privacy](#-security--privacy).
 
 ---
 
@@ -197,6 +197,14 @@ ADMIN_TOKEN=
 # a public request body, and their per-IP limits key off x-forwarded-for, which
 # the caller sets. This cap is the one a caller cannot rotate past. Default 500.
 MAIL_MAX_PER_HOUR=
+
+# Set to 1 ONLY if this server really sits behind a proxy/CDN that rewrites the
+# client address (Render, Railway, Fly, nginx, Cloudflare). x-forwarded-for is a
+# request header anyone can send, so it is ignored unless you opt in — otherwise
+# every per-IP limit would be bypassed by rotating a string. Deploy behind a
+# proxy without this and all traffic shares one rate-limit bucket; the first
+# forwarded request logs a warning telling you so.
+TRUST_PROXY=
 
 # Email Notifications & Autoresponders
 NOTIFY_EMAIL=owner@yourdomain.com

@@ -15,7 +15,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
-import { isInside, isSafeWebhookTarget } from "../server.js";
+import { isInside, isSafeWebhookTarget, isSafeWebhookTargetResolved } from "../server.js";
 
 describe("isSafeWebhookTarget", () => {
   test("allows ordinary public destinations", () => {
@@ -108,5 +108,29 @@ describe("isInside", () => {
     // of `/srv/app/public`, `/srv/app/public-backup` passes a prefix test.
     expect(isInside(resolve("/srv/app/public-backup/dump.sql"), root)).toBe(false);
     expect(isInside(resolve("/srv/app/publicX"), root)).toBe(false);
+  });
+});
+
+describe("isSafeWebhookTargetResolved", () => {
+  test("refuses a hostname whose DNS answer points at the local network", async () => {
+    // The whole point: this name passes every textual check. Only resolving it
+    // reveals that it lands on loopback — the DNS-rebinding shape that the
+    // literal check cannot see. `localtest.me` is a public domain whose records
+    // resolve to 127.0.0.1 by design.
+    expect(await isSafeWebhookTargetResolved("https://localtest.me/hook")).toBe(false);
+  });
+
+  test("still refuses everything the literal check refuses", async () => {
+    for (const url of ["http://169.254.169.254/", "http://[::ffff:127.0.0.1]/", "file:///etc/passwd"]) {
+      expect(await isSafeWebhookTargetResolved(url)).toBe(false);
+    }
+  });
+
+  test("refuses a name that does not resolve at all", async () => {
+    expect(await isSafeWebhookTargetResolved("https://no-such-host.invalid-tld-zz/hook")).toBe(false);
+  });
+
+  test("allows a public IP literal without a lookup", async () => {
+    expect(await isSafeWebhookTargetResolved("https://8.8.8.8/hook")).toBe(true);
   });
 });

@@ -161,6 +161,27 @@ carrying a cross-site `Origin` or `Sec-Fetch-Site`, checked *before*
   is not forgeable, so anything that weakens the CSRF check re-opens stored XSS
   on the console origin.
 
+**`x-forwarded-for` is not trusted unless `TRUST_PROXY` is set.** It is a request
+header, so honouring it unconditionally made every per-IP limit bypassable by
+rotating a string. `clientIp()` returns the socket address by default and warns
+once if a forwarded header shows up without the flag. Anything keyed on a client
+address inherits this — do not read the header directly.
+
+**Webhook targets are checked after resolution, not just textually.**
+`isSafeWebhookTargetResolved()` rejects a hostname whose DNS answer lands on
+loopback, a private range, link-local or cloud metadata. A hostile resolver can
+still answer differently between the lookup and the socket (rebinding) and Bun
+cannot pin the address, so that residue stands — but the destination is
+operator-owned, not visitor-supplied.
+
+**Funnel pages carry a strict CSP.** `script-src` is pinned to the SHA-256 of the
+inline boot script, which is why `FUNNEL_BOOT_SCRIPT` must stay free of
+interpolation — put a funnel value in it and every funnel page stops running its
+own JavaScript, silently, with nothing thrown server-side. A test recomputes the
+digest from the served bytes. Third-party script origins are added only for the
+pixels a funnel configures, and `frame-ancestors` is deliberately absent because
+funnels are embedded and the builder previews them in an iframe.
+
 **Outbound mail is capped by something the caller cannot rotate.** `/api/otp/send`
 and the lead autoresponder both mail an address taken from a public request body.
 Their per-address and per-IP limits are the everyday guards, but the per-IP key
