@@ -206,6 +206,12 @@ MAIL_MAX_PER_HOUR=
 # forwarded request logs a warning telling you so.
 TRUST_PROXY=
 
+# Extra hostnames allowed to use loopback trust when ADMIN_TOKEN is unset. Only
+# needed if you reach the console by a name other than localhost without a token.
+# Anything unlisted is refused — this is what stops a DNS-rebinding page from
+# driving the console through your own browser.
+ALLOWED_HOSTS=
+
 # Email Notifications & Autoresponders
 NOTIFY_EMAIL=owner@yourdomain.com
 EMAIL_PROVIDER=resend
@@ -316,7 +322,7 @@ front does not accidentally grant access.
 - **Outbound destinations are operator-owned**: webhook targets come from your environment or your funnel document, never from a visitor's request, and loopback / private / cloud-metadata addresses are refused.
 - **Signed webhooks**: set a webhook secret and every delivery carries an `X-Webhook-Secret` header your automation can check.
 - **Email verification that actually verifies**: six-digit codes from a CSPRNG, five attempts, ten-minute expiry, never returned to the browser — and the server re-derives `email_verified` rather than believing the client.
-- **Abuse limits**: the ingest, OTP and mail endpoints are rate-limited per address and per caller, and outbound mail additionally passes a global hourly ceiling (`MAIL_MAX_PER_HOUR`) — the per-caller key comes from `x-forwarded-for`, which a caller can rotate, so it cannot be the only bound.
+- **Abuse limits**: the ingest, OTP and mail endpoints are rate-limited per address and per caller, and every outbound mail path — the OTP challenge, the autoresponder and the lead notification — additionally passes a global hourly ceiling (`MAIL_MAX_PER_HOUR`), each in its own bucket — the per-caller key comes from `x-forwarded-for`, which a caller can rotate, so it cannot be the only bound.
 - **The console's APIs refuse cross-site browser requests**: privileged routes reject a cross-site `Origin`/`Sec-Fetch-Site` before authenticating, and CORS is scoped to the public ingest paths only. Without this, a page you merely visit could drive the console on a default local install, where the admin gate trusts loopback.
 - **The console cannot be framed**: `X-Frame-Options: DENY` plus `frame-ancestors 'none'` on every
   operator-facing page, so a lure page cannot overlay an invisible console and borrow your session.

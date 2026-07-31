@@ -121,10 +121,32 @@ function safeEqual(a, b) {
  * infer "local" in that case — otherwise anyone on the internet reaching a
  * reverse-proxied deployment would inherit localhost's privileges.
  */
+const LOOPBACK_HOST_RE = /^(localhost|127\.0\.0\.1|\[::1\]|::1)(:\d+)?$/i;
+
+/** Extra hostnames allowed to use loopback trust, for reaching the console by
+ *  name without a token. Comma-separated, e.g. ALLOWED_HOSTS=dev.myhost.test */
+const ALLOWED_HOSTS = new Set(
+  (process.env.ALLOWED_HOSTS || "")
+    .split(",")
+    .map((h) => h.trim().toLowerCase())
+    .filter(Boolean)
+);
+
 function isLoopbackRequest(req, server) {
   if (req.headers.get("x-forwarded-for") || req.headers.get("forwarded")) return false;
   const addr = server.requestIP(req)?.address || "";
-  return addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1";
+  if (addr !== "127.0.0.1" && addr !== "::1" && addr !== "::ffff:127.0.0.1") return false;
+
+  // DNS rebinding. An attacker page served from `http://evil.tld:3000`, whose A
+  // record they then flip to 127.0.0.1, reaches this process over loopback AND
+  // is same-origin with itself — so the socket check passes, `isCrossSiteRequest`
+  // sees `Sec-Fetch-Site: same-origin`, and being same-origin the page can READ
+  // the response. Every other gate is satisfied; the `Host` header is the only
+  // thing that still distinguishes the operator's own console from a rebound
+  // attacker origin. Without this, `bun run dev` hands lead PII, mail settings
+  // and funnel writes to any site the operator happens to visit.
+  const host = (req.headers.get("host") || "").toLowerCase();
+  return LOOPBACK_HOST_RE.test(host) || ALLOWED_HOSTS.has(host);
 }
 
 /**
@@ -703,6 +725,17 @@ async function saveEmailSettings(patch) {
   const existing = await getEmailSettings();
   const next = { ...existing };
 
+  // `getEmailSettings()` resolves secrets from the environment when nothing is
+  // stored, so writing that merge straight back would copy RESEND_API_KEY /
+  // SMTP_PASS out of the env and into DATA_DIR in plaintext on the first save —
+  // and the stored copy then shadows the env var, so rotating the real secret
+  // silently stops taking effect. Drop any secret that came from the env; only a
+  // value the operator actually typed into this request gets persisted below.
+  for (const key of SECRET_EMAIL_KEYS) {
+    const fromEnv = key === "resendApiKey" ? process.env.RESEND_API_KEY : process.env.SMTP_PASS;
+    if (fromEnv && next[key] === fromEnv) delete next[key];
+  }
+
   for (const [key, value] of Object.entries(patch || {})) {
     if (!WRITABLE_EMAIL_KEYS.has(key)) continue;
 
@@ -928,7 +961,13 @@ async function processLeadEmailNotifications(record) {
     const leadName = lead.name || lead.first_name || "Lead";
     const leadEmail = lead.email;
 
-    if (cfg.notifyEnabled && cfg.notifyEmail) {
+    // The notification goes to a fixed operator address, so it is not a relay —
+    // but it is still outbound mail on the operator's quota, driven by a public
+    // endpoint, and README claims the hourly ceiling covers all outbound mail.
+    // Its own bucket, so a burst of alerts cannot exhaust the OTP budget.
+    if (cfg.notifyEnabled && cfg.notifyEmail && !rateLimit("notify-global", MAIL_HOURLY_CAP, 60 * 60 * 1000)) {
+      console.warn("[email] lead-notification hourly ceiling reached — see MAIL_MAX_PER_HOUR");
+    } else if (cfg.notifyEnabled && cfg.notifyEmail) {
       // Everything below originates with the visitor, so every interpolation
       // is escaped. An unescaped name field would let a lead inject markup
       // into the operator's inbox — a phishing link in a trusted alert.
@@ -1488,8 +1527,10 @@ let warnedAboutProxy = false;
 /**
  * The address to attribute a request to, for rate-limit keys and lead records.
  *
- * With `TRUST_PROXY` set, the left-most `x-forwarded-for` entry — correct behind
- * an ingress that appends it. Without it, the socket address, which a caller
+ * With `TRUST_PROXY` set, the left-most `x-forwarded-for` entry. Note this is only
+ * as trustworthy as the proxy: an appending proxy (nginx's
+ * `$proxy_add_x_forwarded_for`) leaves the caller's own value left-most, so the
+ * proxy must be configured to REPLACE the header, not append to it. Without it, the socket address, which a caller
  * cannot forge.
  *
  * Deploying behind a proxy WITHOUT setting `TRUST_PROXY` is the one bad
@@ -1722,7 +1763,11 @@ const server = import.meta.main ? Bun.serve({
       // Per-funnel rollup always spans every funnel so the dashboard can label
       // each card even while a single funnel is in scope.
       /** @type {Record<string, { starts: number, leads: number, completes: number }>} */
-      const perFunnel = {};
+      // Null-prototype: `funnelId` comes from the public /api/events body, and on
+      // a plain object `perFunnel["__proto__"]` resolves to Object.prototype —
+      // truthy, so `||=` never creates an own key and the increments land on the
+      // prototype instead.
+      const perFunnel = Object.create(null);
       const bucket = (id) => (perFunnel[id] ||= { starts: 0, leads: 0, completes: 0 });
       allEvents.forEach((ev) => {
         if (!ev.funnelId) return;
@@ -1937,8 +1982,14 @@ const server = import.meta.main ? Bun.serve({
       const body = await readJson(req);
       if (!body || typeof body !== "object") return json({ error: "bad_request" }, 400, CORS);
 
+      // Use the SAME predicate the admin readers use. When these drifted, a
+      // record marked only via `isPreview` / `meta.isPreview` / a `meta.url`
+      // containing `preview=1` was persisted and fanned out to the webhook, the
+      // operator's alert inbox and the autoresponder — and then filtered out of
+      // `/api/admin/*`, so a stranger could inject records the operator could
+      // never see.
       const referer = req.headers.get("referer") || "";
-      if (body.preview || body.meta?.preview || referer.includes("preview=1")) {
+      if (isPreviewRecord({ ...body, referer })) {
         return json({ ok: true, preview: true }, 202, CORS);
       }
 

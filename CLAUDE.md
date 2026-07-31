@@ -141,6 +141,14 @@ new code needs both: `Controller._emit()` bails when `isPreview` or
 `?preview=1` / `?admin=1`, and the server's `isPreviewRecord()` filters records
 out of `/api/admin/*`. The builder iframe depends on this.
 
+Ingest and the admin readers must use the SAME predicate. They drifted once: the
+ingest short-circuit checked three markers while `isPreviewRecord` checked six,
+so a record marked only via `isPreview` / `meta.isPreview` / a `meta.url`
+containing `preview=1` was persisted and fanned out to the webhook, the alert
+inbox and the autoresponder — then filtered out of the console. A stranger could
+inject records the operator could never see. Both sides now call
+`isPreviewRecord`.
+
 **Privileged routes are gated in one place.** A single prefix check in the
 router runs `requireAdmin` for `/api/admin/*`, `/api/builder/*` and `/api/ai/*`
 before any handler sees the request, so a new endpoint under those prefixes is
@@ -149,6 +157,14 @@ do not weaken the gate: with `ADMIN_TOKEN` set it requires a bearer token, and
 without one it allows only direct loopback callers. A request carrying
 `x-forwarded-for` is never treated as loopback — otherwise anyone reaching a
 reverse-proxied deployment would inherit localhost's privileges.
+
+Loopback trust also validates the `Host` header against `LOOPBACK_HOST_RE` (plus
+`ALLOWED_HOSTS`). Without that, DNS rebinding walks straight through every other
+gate: a page served from `http://evil.tld:3000`, whose A record the attacker then
+flips to `127.0.0.1`, arrives over loopback AND is same-origin with itself — so
+the socket check passes, `Sec-Fetch-Site` reads `same-origin`, and being
+same-origin the page can read the response. `Host` is the only signal left that
+separates the operator's console from a rebound attacker origin.
 
 **Privileged routes also refuse cross-site browser requests.** Authentication is
 not enough on its own: with no `ADMIN_TOKEN` the gate trusts loopback, so a page
