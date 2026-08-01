@@ -1,57 +1,250 @@
 {
   "id": "fitness",
-  "name": "Body Goal Quiz",
   "slug": "fitness",
-  "theme": { "primary": "#16a34a", "mode": "dark", "radius": "20px" },
-  "settings": { "showProgress": true, "transition": "slide" },
+  "name": "6-Week Body Challenge",
+  "theme": {
+    "preset": "sunset-coral"
+  },
   "steps": [
     {
-      "id": "goal",
-      "type": "choice",
-      "headline": "What's your #1 goal right now?",
-      "options": [
-        { "id": "lose", "label": "Lose weight", "icon": "🔥" },
-        { "id": "build", "label": "Build muscle", "icon": "💪" },
-        { "id": "tone", "label": "Tone & stay fit", "icon": "✨" }
+      "id": "landing",
+      "type": "landing",
+      "layout": "fullBleed",
+      "height": "full",
+      "eyebrow": "Next cohort starts Monday",
+      "headline": "Six weeks. Three sessions a week. No 5am nonsense.",
+      "subtext": "A plan built around the time you actually have, coached by a human who checks in every week.",
+      "background": {
+        "gradient": "linear-gradient(160deg, #f97316 0%, #be123c 60%, #4c0519 100%)",
+        "ink": "light"
+      },
+      "cta": {
+        "label": "Find my plan",
+        "note": "Free 90-second assessment"
+      },
+      "proof": {
+        "rating": 5,
+        "text": "2,400 people finished the last cohort"
+      },
+      "stickyCta": false,
+      "blocks": [
+        {
+          "type": "stats",
+          "columns": 3,
+          "items": [
+            {
+              "value": "6 wk",
+              "label": "Programme length"
+            },
+            {
+              "value": "3×",
+              "label": "Sessions a week"
+            },
+            {
+              "value": "88%",
+              "label": "Finish rate"
+            }
+          ]
+        },
+        {
+          "type": "compare",
+          "left": {
+            "title": "Most programmes",
+            "items": [
+              "Generic PDF",
+              "Six days a week",
+              "No accountability",
+              "You quit in week 2"
+            ]
+          },
+          "right": {
+            "title": "This one",
+            "items": [
+              "Built from your assessment",
+              "Three days a week",
+              "Weekly coach check-in",
+              "88% finish"
+            ]
+          }
+        },
+        {
+          "type": "quote",
+          "rating": 5,
+          "text": "First programme I've ever finished. The weekly check-in is the whole reason.",
+          "name": "Sam B.",
+          "role": "Lost 11kg in cohort 14"
+        },
+        {
+          "type": "faq",
+          "items": [
+            {
+              "q": "Do I need a gym?",
+              "a": "No. There's a home-equipment track with the same structure."
+            },
+            {
+              "q": "What if I miss a week?",
+              "a": "The plan reflows. Missing a week is expected, not a failure."
+            }
+          ]
+        },
+        {
+          "type": "cta",
+          "label": "Take the free assessment"
+        }
       ]
     },
     {
-      "id": "frequency",
+      "id": "goal",
       "type": "choice",
-      "headline": "How often do you train today?",
+      "headline": "What's the goal?",
       "options": [
-        { "id": "0", "label": "Rarely / never", "icon": "🛋️" },
-        { "id": "1-2", "label": "1–2x per week", "icon": "🚶" },
-        { "id": "3+", "label": "3+ times per week", "icon": "🏃" }
+        {
+          "id": "fat",
+          "label": "Lose fat",
+          "icon": "🔥"
+        },
+        {
+          "id": "muscle",
+          "label": "Build muscle",
+          "icon": "💪"
+        },
+        {
+          "id": "both",
+          "label": "Both — recomposition",
+          "icon": "⚖️"
+        },
+        {
+          "id": "health",
+          "label": "Feel healthier generally",
+          "icon": "🌿"
+        }
+      ]
+    },
+    {
+      "id": "level",
+      "type": "choice",
+      "headline": "How would you describe your fitness now?",
+      "options": [
+        {
+          "id": "beginner",
+          "label": "Starting from scratch",
+          "icon": "🌱"
+        },
+        {
+          "id": "returning",
+          "label": "Coming back after a break",
+          "icon": "🔄"
+        },
+        {
+          "id": "regular",
+          "label": "Training regularly already",
+          "icon": "🏋️"
+        }
+      ]
+    },
+    {
+      "id": "obstacle",
+      "type": "multiselect",
+      "headline": "What's got in the way before?",
+      "subtext": "Pick everything that's true. This is the part that decides your plan.",
+      "min": 1,
+      "options": [
+        {
+          "id": "time",
+          "label": "No time",
+          "icon": "⏰"
+        },
+        {
+          "id": "motivation",
+          "label": "Motivation drops off",
+          "icon": "📉"
+        },
+        {
+          "id": "injury",
+          "label": "Injuries or pain",
+          "icon": "🩹"
+        },
+        {
+          "id": "food",
+          "label": "Food is the hard part",
+          "icon": "🍕"
+        },
+        {
+          "id": "gym",
+          "label": "Gym anxiety",
+          "icon": "😰"
+        }
+      ],
+      "submitLabel": "Build my plan"
+    },
+    {
+      "id": "days",
+      "type": "choice",
+      "headline": "Realistically, how many days a week?",
+      "layout": "grid",
+      "options": [
+        {
+          "id": "d2",
+          "label": "2 days",
+          "icon": "🗓️"
+        },
+        {
+          "id": "d3",
+          "label": "3 days",
+          "icon": "✅",
+          "badge": "Recommended"
+        },
+        {
+          "id": "d4",
+          "label": "4 days",
+          "icon": "🔥"
+        },
+        {
+          "id": "d5",
+          "label": "5+ days",
+          "icon": "🚀"
+        }
       ]
     },
     {
       "id": "building",
       "type": "loader",
-      "headline": "Creating your plan",
-      "items": ["Analysing your goal", "Calibrating intensity", "Selecting your workouts"],
-      "durationMs": 2600,
-      "progress": false
+      "headline": "Building your 6-week plan…",
+      "durationMs": 3200,
+      "items": [
+        "Matching your goal and level",
+        "Working around your obstacles",
+        "Scheduling around your days"
+      ]
     },
     {
-      "id": "contact",
+      "id": "capture",
       "type": "form",
-      "headline": "Your custom plan is ready",
-      "subtext": "Enter your email to unlock it.",
-      "submitLabel": "Unlock my plan",
+      "headline": "Your plan is ready",
+      "subtext": "We'll email it now — free, whether or not you join the cohort.",
       "fields": [
-        { "name": "name", "type": "name", "label": "First name", "required": true },
-        { "name": "email", "type": "email", "label": "Email", "required": true }
-      ]
+        {
+          "name": "firstName",
+          "type": "text",
+          "label": "First name",
+          "required": true
+        },
+        {
+          "name": "email",
+          "type": "email",
+          "label": "Email address",
+          "required": true
+        }
+      ],
+      "submitLabel": "Send my plan",
+      "consent": "You'll get your plan plus cohort details. Unsubscribe anytime."
     },
     {
       "id": "done",
       "type": "success",
-      "headline": "Let's go, {{name}}! 💥",
-      "subtext": "Your plan is unlocked. Start your first workout now.",
-      "buttonLabel": "Open my plan",
-      "redirectUrl": "https://example.com/plan",
-      "progress": false
+      "headline": "Plan sent, {{firstName}} 💪",
+      "subtext": "It's in your inbox. The next cohort starts Monday — doors close Sunday night.",
+      "buttonLabel": "Join the cohort"
     }
   ]
 }

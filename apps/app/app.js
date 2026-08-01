@@ -688,9 +688,45 @@ function createFunnel() {
   toast("New funnel created. Save it to publish.");
 }
 
+/**
+ * The shortlist offered in the "Create New Funnel" modal, newest-operator first:
+ * one broad lead-gen quiz, one consumer quiz, one local-services qualifier.
+ *
+ * Keys must exist in FUNNEL_TEMPLATES. They are rendered rather than hardcoded in
+ * `index.html` precisely because they drifted: two of the three cards named a
+ * *category* (`lead-gen`, `fitness`) instead of a template, so `useTemplate()`
+ * found nothing and returned — a dead click with no toast and no console warning.
+ * Title and description come from the template itself, so the card can never
+ * describe a funnel other than the one it creates.
+ */
+const BLUEPRINTS = [
+  { key: "agency-lead", icon: "🎯" },
+  { key: "fitness-challenge", icon: "💪" },
+  { key: "real-estate", icon: "🏡" },
+];
+
+function renderBlueprints() {
+  const host = $("blueprintCards");
+  if (!host) return;
+  host.innerHTML = BLUEPRINTS.filter(({ key }) => FUNNEL_TEMPLATES[key])
+    .map(({ key, icon: emoji }) => {
+      const tpl = FUNNEL_TEMPLATES[key];
+      return `<button class="card card-pad blueprint-card" data-blueprint="${esc(key)}" style="text-align:left;cursor:pointer">
+        <div style="font-weight:600;font-size:15px;margin-bottom:4px">${emoji} ${esc(tpl.title || key)}</div>
+        <p class="field-hint" style="margin:0">${esc(tpl.description || "")}</p>
+      </button>`;
+    })
+    .join("");
+}
+
 function useTemplate(key) {
   const template = FUNNEL_TEMPLATES[key];
-  if (!template) return;
+  // Say so rather than returning silently — a bad key here means a button that
+  // does nothing at all, which is how the blueprint cards stayed broken.
+  if (!template) {
+    console.warn(`[openfunnel] no template named "${key}"`);
+    return toast(`Template “${key}” not found`, "error");
+  }
   const copy = structuredClone(template);
   copy.slug = slugify(key);
   copy.id = copy.slug;
@@ -1268,7 +1304,15 @@ function renderInspector() {
           <label for="insSubtext">Supporting text</label>
           <textarea id="insSubtext" class="textarea" rows="2" placeholder="Optional subtext">${esc(step.subtext || "")}</textarea>
         </div>
-        <button id="rewriteBtn" class="btn btn-sm">${icon("ai", 13)} Suggest headlines</button>
+        <div class="field" style="margin-top:6px">
+          <label>Headline & Header Alignment</label>
+          <div class="align-picker" id="insHeaderAlign">
+            <button type="button" class="align-btn${(step.align || "center") === "left" ? " is-active" : ""}" data-step-align="left">Left</button>
+            <button type="button" class="align-btn${(step.align || "center") === "center" ? " is-active" : ""}" data-step-align="center">Center</button>
+            <button type="button" class="align-btn${(step.align || "center") === "right" ? " is-active" : ""}" data-step-align="right">Right</button>
+          </div>
+        </div>
+        <button id="rewriteBtn" class="btn btn-sm" style="margin-top:8px">${icon("ai", 13)} Suggest headlines</button>
       </div>
 
       ${renderStepBody(step)}
@@ -1306,6 +1350,16 @@ function renderInspector() {
           <label for="insHeroImage">Step Hero Photo / Media URL</label>
           <input id="insHeroImage" class="input input-mono" type="text" value="${esc(step.image || step.heroImage || "")}" placeholder="https://images.unsplash.com/photo-…" />
           <p class="field-hint">Optional hero photo displayed at top of step.</p>
+        </div>
+        <div class="field row-between" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
+          <div>
+            <div style="font-weight:600;font-size:12px">Hide "Powered by OpenFunnel" Badge</div>
+            <p class="field-hint" style="margin:0">Remove badge from bottom of published pages.</p>
+          </div>
+          <label class="switch">
+            <input id="insHideBranding" type="checkbox"${state.funnel?.branding?.hidden ? " checked" : ""} />
+            <span class="switch-track"></span>
+          </label>
         </div>
       </div>
     `;
@@ -1405,6 +1459,20 @@ function fieldControl(field, base, parent) {
     </label>`;
   }
 
+  if (field.kind === "pick" && field.key === "align") {
+    const rawVal = String(raw ?? field.options?.[0] ?? "center");
+    const options = (field.options || ["center", "left", "right"])
+      .map((o) => `<button type="button" class="align-btn${rawVal === String(o) ? " is-active" : ""}" data-align-opt="${esc(o)}">${esc(o.charAt(0).toUpperCase() + o.slice(1))}</button>`)
+      .join("");
+    return `<div class="field">
+      <label>${esc(field.label)}</label>
+      <div class="align-picker" data-align-path="${esc(path)}">
+        ${options}
+      </div>
+      ${hint}
+    </div>`;
+  }
+
   if (field.kind === "pick") {
     const options = field.options
       .map((o) => `<option value="${esc(o)}"${String(raw ?? "") === String(o) ? " selected" : ""}>${esc(o)}</option>`)
@@ -1439,9 +1507,9 @@ function fieldControl(field, base, parent) {
         (item, i) => `<div class="repeat">
           <div class="repeat-head">
             <span class="repeat-num">${String(i + 1).padStart(2, "0")}</span>
-            <button type="button" class="btn btn-ghost btn-icon btn-sm" data-item-move="${esc(path)}.${i}" data-dir="-1" title="Move up" aria-label="Move up" style="margin-left:auto">${icon("up", 11)}</button>
-            <button type="button" class="btn btn-ghost btn-icon btn-sm" data-item-move="${esc(path)}.${i}" data-dir="1" title="Move down" aria-label="Move down">${icon("down", 11)}</button>
-            <button type="button" class="btn btn-ghost btn-icon btn-sm" data-item-del="${esc(path)}.${i}" title="Remove" aria-label="Remove">${icon("close", 11)}</button>
+            <button type="button" class="btn btn-ghost btn-icon btn-sm" data-item-move="${esc(path)}.${i}" data-dir="-1" title="Move up" aria-label="Move up" style="margin-left:auto" draggable="false"${i === 0 ? " disabled" : ""}>${icon("up", 11)}</button>
+            <button type="button" class="btn btn-ghost btn-icon btn-sm" data-item-move="${esc(path)}.${i}" data-dir="1" title="Move down" aria-label="Move down" draggable="false"${i === items.length - 1 ? " disabled" : ""}>${icon("down", 11)}</button>
+            <button type="button" class="btn btn-ghost btn-icon btn-sm" data-item-del="${esc(path)}.${i}" title="Remove" aria-label="Remove" draggable="false">${icon("close", 11)}</button>
           </div>
           ${renderFields(field.item, `${path}.${i}`, item)}
         </div>`
@@ -1517,9 +1585,9 @@ function renderSectionEditor(step) {
           <span class="drag-handle" title="Drag to reorder section">${icon("grid", 12)}</span>
           <span class="repeat-num">${String(i + 1).padStart(2, "0")}</span>
           <span class="block-card-type">${esc(spec?.glyph || "•")} ${esc(spec?.label || block.type)}</span>
-          <button type="button" class="btn btn-ghost btn-icon btn-sm" data-block-move="${i}" data-dir="-1" title="Move up" aria-label="Move section up" style="margin-left:auto">${icon("up", 12)}</button>
-          <button type="button" class="btn btn-ghost btn-icon btn-sm" data-block-move="${i}" data-dir="1" title="Move down" aria-label="Move section down">${icon("down", 12)}</button>
-          <button type="button" class="btn btn-ghost btn-icon btn-sm" data-block-del="${i}" title="Remove section" aria-label="Remove section">${icon("close", 12)}</button>
+          <button type="button" class="btn btn-ghost btn-icon btn-sm" data-block-move="${i}" data-dir="-1" title="Move section up" aria-label="Move section up" style="margin-left:auto" draggable="false"${i === 0 ? " disabled" : ""}>${icon("up", 12)}</button>
+          <button type="button" class="btn btn-ghost btn-icon btn-sm" data-block-move="${i}" data-dir="1" title="Move section down" aria-label="Move section down" draggable="false"${i === blocks.length - 1 ? " disabled" : ""}>${icon("down", 12)}</button>
+          <button type="button" class="btn btn-ghost btn-icon btn-sm" data-block-del="${i}" title="Remove section" aria-label="Remove section" draggable="false">${icon("close", 12)}</button>
         </div>
         ${body}
       </div>`;
@@ -1551,7 +1619,7 @@ function blankLanding() {
     subtext: "One sentence on what they get and why it is worth a minute of their time.",
     cta: { label: "Start now", note: "No credit card required" },
     proof: { rating: 5, text: "Rated 4.9/5 by 1,200+ customers" },
-    stickyCta: true,
+    stickyCta: false,
   };
 }
 
@@ -1686,10 +1754,10 @@ function renderStepBody(step) {
           <div class="repeat-head">
             <span class="drag-handle-pill" title="Drag to reorder option">⋮⋮ Drag</span>
             <span class="repeat-num">${String(i + 1).padStart(2, "0")}</span>
-            <button type="button" class="btn btn-ghost btn-icon btn-sm" data-move-opt="${i}" data-dir="-1" title="Move up" aria-label="Move up" style="margin-left:auto">${icon("up", 11)}</button>
-            <button type="button" class="btn btn-ghost btn-icon btn-sm" data-move-opt="${i}" data-dir="1" title="Move down" aria-label="Move down">${icon("down", 11)}</button>
-            <button type="button" class="btn btn-ghost btn-icon btn-sm" data-dup-opt="${i}" title="Duplicate option" aria-label="Duplicate option">${icon("copy", 11)}</button>
-            <button type="button" class="btn btn-ghost btn-icon btn-sm" data-del-opt="${i}" title="Remove option" aria-label="Remove option">${icon("close", 11)}</button>
+            <button type="button" class="btn btn-ghost btn-icon btn-sm" data-move-opt="${i}" data-dir="-1" title="Move up" aria-label="Move up" style="margin-left:auto" draggable="false"${i === 0 ? " disabled" : ""}>${icon("up", 11)}</button>
+            <button type="button" class="btn btn-ghost btn-icon btn-sm" data-move-opt="${i}" data-dir="1" title="Move down" aria-label="Move down" draggable="false"${i === (step.options?.length || 0) - 1 ? " disabled" : ""}>${icon("down", 11)}</button>
+            <button type="button" class="btn btn-ghost btn-icon btn-sm" data-dup-opt="${i}" title="Duplicate option" aria-label="Duplicate option" draggable="false">${icon("copy", 11)}</button>
+            <button type="button" class="btn btn-ghost btn-icon btn-sm" data-del-opt="${i}" title="Remove option" aria-label="Remove option" draggable="false">${icon("close", 11)}</button>
           </div>
           <div class="repeat-grid" style="grid-template-columns:1fr auto;gap:6px">
             <input class="input" type="text" data-opt-label="${i}" value="${esc(opt.label || "")}" placeholder="Option label" />
@@ -1841,21 +1909,36 @@ function renderStepBody(step) {
   return renderSectionEditor(step);
 }
 
+/**
+ * Bind the controls the current inspector render actually produced.
+ *
+ * EVERY lookup here must be guarded. The inspector is tabbed, so only one tab's
+ * markup exists at a time: `insHeadline` / `insSubtext` / `insType` / `insId` /
+ * `rewriteBtn` are in Content, `insNext` / `deleteStepBtn` are in Logic. These
+ * seven were bound unconditionally and predate the tabs, so `bindInspector` threw
+ * on every tab — on Content at `insNext`, on the other three at the first line.
+ *
+ * That throw propagated out of `renderInspector()` into `setWorkingFunnel()`,
+ * which meant "Use template", "Blank Funnel" and opening a funnel all died before
+ * `showView("builder")` — a click that did nothing at all, with the whole builder
+ * unreachable. This is the `$("x")` guard rule in CLAUDE.md; the tabs made it
+ * apply here too.
+ */
 function bindInspector(step) {
   const onEdit = () => onFunnelEdited();
 
-  $("insHeadline").addEventListener("input", (e) => {
+  $("insHeadline")?.addEventListener("input", (e) => {
     step.headline = e.target.value;
     renderSpine();
     onEdit();
   });
 
-  $("insSubtext").addEventListener("input", (e) => {
+  $("insSubtext")?.addEventListener("input", (e) => {
     step.subtext = e.target.value || undefined;
     onEdit();
   });
 
-  $("insType").addEventListener("change", (e) => {
+  $("insType")?.addEventListener("change", (e) => {
     step.type = e.target.value;
     if ((step.type === "choice" || step.type === "multiselect") && !step.options) {
       step.options = [{ id: "opt_1", label: "Option one" }];
@@ -1876,20 +1959,20 @@ function bindInspector(step) {
     onEdit();
   });
 
-  $("insNext").addEventListener("input", (e) => {
+  $("insNext")?.addEventListener("input", (e) => {
     step.next = e.target.value.trim() || undefined;
     renderSpine();
     onEdit();
   });
 
-  $("insId").addEventListener("input", (e) => {
+  $("insId")?.addEventListener("input", (e) => {
     step.id = e.target.value.trim();
     renderSpine();
     onEdit();
   });
 
-  $("deleteStepBtn").addEventListener("click", deleteStep);
-  $("rewriteBtn").addEventListener("click", suggestHeadlines);
+  $("deleteStepBtn")?.addEventListener("click", deleteStep);
+  $("rewriteBtn")?.addEventListener("click", suggestHeadlines);
 
   const inspector = $("inspector");
 
@@ -2026,6 +2109,23 @@ function bindInspector(step) {
       return;
     }
 
+    if (btn.dataset.stepAlign !== undefined) {
+      step.align = btn.dataset.stepAlign;
+      renderInspector();
+      onEdit();
+      return;
+    }
+
+    if (btn.dataset.alignOpt !== undefined) {
+      const picker = btn.closest("[data-align-path]");
+      if (picker) {
+        writePath(step, picker.dataset.alignPath, btn.dataset.alignOpt);
+        renderInspector();
+        onEdit();
+      }
+      return;
+    }
+
     if (btn.dataset.layout !== undefined) {
       step.layout = btn.dataset.layout;
       renderInspector();
@@ -2049,6 +2149,7 @@ function bindInspector(step) {
       step.blocks.push(spec.make());
       renderInspector();
       onEdit();
+      pushPreview();
       // Scroll the new section into view — the palette sits at the bottom of a
       // long panel, so without this the card is added off-screen above.
       inspector.querySelector(".block-card:last-of-type")?.scrollIntoView({ block: "nearest" });
@@ -2060,6 +2161,7 @@ function bindInspector(step) {
       if (!step.blocks?.length) delete step.blocks;
       renderInspector();
       onEdit();
+      pushPreview();
       return;
     }
 
@@ -2067,6 +2169,7 @@ function bindInspector(step) {
       if (moveWithin(step.blocks, +btn.dataset.blockMove, +btn.dataset.dir)) {
         renderInspector();
         onEdit();
+        pushPreview();
       }
       return;
     }
@@ -2081,6 +2184,7 @@ function bindInspector(step) {
       else writePath(step, path, [item]);
       renderInspector();
       onEdit();
+      pushPreview();
       return;
     }
 
@@ -2090,6 +2194,7 @@ function bindInspector(step) {
         list.splice(index, 1);
         renderInspector();
         onEdit();
+        pushPreview();
       }
       return;
     }
@@ -2099,6 +2204,7 @@ function bindInspector(step) {
       if (moveWithin(list, index, +btn.dataset.dir)) {
         renderInspector();
         onEdit();
+        pushPreview();
       }
       return;
     }
@@ -2149,6 +2255,18 @@ function bindInspector(step) {
     $("insAutoAdvance").addEventListener("change", (e) => {
       step.autoAdvance = e.target.checked;
       onEdit();
+    });
+  }
+
+  if ($("insHideBranding")) {
+    $("insHideBranding").addEventListener("change", (e) => {
+      const hidden = e.target.checked;
+      if (state.funnel) {
+        state.funnel.branding = { ...(state.funnel.branding || {}), hidden };
+      }
+      localStorage.setItem("of.branding.hidden", String(hidden));
+      onEdit();
+      pushPreview();
     });
   }
 
@@ -2303,6 +2421,26 @@ window.addEventListener("message", (e) => {
     if (targetStep && Array.isArray(blocks)) {
       targetStep.blocks = blocks;
       markDirty();
+      renderInspector();
+    }
+  }
+  if (e.data?.type === "of_select_block" && state.funnel) {
+    const { blockIndex } = e.data;
+    state.inspectorTab = "blocks";
+    renderInspector();
+    const cards = qsa(".block-card", $("inspector"));
+    if (cards[blockIndex]) {
+      cards[blockIndex].scrollIntoView({ block: "nearest", behavior: "smooth" });
+      cards[blockIndex].classList.add("drop-before");
+      setTimeout(() => cards[blockIndex]?.classList.remove("drop-before"), 1500);
+    }
+  }
+  if (e.data?.type === "of_update_path" && state.funnel) {
+    const { stepId, path, value } = e.data;
+    const targetStep = state.funnel.steps.find((s) => s.id === stepId);
+    if (targetStep && path) {
+      writePath(targetStep, path, value);
+      onFunnelEdited();
       renderInspector();
     }
   }
@@ -2707,20 +2845,23 @@ async function generateFunnel() {
  * ========================================================================== */
 
 const PALETTE_ACTIONS = [
-  { label: "Overview", icon: "grid", hint: "1", run: () => showView("dashboard") },
-  { label: "Builder", icon: "layers", hint: "2", run: () => showView("builder") },
-  { label: "Leads", icon: "inbox", hint: "3", run: () => showView("leads") },
-  { label: "Analytics", icon: "chart", hint: "4", run: () => showView("analytics") },
-  { label: "Templates", icon: "grid", hint: "5", run: () => showView("templates") },
-  { label: "Settings", icon: "settings", hint: "6", run: () => showView("settings") },
-  { label: "Save funnel", icon: "save", hint: "⌘S", run: saveFunnel },
-  { label: "New funnel", icon: "plus", run: createFunnel },
-  { label: "Generate with AI", icon: "ai", run: () => openModal("aiOverlay") },
-  { label: "Funnel theme", icon: "palette", run: () => openModal("themeOverlay") },
-  { label: "Pixels and integrations", icon: "broadcast", run: () => openModal("pixelsOverlay") },
-  { label: "Add step", icon: "plus", run: () => { showView("builder"); addStep(); } },
-  { label: "Export leads as CSV", icon: "download", run: exportCsv },
-  { label: "Switch theme", icon: "moon", run: () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark") },
+  { label: "Overview", icon: "grid", hint: "1", category: "Navigation", run: () => showView("dashboard") },
+  { label: "Builder", icon: "layers", hint: "2", category: "Navigation", run: () => showView("builder") },
+  { label: "Leads", icon: "inbox", hint: "3", category: "Navigation", run: () => showView("leads") },
+  { label: "Analytics", icon: "chart", hint: "4", category: "Navigation", run: () => showView("analytics") },
+  { label: "Templates", icon: "grid", hint: "5", category: "Navigation", run: () => showView("templates") },
+  { label: "Settings", icon: "settings", hint: "6", category: "Navigation", run: () => showView("settings") },
+
+  { label: "Funnel theme", icon: "palette", category: "Funnel Settings & Config", run: () => openModal("themeOverlay") },
+  { label: "Pixels and integrations", icon: "broadcast", category: "Funnel Settings & Config", run: () => openModal("pixelsOverlay") },
+  { label: "General & domain settings", icon: "settings", category: "Funnel Settings & Config", run: () => showView("settings") },
+  { label: "Export leads as CSV", icon: "download", category: "Funnel Settings & Config", run: exportCsv },
+
+  { label: "Save funnel", icon: "save", hint: "⌘S", category: "Quick Actions & Creation", run: saveFunnel },
+  { label: "New funnel", icon: "plus", category: "Quick Actions & Creation", run: createFunnel },
+  { label: "Add step", icon: "plus", category: "Quick Actions & Creation", run: () => { showView("builder"); addStep(); } },
+  { label: "Generate with AI", icon: "ai", category: "Quick Actions & Creation", run: () => openModal("aiOverlay") },
+  { label: "Switch dark/light mode", icon: "moon", category: "Quick Actions & Creation", run: () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark") },
 ];
 
 let paletteItems = [];
@@ -2731,6 +2872,7 @@ function paletteCommands() {
     label: `Open ${f.name}`,
     icon: "layers",
     hint: f.slug,
+    category: "Funnels",
     run: () => {
       if (f.unsaved) showView("builder");
       else openFunnel(f.slug).then(() => showView("builder"));
@@ -2741,7 +2883,10 @@ function paletteCommands() {
 
 function renderPalette(query = "") {
   const q = query.trim().toLowerCase();
-  paletteItems = paletteCommands().filter((c) => !q || c.label.toLowerCase().includes(q));
+  const allCommands = paletteCommands();
+  paletteItems = allCommands.filter(
+    (c) => !q || c.label.toLowerCase().includes(q) || (c.category && c.category.toLowerCase().includes(q))
+  );
   paletteIndex = 0;
 
   const list = $("paletteList");
@@ -2750,21 +2895,49 @@ function renderPalette(query = "") {
     return;
   }
 
-  list.innerHTML = paletteItems
-    .map(
-      (c, i) =>
-        `<button class="palette-item${i === 0 ? " is-selected" : ""}" data-index="${i}">
-          ${icon(c.icon, 15)}<span>${esc(c.label)}</span>${c.hint ? `<span class="kbd">${esc(c.hint)}</span>` : ""}
-        </button>`
-    )
-    .join("");
+  const categoryOrder = ["Navigation", "Funnel Settings & Config", "Quick Actions & Creation", "Funnels"];
+  const groups = {};
+
+  paletteItems.forEach((item, globalIndex) => {
+    const cat = item.category || "Actions";
+    if (!groups[cat]) groups[cat] = [];
+    groups[cat].push({ item, globalIndex });
+  });
+
+  const activeCategories = [
+    ...categoryOrder.filter((cat) => groups[cat] && groups[cat].length > 0),
+    ...Object.keys(groups).filter((cat) => !categoryOrder.includes(cat) && groups[cat].length > 0),
+  ];
+
+  let html = "";
+  activeCategories.forEach((cat) => {
+    const groupItems = groups[cat];
+    html += `<div class="palette-group">
+      <div class="palette-header">${esc(cat)}</div>
+      ${groupItems
+        .map(
+          ({ item: c, globalIndex: i }) =>
+            `<button class="palette-item${i === 0 ? " is-selected" : ""}" data-index="${i}">
+              ${icon(c.icon, 15)}<span>${esc(c.label)}</span>${c.hint ? `<span class="kbd">${esc(c.hint)}</span>` : ""}
+            </button>`
+        )
+        .join("")}
+    </div>`;
+  });
+
+  list.innerHTML = html;
 }
 
 function movePalette(delta) {
   if (!paletteItems.length) return;
   paletteIndex = (paletteIndex + delta + paletteItems.length) % paletteItems.length;
-  qsa(".palette-item").forEach((el, i) => el.classList.toggle("is-selected", i === paletteIndex));
-  qsa(".palette-item")[paletteIndex]?.scrollIntoView({ block: "nearest" });
+  const items = qsa(".palette-item");
+  items.forEach((el) => {
+    const idx = parseInt(el.dataset.index, 10);
+    const isSelected = idx === paletteIndex;
+    el.classList.toggle("is-selected", isSelected);
+    if (isSelected) el.scrollIntoView({ block: "nearest" });
+  });
 }
 
 function runPalette(index) {
@@ -2803,6 +2976,16 @@ function loadSettings() {
     const el = $(id);
     if (el) el.value = localStorage.getItem(key) ?? fallback;
   });
+
+  // USD is the only currency offered. Assigning a value a <select> does not
+  // contain does not fall back to the first option — it sets selectedIndex to
+  // -1 and the control renders BLANK, so a browser that saved EUR/GBP/CAD/AUD
+  // before this narrowing would open Settings to an empty currency field. Pin
+  // the stored value too, or the stale code lingers until the next save.
+  if ($("setCurrency")) {
+    localStorage.setItem("of.currency", "USD");
+    $("setCurrency").value = "USD";
+  }
   if ($("aiModelSelect")) $("aiModelSelect").value = localStorage.getItem("of.ai.model") || "gpt-4o";
 
   if ($("setBranding")) {
@@ -3003,16 +3186,19 @@ function bindDashboard() {
 
   const newOverlay = $("newFunnelOverlay");
   if (newOverlay) {
-    qsa("[data-blueprint]", newOverlay).forEach((card) => {
-      card.addEventListener("click", () => {
-        const bp = card.dataset.blueprint;
-        closeModal("newFunnelOverlay");
-        if (bp === "blank") {
-          createFunnel();
-        } else {
-          useTemplate(bp);
-        }
-      });
+    renderBlueprints();
+    // Delegated, because the template cards inside are rendered rather than
+    // authored — per-element listeners bound here would not survive the render.
+    newOverlay.addEventListener("click", (e) => {
+      const card = e.target.closest("[data-blueprint]");
+      if (!card) return;
+      const bp = card.dataset.blueprint;
+      closeModal("newFunnelOverlay");
+      if (bp === "blank") {
+        createFunnel();
+      } else {
+        useTemplate(bp);
+      }
     });
   }
 
@@ -3309,7 +3495,9 @@ function bindSpineDragAndDrop() {
 
   host.addEventListener("dragleave", (e) => {
     const row = e.target.closest(".spine-row");
-    if (row) row.classList.remove("drop-before", "drop-after");
+    if (row && (!e.relatedTarget || !row.contains(e.relatedTarget))) {
+      row.classList.remove("drop-before", "drop-after");
+    }
   });
 
   host.addEventListener("drop", (e) => {
@@ -3371,7 +3559,9 @@ function bindOptionDragAndDrop() {
 
   host.addEventListener("dragleave", (e) => {
     const card = e.target.closest(".option-edit-card");
-    if (card) card.classList.remove("drop-before", "drop-after");
+    if (card && (!e.relatedTarget || !card.contains(e.relatedTarget))) {
+      card.classList.remove("drop-before", "drop-after");
+    }
   });
 
   host.addEventListener("drop", (e) => {
@@ -3453,7 +3643,9 @@ function bindBlockDragAndDrop() {
 
   host.addEventListener("dragleave", (e) => {
     const card = e.target.closest(".block-card");
-    if (card) card.classList.remove("drop-before", "drop-after");
+    if (card && (!e.relatedTarget || !card.contains(e.relatedTarget))) {
+      card.classList.remove("drop-before", "drop-after");
+    }
   });
 
   host.addEventListener("drop", (e) => {
@@ -3552,6 +3744,182 @@ function openSymbolPicker(currentSymbol, onSelect) {
 }
 
 /* ========================================================================== *
+ *  Sidebar Resizing & Pane Toggle Engine
+ * ========================================================================== */
+
+function initSidebarResizers() {
+  const layout = $("builderLayout");
+  const leftResizer = $("resizerLeft");
+  const rightResizer = $("resizerRight");
+  const leftPane = $("paneLeft");
+  const rightPane = $("paneRight");
+  const toggleLeftBtn = $("toggleLeftPaneBtn");
+  const toggleRightBtn = $("toggleRightPaneBtn");
+  const restoreLeftBtn = $("restoreLeftBtn");
+  const restoreRightBtn = $("restoreRightBtn");
+  const expandSidesBtn = $("expandSidesBtn");
+
+  if (!layout) return;
+
+  // One-time repair. A collapsed pane's reopen chevron was inside the pane it
+  // hid, so a single stray click deleted the inspector with no visible way back
+  // — and because the choice is persisted, it stayed gone on every later reload.
+  // Anyone who hit that is still stuck right now, and no amount of new UI helps
+  // if the flag keeps re-hiding the pane on load. Clear it once; the edge
+  // handles added alongside this keep the state recoverable from here on.
+  if (localStorage.getItem("of.builder.paneStateVersion") !== "2") {
+    localStorage.removeItem("of.builder.leftCollapsed");
+    localStorage.removeItem("of.builder.rightCollapsed");
+    localStorage.setItem("of.builder.paneStateVersion", "2");
+  }
+
+  // Restore saved width preferences from localStorage
+  const savedLeft = localStorage.getItem("of.builder.leftWidth");
+  const savedRight = localStorage.getItem("of.builder.rightWidth");
+  const isLeftCollapsed = localStorage.getItem("of.builder.leftCollapsed") === "true";
+  const isRightCollapsed = localStorage.getItem("of.builder.rightCollapsed") === "true";
+
+  if (savedLeft) layout.style.setProperty("--left-pane-width", `${savedLeft}px`);
+  if (savedRight) layout.style.setProperty("--right-pane-width", `${savedRight}px`);
+
+  if (leftPane && isLeftCollapsed) leftPane.classList.add("is-collapsed");
+  if (rightPane && isRightCollapsed) rightPane.classList.add("is-collapsed");
+
+  /** Collapse or reveal one pane and persist the choice. */
+  function setCollapsed(pane, key, collapsed) {
+    if (!pane) return;
+    pane.classList.toggle("is-collapsed", collapsed);
+    localStorage.setItem(key, String(collapsed));
+  }
+
+  function updateToggleIcons() {
+    const leftHidden = !!leftPane?.classList.contains("is-collapsed");
+    const rightHidden = !!rightPane?.classList.contains("is-collapsed");
+
+    // The in-pane chevron can only ever collapse: the moment it hides its pane it
+    // goes with it, so labelling it "Expand" would describe a button nobody can
+    // reach. Reopening belongs to the edge handles and to Restore Sidebars.
+    if (toggleLeftBtn) toggleLeftBtn.setAttribute("aria-expanded", String(!leftHidden));
+    if (toggleRightBtn) toggleRightBtn.setAttribute("aria-expanded", String(!rightHidden));
+
+    if (expandSidesBtn) {
+      const anyCollapsed = leftHidden || rightHidden;
+      const label = $("expandSidesLabel");
+      if (label) label.textContent = anyCollapsed ? "Restore Sidebars" : "Expand Canvas";
+      expandSidesBtn.title = anyCollapsed ? "Bring the sidebars back" : "Expand canvas workspace";
+    }
+  }
+  updateToggleIcons();
+
+  if (toggleLeftBtn && leftPane) {
+    toggleLeftBtn.addEventListener("click", () => {
+      setCollapsed(leftPane, "of.builder.leftCollapsed", true);
+      updateToggleIcons();
+    });
+  }
+
+  if (toggleRightBtn && rightPane) {
+    toggleRightBtn.addEventListener("click", () => {
+      setCollapsed(rightPane, "of.builder.rightCollapsed", true);
+      updateToggleIcons();
+    });
+  }
+
+  // Edge handles: the counterpart to the in-pane chevrons, and the reason
+  // collapsing is no longer a one-way door. CSS reveals each one only while its
+  // pane is collapsed, so they cost nothing in the normal layout.
+  if (restoreLeftBtn && leftPane) {
+    restoreLeftBtn.addEventListener("click", () => {
+      setCollapsed(leftPane, "of.builder.leftCollapsed", false);
+      updateToggleIcons();
+    });
+  }
+
+  if (restoreRightBtn && rightPane) {
+    restoreRightBtn.addEventListener("click", () => {
+      setCollapsed(rightPane, "of.builder.rightCollapsed", false);
+      updateToggleIcons();
+    });
+  }
+
+  if (expandSidesBtn) {
+    expandSidesBtn.addEventListener("click", () => {
+      // Restore when EITHER side is hidden. Requiring both collapsed meant that
+      // with one pane already closed, the escape hatch closed the other one too.
+      const anyCollapsed =
+        leftPane?.classList.contains("is-collapsed") || rightPane?.classList.contains("is-collapsed");
+      setCollapsed(leftPane, "of.builder.leftCollapsed", !anyCollapsed);
+      setCollapsed(rightPane, "of.builder.rightCollapsed", !anyCollapsed);
+      updateToggleIcons();
+    });
+  }
+
+  // Mouse Drag Resizing Logic for Left Sidebar
+  if (leftResizer && leftPane) {
+    let startX = 0;
+    let startWidth = 0;
+
+    const onMouseMoveLeft = (e) => {
+      const deltaX = e.clientX - startX;
+      const newWidth = Math.max(160, Math.min(600, startWidth + deltaX));
+      layout.style.setProperty("--left-pane-width", `${newWidth}px`);
+      localStorage.setItem("of.builder.leftWidth", String(newWidth));
+    };
+
+    const onMouseUpLeft = () => {
+      leftResizer.classList.remove("is-resizing");
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("mousemove", onMouseMoveLeft);
+      window.removeEventListener("mouseup", onMouseUpLeft);
+    };
+
+    leftResizer.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      startX = e.clientX;
+      startWidth = leftPane.getBoundingClientRect().width;
+      leftResizer.classList.add("is-resizing");
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+      window.addEventListener("mousemove", onMouseMoveLeft);
+      window.addEventListener("mouseup", onMouseUpLeft);
+    });
+  }
+
+  // Mouse Drag Resizing Logic for Right Sidebar
+  if (rightResizer && rightPane) {
+    let startX = 0;
+    let startWidth = 0;
+
+    const onMouseMoveRight = (e) => {
+      const deltaX = startX - e.clientX;
+      const newWidth = Math.max(260, Math.min(700, startWidth + deltaX));
+      layout.style.setProperty("--right-pane-width", `${newWidth}px`);
+      localStorage.setItem("of.builder.rightWidth", String(newWidth));
+    };
+
+    const onMouseUpRight = () => {
+      rightResizer.classList.remove("is-resizing");
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("mousemove", onMouseMoveRight);
+      window.removeEventListener("mouseup", onMouseUpRight);
+    };
+
+    rightResizer.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      startX = e.clientX;
+      startWidth = rightPane.getBoundingClientRect().width;
+      rightResizer.classList.add("is-resizing");
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+      window.addEventListener("mousemove", onMouseMoveRight);
+      window.addEventListener("mouseup", onMouseUpRight);
+    });
+  }
+}
+
+/* ========================================================================== *
  *  Boot
  * ========================================================================== */
 
@@ -3565,6 +3933,7 @@ async function init() {
   bindModals();
   bindKeys();
   initSymbolPicker();
+  initSidebarResizers();
   renderTemplates();
 
   await loadFunnelList();

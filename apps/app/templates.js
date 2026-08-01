@@ -57,7 +57,7 @@ export const FUNNEL_TEMPLATES = {
         background: { gradient: GRADIENT.indigo, ink: "light" },
         cta: { label: "Start my free audit", note: "Takes 60 seconds · No credit card" },
         proof: { rating: 5, text: "Rated 4.9/5 by 200+ founders" },
-        stickyCta: true,
+        stickyCta: false,
         scrollHint: true,
         blocks: [
           {
@@ -99,7 +99,6 @@ export const FUNNEL_TEMPLATES = {
               { q: "Will I get spammed?", a: "One email with your audit, and one follow-up. Unsubscribe in either." },
             ],
           },
-          { type: "cta", label: "Get my free audit", note: "Three questions. Sixty seconds." },
         ],
       },
       {
@@ -186,7 +185,7 @@ export const FUNNEL_TEMPLATES = {
         cta: { label: "Send me the playbook", note: "Instant download · No spam" },
         secondaryCta: { label: "See what's inside", variant: "ghost" },
         proof: { text: "Downloaded 12,480 times" },
-        stickyCta: true,
+        stickyCta: false,
         blocks: [
           { type: "heading", eyebrow: "Inside", value: "What you actually get" },
           {
@@ -260,7 +259,7 @@ export const FUNNEL_TEMPLATES = {
         background: { gradient: GRADIENT.sky, ink: "light" },
         cta: { label: "Compare my cover", note: "Free · No obligation · No hard credit check" },
         proof: { rating: 5, text: "Trusted by 30,000+ households" },
-        stickyCta: true,
+        stickyCta: false,
         blocks: [
           {
             type: "stats",
@@ -371,7 +370,7 @@ export const FUNNEL_TEMPLATES = {
         subtext: "A soft, four-question check that tells you your realistic budget — and what's holding it back.",
         cta: { label: "Check my budget", note: "Soft search only · No impact on your score" },
         proof: { rating: 5, text: "4.9/5 from 2,100 buyers" },
-        stickyCta: true,
+        stickyCta: false,
         blocks: [
           {
             type: "features",
@@ -473,7 +472,7 @@ export const FUNNEL_TEMPLATES = {
         subtext: "Four questions, ninety seconds, no CV. If it's a fit we'll call you this week.",
         cta: { label: "See if I'm a fit", note: "No CV needed to start" },
         proof: { text: "Average time to offer: 9 days" },
-        stickyCta: true,
+        stickyCta: false,
         blocks: [
           {
             type: "features",
@@ -612,7 +611,7 @@ export const FUNNEL_TEMPLATES = {
     id: "high-ticket-call",
     slug: "high-ticket-call",
     title: "High-Ticket Application Call",
-    description: "VSL landing → budget and readiness screening → calendar. Filters out tyre-kickers before they book.",
+    description: "Long-form landing → budget and readiness screening → calendar. Filters out tyre-kickers before they book.",
     category: "booking",
     theme: { preset: "midnight-glass" },
     steps: [
@@ -623,12 +622,11 @@ export const FUNNEL_TEMPLATES = {
         height: "full",
         eyebrow: "Applications open · 6 places this month",
         headline: "Add $50k a month without hiring a single salesperson",
-        subtext: "Watch the 9-minute breakdown, then apply. We only take six clients a month and we turn most applications down.",
+        subtext: "The whole system is written out below. Read it, then apply — we only take six clients a month and we turn most applications down.",
         background: { gradient: GRADIENT.slate, ink: "light" },
-        media: { type: "video", src: "", poster: "" },
         cta: { label: "Apply for a strategy call", note: "Applications reviewed within 24 hours" },
-        secondaryCta: { label: "Watch the breakdown first", variant: "outline" },
-        stickyCta: true,
+        secondaryCta: { label: "Read the breakdown first", variant: "outline" },
+        stickyCta: false,
         blocks: [
           {
             type: "stats",
@@ -753,7 +751,7 @@ export const FUNNEL_TEMPLATES = {
         background: { gradient: GRADIENT.violet, ink: "light" },
         cta: { label: "Apply for coaching", note: "Free 20-minute discovery call" },
         proof: { rating: 5, text: "300+ clients coached since 2019" },
-        stickyCta: true,
+        stickyCta: false,
         blocks: [
           {
             type: "steps",
@@ -880,7 +878,7 @@ export const FUNNEL_TEMPLATES = {
         subtext: "Book a consultation with a nurse practitioner and get a treatment plan you're not pressured into.",
         cta: { label: "Book my consultation", note: "$99, credited against your first treatment" },
         proof: { rating: 5, text: "620 five-star reviews" },
-        stickyCta: true,
+        stickyCta: false,
         blocks: [
           {
             type: "features",
@@ -990,7 +988,7 @@ export const FUNNEL_TEMPLATES = {
         cta: { label: "Start free trial", note: "No credit card · Cancel anytime" },
         secondaryCta: { label: "Book a demo instead", variant: "outline" },
         proof: { rating: 5, text: "4.8/5 on G2 · 9,000+ teams" },
-        stickyCta: true,
+        stickyCta: false,
         blocks: [
           { type: "trust", items: [{ label: "SOC 2 Type II" }, { label: "GDPR ready" }, { label: "99.98% uptime" }] },
           { type: "heading", eyebrow: "Why teams switch", value: "Four tools, one bill, zero context-switching" },
@@ -1118,7 +1116,7 @@ export const FUNNEL_TEMPLATES = {
         background: { gradient: GRADIENT.emerald, ink: "light" },
         cta: { label: "Calculate my number", note: "Takes under a minute" },
         proof: { text: "Used by 1,400 finance teams" },
-        stickyCta: true,
+        stickyCta: false,
         blocks: [
           {
             type: "stats",
@@ -1230,7 +1228,7 @@ export const FUNNEL_TEMPLATES = {
         background: { gradient: GRADIENT.rose, ink: "light" },
         cta: { label: "Take the skin quiz", note: "Free · Get 15% off your routine" },
         proof: { rating: 5, text: "38,000 routines built" },
-        stickyCta: true,
+        stickyCta: false,
         blocks: [
           {
             type: "steps",
@@ -1346,7 +1344,7 @@ export const FUNNEL_TEMPLATES = {
         background: { gradient: GRADIENT.amber, ink: "light" },
         cta: { label: "Join the waitlist", note: "First access · Early-bird price" },
         proof: { text: "4,812 people ahead of you" },
-        stickyCta: true,
+        stickyCta: false,
         blocks: [
           { type: "countdown", minutes: 1440, label: "Early-bird pricing ends in" },
           {
@@ -1360,9 +1358,12 @@ export const FUNNEL_TEMPLATES = {
             ],
           },
           {
-            type: "gallery",
-            layout: "scroll",
-            items: [{ src: "", caption: "Front" }, { src: "", caption: "Detail" }, { src: "", caption: "In use" }],
+            type: "faq",
+            items: [
+              { q: "When does it ship?", a: "The first drop leaves the warehouse the week of launch. You'll get a tracking number the day it does." },
+              { q: "Am I charged now?", a: "No. The list is free — you get a private link when it opens and pay then, at the early-bird price." },
+              { q: "What if I miss the window?", a: "You go on the general list. There is no restock this year, so the next chance is the next run." },
+            ],
           },
           { type: "cta", label: "Get on the list", note: "Leave any time, one click." },
         ],
@@ -1424,7 +1425,7 @@ export const FUNNEL_TEMPLATES = {
         subtext: "Not the portal estimate. A local valuation based on what's sold on your street in the last 90 days.",
         cta: { label: "Value my home", note: "Takes 60 seconds · No agent visit required" },
         proof: { rating: 5, text: "1,900 local valuations this year" },
-        stickyCta: true,
+        stickyCta: false,
         blocks: [
           {
             type: "compare",
@@ -1530,7 +1531,7 @@ export const FUNNEL_TEMPLATES = {
         background: { gradient: GRADIENT.emerald, ink: "light" },
         cta: { label: "Estimate my savings", note: "No installer visit required" },
         proof: { rating: 5, text: "8,400 roofs assessed" },
-        stickyCta: true,
+        stickyCta: false,
         blocks: [
           {
             type: "stats",
@@ -1652,7 +1653,7 @@ export const FUNNEL_TEMPLATES = {
         subtext: "Tell us the job and we'll send three references from your postcode with the quote.",
         cta: { label: "Get my fixed quote", note: "No deposit to quote" },
         proof: { rating: 5, text: "480 five-star reviews locally" },
-        stickyCta: true,
+        stickyCta: false,
         blocks: [
           {
             type: "features",
@@ -1752,7 +1753,7 @@ export const FUNNEL_TEMPLATES = {
         background: { gradient: GRADIENT.slate, ink: "light" },
         cta: { label: "Value my car", note: "Free · Takes 90 seconds" },
         proof: { rating: 5, text: "12,000 cars bought last year" },
-        stickyCta: true,
+        stickyCta: false,
         blocks: [
           {
             type: "steps",
@@ -1869,7 +1870,7 @@ export const FUNNEL_TEMPLATES = {
         background: { gradient: GRADIENT.violet, ink: "light" },
         cta: { label: "Save my seat", note: "Free · Replay for attendees only" },
         proof: { text: "312 of 500 seats taken" },
-        stickyCta: true,
+        stickyCta: false,
         blocks: [
           { type: "countdown", minutes: 2880, label: "Registration closes in" },
           { type: "heading", eyebrow: "Agenda", value: "What we'll cover, in order" },
@@ -1968,7 +1969,7 @@ export const FUNNEL_TEMPLATES = {
         background: { gradient: GRADIENT.sunset, ink: "light" },
         cta: { label: "Find my plan", note: "Free 90-second assessment" },
         proof: { rating: 5, text: "2,400 people finished the last cohort" },
-        stickyCta: true,
+        stickyCta: false,
         blocks: [
           {
             type: "stats",
@@ -2096,7 +2097,7 @@ export const FUNNEL_TEMPLATES = {
         subtext: "Classes, weights, sauna, the lot. If it's not for you, walk away — we don't take a card to start.",
         cta: { label: "Claim my 7-day pass", note: "No card · No contract to trial" },
         proof: { rating: 5, text: "4.9/5 from 1,100 members" },
-        stickyCta: true,
+        stickyCta: false,
         blocks: [
           {
             type: "features",

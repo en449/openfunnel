@@ -462,8 +462,17 @@ a { color: inherit; }
   flex: 0 0 auto;
 }
 
-/* Switch — replaces the raw checkbox, which never matched anything else. */
+/* Switch — replaces the raw checkbox, which never matched anything else.
+ *
+ * The switch is a <label>, so inside a `.field` it is also matched by
+ * `.field > label`, which is MORE specific and forced `display: block` on it.
+ * That left `.switch-track` an inline <span> — width/height do not apply to an
+ * inline box — so every toggle in the inspector and the modals rendered as a
+ * 19px sliver instead of a 36×21 pill. Both halves below are the fix: re-assert
+ * the flex container where `.field` clobbers it, and give the track its own
+ * block box so it no longer depends on being a flex item to have a size. */
 .switch { position: relative; display: inline-flex; flex: 0 0 auto; }
+.field > label.switch { display: inline-flex; margin-bottom: 0; }
 .switch input {
   position: absolute;
   inset: 0;
@@ -472,6 +481,8 @@ a { color: inherit; }
   cursor: pointer;
 }
 .switch-track {
+  display: block;
+  flex: 0 0 auto;
   width: 36px;
   height: 21px;
   border-radius: 99px;
@@ -888,12 +899,114 @@ a { color: inherit; }
 .spine-count { font-size: 14px; font-weight: 600; }
 .spine-drop { font-size: 11.5px; font-weight: 600; min-width: 52px; text-align: right; }
 
-/* ---- Builder ------------------------------------------------------------- */
+/* ---- Builder ------------------------------------------------------------- *
+ * Five columns: steps | grip | canvas | grip | inspector.
+ *
+ * A collapsed pane is `display:none`, which takes it out of grid AUTO-placement
+ * — so the remaining children slide one column to the left and the pane's own
+ * column stays reserved. Collapsing the inspector left a 348px band of empty
+ * background where every step control used to be, and collapsing the steps rail
+ * dropped the canvas into the 6px grip column. Both are fixed the same way:
+ * every child is placed EXPLICITLY, and a collapsed pane zeroes its own column
+ * (and its grip) so the canvas actually takes the space back. */
 .builder {
   display: grid;
-  grid-template-columns: 272px minmax(0, 1fr) 348px;
+  --col-left: var(--left-pane-width, 272px);
+  --col-right: var(--right-pane-width, 348px);
+  --col-grip-left: 6px;
+  --col-grip-right: 6px;
+  grid-template-columns:
+    var(--col-left) var(--col-grip-left) minmax(0, 1fr) var(--col-grip-right) var(--col-right);
   height: calc(100vh - var(--bar-1) - var(--bar-2));
+  position: relative;
 }
+.builder > .pane-left { grid-column: 1; }
+.builder > .pane-resizer-left { grid-column: 2; }
+.builder > .stage { grid-column: 3; }
+.builder > .pane-resizer-right { grid-column: 4; }
+.builder > .pane-right { grid-column: 5; }
+
+.builder:has(> .pane-left.is-collapsed) { --col-left: 0px; --col-grip-left: 0px; }
+.builder:has(> .pane-right.is-collapsed) { --col-right: 0px; --col-grip-right: 0px; }
+.builder:has(> .pane-left.is-collapsed) > .pane-resizer-left,
+.builder:has(> .pane-right.is-collapsed) > .pane-resizer-right { display: none; }
+
+.pane-resizer {
+  width: 6px;
+  background: var(--line);
+  cursor: col-resize;
+  position: relative;
+  z-index: 15;
+  transition: background 0.15s var(--ease), box-shadow 0.15s var(--ease);
+  user-select: none;
+  flex: 0 0 6px;
+}
+.pane-resizer:hover,
+.pane-resizer.is-resizing {
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+}
+.pane-resizer::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 2px;
+  height: 24px;
+  background: var(--text-3);
+  border-radius: 1px;
+  opacity: 0.5;
+}
+.pane-resizer:hover::after,
+.pane-resizer.is-resizing::after {
+  background: #fff;
+  opacity: 1;
+}
+
+.pane-left.is-collapsed,
+.pane-right.is-collapsed {
+  display: none !important;
+}
+
+/* The chevron sprite points down, which read as "collapse this section" on both
+ * pane heads and gave no hint that the whole sidebar was about to disappear.
+ * Aim each one at the edge its pane retreats to. */
+.pane-toggle svg { transition: transform 0.18s var(--ease); }
+.pane-toggle-left svg { transform: rotate(90deg); }
+.pane-toggle-right svg { transform: rotate(-90deg); }
+
+/* Reopen handles for a collapsed pane. Absolutely positioned so they claim no
+ * grid column, and hidden until the pane they control is actually collapsed —
+ * `.builder` is already `position: relative`. */
+.pane-restore {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 20;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 64px;
+  padding: 0;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text-2);
+  cursor: pointer;
+  box-shadow: var(--shadow-1, 0 2px 8px rgb(0 0 0 / 12%));
+  transition: background 0.15s var(--ease), color 0.15s var(--ease), width 0.15s var(--ease);
+}
+.pane-restore:hover { background: var(--accent); color: #fff; width: 26px; }
+.pane-restore:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.pane-restore-left { left: 0; border-left: 0; border-radius: 0 8px 8px 0; }
+.pane-restore-right { right: 0; border-right: 0; border-radius: 8px 0 0 8px; }
+.pane-restore-left svg { transform: rotate(-90deg); }
+.pane-restore-right svg { transform: rotate(90deg); }
+
+.builder:has(> .pane-left.is-collapsed) > .pane-restore-left,
+.builder:has(> .pane-right.is-collapsed) > .pane-restore-right { display: flex; }
 
 .pane { display: flex; flex-direction: column; min-height: 0; background: var(--surface); }
 .pane-left { border-right: 1px solid var(--line); }
@@ -1317,12 +1430,12 @@ a { color: inherit; }
 }
 
 /* Command palette */
-.palette { max-width: 520px; padding: 0; }
+.palette { max-width: 540px; padding: 0; }
 .palette-input-row {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 12px 14px;
+  padding: 14px 16px;
   border-bottom: 1px solid var(--line-soft);
 }
 .palette-input-row svg { color: var(--text-3); flex: 0 0 auto; }
@@ -1332,10 +1445,26 @@ a { color: inherit; }
   background: none;
   outline: none;
   font-size: 14px;
+  font-weight: 400;
+  color: var(--text);
 }
 .palette-input::placeholder { color: var(--text-3); }
-.palette-list { max-height: 320px; overflow-y: auto; padding: 6px; }
-.palette-group { padding: 8px 10px 4px; }
+.palette-list { max-height: 360px; overflow-y: auto; padding: 8px 6px; }
+.palette-group { padding: 4px 6px; }
+.palette-group + .palette-group {
+  border-top: 1px solid var(--line-soft);
+  margin-top: 6px;
+  padding-top: 8px;
+}
+.palette-header {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  padding: 6px 10px 4px;
+  user-select: none;
+}
 .palette-item {
   display: flex;
   align-items: center;
@@ -1349,11 +1478,12 @@ a { color: inherit; }
   color: var(--text);
   cursor: pointer;
   text-align: left;
+  transition: background 0.12s var(--ease);
 }
 .palette-item svg { color: var(--text-2); flex: 0 0 auto; }
 .palette-item .kbd { margin-left: auto; }
 .palette-item:hover, .palette-item.is-selected { background: var(--surface-2); }
-.palette-item.is-selected { box-shadow: inset 2px 0 0 var(--accent); }
+.palette-item.is-selected { box-shadow: inset 3px 0 0 var(--accent); }
 .palette-empty { padding: 28px; text-align: center; color: var(--text-3); font-size: 13px; }
 
 /* Drawer */
@@ -1552,7 +1682,13 @@ a { color: inherit; }
 
 /* ---- Responsive ---------------------------------------------------------- */
 @media (max-width: 1180px) {
-  .builder { grid-template-columns: 240px minmax(0, 1fr) 300px; }
+  /* Narrow the rails by moving the WIDTH VARIABLES, never by re-declaring
+   * `grid-template-columns`. This rule used to name three columns while every
+   * child is explicitly placed into one of five, so columns 4 and 5 became
+   * implicit: the 6px right grip inherited the `1fr` and the inspector was
+   * pushed past the viewport edge — the customizer looked deleted on any
+   * window under 1180px. Re-declaring the template here would bring that back. */
+  .builder { --col-left: var(--left-pane-width, 240px); --col-right: var(--right-pane-width, 300px); }
   .metrics { grid-template-columns: repeat(2, 1fr); }
   .metric:nth-child(3) { border-left: 0; }
   .metric:nth-child(n + 3) { border-top: 1px solid var(--line-soft); }
@@ -1560,12 +1696,35 @@ a { color: inherit; }
 
 @media (max-width: 900px) {
   .view-pad { padding: 22px 18px 48px; }
+  /* True single-column stack. `grid-template-columns: 1fr` alone is not enough
+   * any more: the children carry explicit `grid-column` values, so they ignore
+   * auto-placement and spawn four implicit columns instead of stacking. Every
+   * child has to be pulled back to column 1 by hand. */
   .builder {
     grid-template-columns: 1fr;
     height: auto;
     min-height: calc(100vh - var(--bar-1) - var(--bar-2));
   }
+  .builder > .pane-left,
+  .builder > .stage,
+  .builder > .pane-right { grid-column: 1; }
+  /* Side-by-side affordances are meaningless once stacked — and a pane collapsed
+   * on a wide screen must not stay hidden here, where nothing can reopen it. */
+  /* `!important` is load-bearing: the reveal rule is `.builder:has(> .pane-right
+   * .is-collapsed) > .pane-restore-right`, which outranks any plain selector
+   * that could be written here — so without it a reopen handle floated over the
+   * stacked layout pointing at a pane that is already on screen. */
+  .builder > .pane-resizer,
+  .builder > .pane-restore { display: none !important; }
+  .pane-toggle { display: none; }
+  .builder > .pane-left.is-collapsed,
+  .builder > .pane-right.is-collapsed { display: flex !important; }
   .pane-left, .pane-right { border: 0; border-bottom: 1px solid var(--line); }
+  /* The canvas toolbar is a fixed-height, no-wrap row, so on a narrow window its
+   * buttons ran off the edge and took the whole page into horizontal scroll.
+   * Let it grow a second line instead. */
+  .stage-bar { height: auto; min-height: 42px; flex-wrap: wrap; padding: 7px 14px; row-gap: 8px; }
+  .stage-bar .page-actions { flex-wrap: wrap; }
   .pane-body { max-height: 320px; }
   .stage { border-bottom: 1px solid var(--line); }
   .device { height: 560px; }
@@ -1704,9 +1863,12 @@ a { color: inherit; }
 
 .spine-row.is-dragging,
 .option-edit-card.is-dragging,
-.block-card.is-dragging {
-  opacity: 0.35;
-  border-style: dashed !important;
+.block-card.is-dragging,
+.block-chip.is-dragging {
+  opacity: 0.45 !important;
+  transform: scale(0.98);
+  border: 1px dashed var(--accent) !important;
+  box-shadow: 0 8px 20px rgba(0,0,0,0.15) !important;
   background: var(--surface-2) !important;
 }
 
@@ -1723,14 +1885,14 @@ a { color: inherit; }
 .block-card.drop-before::before {
   content: "";
   position: absolute;
-  top: -3px;
+  top: -4px;
   left: 0;
   right: 0;
   height: 4px;
   background: var(--accent);
-  border-radius: 2px;
-  box-shadow: 0 0 8px var(--accent);
-  z-index: 10;
+  border-radius: 4px;
+  box-shadow: 0 0 10px var(--accent);
+  z-index: 20;
 }
 
 .spine-row.drop-after::after,
@@ -1738,14 +1900,48 @@ a { color: inherit; }
 .block-card.drop-after::after {
   content: "";
   position: absolute;
-  bottom: -3px;
+  bottom: -4px;
   left: 0;
   right: 0;
   height: 4px;
   background: var(--accent);
-  border-radius: 2px;
-  box-shadow: 0 0 8px var(--accent);
-  z-index: 10;
+  border-radius: 4px;
+  box-shadow: 0 0 10px var(--accent);
+  z-index: 20;
+}
+
+/* Alignment Controls UI */
+.align-picker {
+  display: inline-flex;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 2px;
+  gap: 2px;
+  margin-top: 4px;
+}
+.align-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.12s var(--ease);
+}
+.align-btn:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+.align-btn.is-active {
+  background: var(--surface);
+  color: var(--accent);
+  box-shadow: var(--shadow-sm);
 }
 
 .block-card-type {

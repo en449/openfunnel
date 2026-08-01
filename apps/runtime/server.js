@@ -1219,9 +1219,11 @@ const FUNNEL_BOOT_SCRIPT = `
         new URLSearchParams(location.search).get("preview") === "1" ||
         new URLSearchParams(location.search).get("admin") === "1"
       );
+      const isEmbedded = window.parent !== window;
       let live = createFunnel(mount, funnel, {
         isPreview: isPreview,
-        trackEvents: !isPreview,
+        isEditor: isEmbedded,
+        trackEvents: !isPreview && !isEmbedded,
         eventEndpoint: "/api/events",
         leadEndpoint: "/api/lead",
       });
@@ -1769,7 +1771,7 @@ const server = import.meta.main ? Bun.serve({
   // Behaviour-neutral: every route on this server takes small JSON and none
   // accepts an upload, so anything above MAX_BODY was already rejected by
   // `readJson` — this only moves the rejection earlier. The largest funnel
-  // document in `examples/` is under 4KB against a 64KB budget.
+  // document in `examples/` is under 8KB against a 64KB budget.
   maxRequestBodySize: MAX_BODY,
 
   async fetch(req, server) {

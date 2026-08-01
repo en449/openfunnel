@@ -121,13 +121,10 @@ export class Controller {
     if (!hideBranding) {
       this.container.appendChild(
         el("div", { class: "of-branding-footer" }, [
-          el("a", {
-            href: "https://openfunnel.org",
-            target: "_blank",
-            rel: "noopener",
+          el("span", {
             class: "of-branding-link",
-            html: "⚡ Powered by <strong>OpenFunnel</strong>"
-          })
+            html: "⚡ Powered by <strong>OpenFunnel</strong>",
+          }),
         ])
       );
     }
@@ -271,6 +268,9 @@ export class Controller {
    */
   updateFunnel(funnel, stepIndex) {
     if (!funnel || !Array.isArray(funnel.steps) || funnel.steps.length === 0) return;
+    if (typeof window !== "undefined" && window.parent !== window) {
+      this.isEditor = true;
+    }
     this.funnel = funnel;
     this.steps = funnel.steps;
     if (typeof stepIndex === "number") {

@@ -249,6 +249,7 @@
  * @property {string} id               Unique within the funnel; used by `next`.
  * @property {string} [headline]       Supports answer piping.
  * @property {string} [subtext]        Supports answer piping.
+ * @property {"left"|"center"|"right"} [align] Headline & header text alignment.
  * @property {ContentBlock[]} [blocks] Rich content rendered above the interaction.
  * @property {boolean} [progress]      Per-step override of the progress bar.
  * @property {string|null} [next]      Explicit next step id. `null` = end funnel.

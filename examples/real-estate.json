@@ -1,61 +1,203 @@
 {
   "id": "real-estate",
-  "name": "Home Value / Lead Qualifier",
   "slug": "real-estate",
-  "theme": { "primary": "#0ea5e9", "radius": "14px" },
-  "settings": { "showProgress": true, "transition": "slide" },
+  "name": "Home Valuation",
+  "theme": {
+    "preset": "warm-editorial"
+  },
   "steps": [
+    {
+      "id": "landing",
+      "type": "landing",
+      "layout": "left",
+      "height": "tall",
+      "eyebrow": "Free · No obligation",
+      "headline": "What's your home actually worth in this market?",
+      "subtext": "Not the portal estimate. A local valuation based on what's sold on your street in the last 90 days.",
+      "cta": {
+        "label": "Value my home",
+        "note": "Takes 60 seconds · No agent visit required"
+      },
+      "proof": {
+        "rating": 5,
+        "text": "1,900 local valuations this year"
+      },
+      "stickyCta": false,
+      "blocks": [
+        {
+          "type": "compare",
+          "left": {
+            "title": "Portal estimates",
+            "items": [
+              "National averages",
+              "Ignores your street",
+              "Months out of date"
+            ]
+          },
+          "right": {
+            "title": "Our valuation",
+            "items": [
+              "Last 90 days of local sales",
+              "Adjusted for your property type",
+              "Reviewed by a local agent"
+            ]
+          }
+        },
+        {
+          "type": "quote",
+          "rating": 5,
+          "text": "The portal said £340k. They said £372k and it went for £378k.",
+          "name": "Helen & Marc",
+          "role": "Sold in Redland"
+        },
+        {
+          "type": "faq",
+          "items": [
+            {
+              "q": "Do I have to sell?",
+              "a": "No. Most people who use this are just curious. We're fine with that."
+            },
+            {
+              "q": "Will someone visit?",
+              "a": "Only if you ask. The desktop valuation is free and needs no visit."
+            }
+          ]
+        }
+      ]
+    },
     {
       "id": "intent",
       "type": "choice",
-      "headline": "Are you looking to buy or sell?",
+      "headline": "What are you planning?",
       "options": [
-        { "id": "buy", "label": "Buy a home", "icon": "🔑", "next": "buy-timeline" },
-        { "id": "sell", "label": "Sell my home", "icon": "🏡", "next": "sell-timeline" }
+        {
+          "id": "sell",
+          "label": "Sell my current home",
+          "icon": "💰",
+          "badge": "Priority"
+        },
+        {
+          "id": "buy",
+          "label": "Buy a new home",
+          "icon": "🔑"
+        },
+        {
+          "id": "both",
+          "label": "Buy and sell together",
+          "icon": "🔄"
+        },
+        {
+          "id": "curious",
+          "label": "Just curious about the value",
+          "icon": "👀"
+        }
       ]
     },
     {
-      "id": "buy-timeline",
+      "id": "property",
       "type": "choice",
-      "headline": "When do you hope to buy?",
-      "next": "contact",
+      "headline": "What type of property is it?",
+      "layout": "grid",
       "options": [
-        { "id": "0-3", "label": "0–3 months", "icon": "⚡" },
-        { "id": "3-6", "label": "3–6 months", "icon": "📅" },
-        { "id": "browsing", "label": "Just browsing", "icon": "👀" }
+        {
+          "id": "house",
+          "label": "House",
+          "icon": "🏠"
+        },
+        {
+          "id": "flat",
+          "label": "Flat",
+          "icon": "🏢"
+        },
+        {
+          "id": "bungalow",
+          "label": "Bungalow",
+          "icon": "🏡"
+        },
+        {
+          "id": "other",
+          "label": "Something else",
+          "icon": "🏘️"
+        }
       ]
     },
     {
-      "id": "sell-timeline",
+      "id": "timing",
       "type": "choice",
-      "headline": "How soon do you want to sell?",
-      "next": "contact",
+      "headline": "When would you move?",
       "options": [
-        { "id": "asap", "label": "As soon as possible", "icon": "⚡" },
-        { "id": "season", "label": "This season", "icon": "🍂" },
-        { "id": "curious", "label": "Just curious about value", "icon": "💭" }
+        {
+          "id": "asap",
+          "label": "As soon as possible",
+          "icon": "⚡",
+          "badge": "Hot"
+        },
+        {
+          "id": "6mo",
+          "label": "Within 6 months",
+          "icon": "📅"
+        },
+        {
+          "id": "year",
+          "label": "Within a year",
+          "icon": "🗓️"
+        },
+        {
+          "id": "noplan",
+          "label": "No firm plan",
+          "icon": "🤔"
+        }
       ]
     },
     {
-      "id": "contact",
+      "id": "valuing",
+      "type": "loader",
+      "headline": "Pulling local sold prices…",
+      "durationMs": 2800,
+      "items": [
+        "Finding comparable properties",
+        "Adjusting for property type",
+        "Checking the last 90 days"
+      ]
+    },
+    {
+      "id": "lead_info",
       "type": "form",
-      "headline": "Get your personalized report",
-      "subtext": "A local expert will reach out with details.",
-      "submitLabel": "Send me the report",
+      "headline": "Your valuation is ready",
+      "subtext": "Tell us where to send it — we'll include the three comparable sales we used.",
       "fields": [
-        { "name": "name", "type": "name", "label": "Name", "required": true },
-        { "name": "phone", "type": "tel", "label": "Phone", "required": true },
-        { "name": "email", "type": "email", "label": "Email", "required": true }
-      ]
+        {
+          "name": "name",
+          "type": "text",
+          "label": "Your name",
+          "required": true
+        },
+        {
+          "name": "email",
+          "type": "email",
+          "label": "Email address",
+          "required": true
+        },
+        {
+          "name": "address",
+          "type": "address",
+          "label": "Property address",
+          "required": true
+        },
+        {
+          "name": "phone",
+          "type": "tel",
+          "label": "Phone number"
+        }
+      ],
+      "submitLabel": "Send my valuation"
     },
     {
       "id": "done",
       "type": "success",
-      "headline": "Thanks, {{name}}!",
-      "subtext": "Your report is being prepared. Book a quick call to go over it.",
-      "buttonLabel": "Book a call",
-      "redirectUrl": "https://cal.com/",
-      "progress": false
+      "headline": "On its way, {{name}} 🏡",
+      "subtext": "Your valuation and the comparables land in your inbox within minutes.",
+      "buttonLabel": "Book a free appraisal"
     }
   ]
 }

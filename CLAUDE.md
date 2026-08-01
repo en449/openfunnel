@@ -365,6 +365,20 @@ template without one only ever appears under "All". Use the field names the
 engine actually reads (`ctaLabel`, `submitLabel`, `buttonLabel`/`redirectUrl`);
 a `buttonText` key is silently ignored and the button falls back to "Continue".
 
+A template must render with no assets. Both places that shipped an empty `src`
+(a hero `media` video, a `gallery` of blank items) drew an empty black player and
+three broken image boxes on the operator's first click — the same failure the
+file header warns about for hotlinked photography, self-inflicted. Prefer a
+gradient, an `faq`, or a `stats` block over an asset placeholder.
+
+The shortlist in the "Create New Funnel" modal is the `BLUEPRINTS` table in
+`app.js`, and its `key`s must exist in `FUNNEL_TEMPLATES`. Two of the three used
+to name a *category* (`lead-gen`, `fitness`), so `useTemplate()` found nothing and
+returned — a dead button with no toast and no console warning. The cards are now
+rendered from the table rather than authored in `index.html`, so a card cannot
+name a funnel that isn't there, and `useTemplate()` toasts on an unknown key
+instead of returning silently. Don't re-hardcode them.
+
 ## Style
 
 - JSDoc types throughout, `checkJs: true`, `strict: true`. No `.ts` files in
@@ -375,6 +389,15 @@ a `buttonText` key is silently ignored and the button falls back to "Continue".
 - Double quotes, semicolons, 2-space indent.
 - Console DOM lookups use `$("id")`; guard with `if ($("x"))` or `?.` since
   modals share one `index.html` and an element may not exist in every build.
+  This is load-bearing in `bindInspector()`, because the inspector is tabbed and
+  only one tab's markup exists at a time: `insHeadline` / `insSubtext` / `insType`
+  / `insId` / `rewriteBtn` are Content, `insNext` / `deleteStepBtn` are Logic.
+  Seven of them predated the tabs and were bound unconditionally, so
+  `bindInspector` threw on *every* tab. That throw escapes `renderInspector()`
+  into `setWorkingFunnel()`, which is how "Use template", "Blank Funnel" and
+  opening a funnel all became clicks that did nothing at all — the builder was
+  unreachable and nothing was logged where an operator would look. An unguarded
+  lookup here does not degrade one field; it takes out the whole builder.
 
 ## Known gaps (UI exists, nothing consumes it yet)
 

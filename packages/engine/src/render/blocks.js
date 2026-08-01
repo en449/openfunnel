@@ -65,9 +65,48 @@ export function renderBlocks(blocks, data, step, ctrl) {
       node.classList.add("is-block-draggable");
       node.setAttribute("draggable", "true");
       node.setAttribute("data-block-idx", String(idx));
+      node.setAttribute("tabindex", "0");
 
-      const handle = el("span", { class: "of-drag-handle-block", text: "⋮⋮ Drag Block", title: "Drag to reorder block on canvas" });
-      node.prepend(handle);
+      const delBadge = el("button", {
+        type: "button",
+        class: "of-canvas-delete-badge",
+        text: "✕",
+        title: "Delete section block",
+        onclick: (/** @type {MouseEvent} */ e) => {
+          e.stopPropagation();
+          const movedBlocks = [...blocks];
+          movedBlocks.splice(idx, 1);
+          step.blocks = movedBlocks;
+          if (window.parent && window.parent !== window) {
+            window.parent.postMessage(
+              { type: "of_reorder_blocks", stepId: step.id, blocks: movedBlocks },
+              window.location.origin
+            );
+          }
+          ctrl.refresh();
+        },
+      });
+      node.prepend(delBadge);
+
+      node.addEventListener("keydown", (/** @type {KeyboardEvent} */ e) => {
+        if ((e.key === "Delete" || e.key === "Backspace") && node.classList.contains("is-selected")) {
+          const active = document.activeElement;
+          if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.getAttribute("contenteditable") === "true")) {
+            return;
+          }
+          e.preventDefault();
+          const movedBlocks = [...blocks];
+          movedBlocks.splice(idx, 1);
+          step.blocks = movedBlocks;
+          if (window.parent && window.parent !== window) {
+            window.parent.postMessage(
+              { type: "of_reorder_blocks", stepId: step.id, blocks: movedBlocks },
+              window.location.origin
+            );
+          }
+          ctrl.refresh();
+        }
+      });
 
       node.addEventListener("dragstart", (e) => {
         draggedBlockIdx = idx;
@@ -107,14 +146,28 @@ export function renderBlocks(blocks, data, step, ctrl) {
 
         step.blocks = movedBlocks;
         if (window.parent && window.parent !== window) {
-          // Same-origin builder only — never "*", or any site that frames this
-          // funnel would receive the message too.
           window.parent.postMessage(
             { type: "of_reorder_blocks", stepId: step.id, blocks: movedBlocks },
             window.location.origin
           );
         }
         ctrl.refresh();
+      });
+
+      node.addEventListener("click", (e) => {
+        const target = /** @type {Element|null} */ (e.target);
+        if (target && !target.closest("button, a, input, select, textarea")) {
+          // Highlight selected element on canvas with transform bounding box
+          wrap.querySelectorAll(".is-block-draggable").forEach((el) => el.classList.remove("is-selected"));
+          node.classList.add("is-selected");
+
+          if (window.parent && window.parent !== window) {
+            window.parent.postMessage(
+              { type: "of_select_block", stepId: step.id, blockIndex: idx },
+              window.location.origin
+            );
+          }
+        }
       });
 
       node.addEventListener("dragend", () => {

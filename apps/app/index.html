@@ -124,7 +124,6 @@
       <button id="brandBtn" class="brand" title="Overview">
         <svg class="brand-mark" aria-hidden="true"><use href="#i-mark" /></svg>
         <span class="brand-name">OpenFunnel</span>
-        <span class="pro-badge">PRO</span>
       </button>
 
       <span class="bar-divider" aria-hidden="true"></span>
@@ -272,11 +271,14 @@
 
       <!-- ── Builder ──────────────────────────────────────────────────────── -->
       <section id="view-builder" class="view" role="tabpanel">
-        <div class="builder">
+        <div class="builder" id="builderLayout">
           <!-- The spine: the funnel's sequence, in order, always visible. -->
-          <aside class="pane pane-left">
+          <aside class="pane pane-left" id="paneLeft">
             <div class="pane-head">
               <span class="eyebrow">Steps <span id="stepCount"></span></span>
+              <button id="toggleLeftPaneBtn" class="btn btn-ghost btn-icon btn-sm pane-toggle pane-toggle-left" title="Collapse Steps Sidebar" aria-label="Collapse Steps Sidebar" aria-expanded="true" aria-controls="paneLeft">
+                <svg width="13" height="13"><use href="#i-chevron" /></svg>
+              </button>
             </div>
             <div class="pane-body"><div id="stepSpine" class="spine"></div></div>
             <div class="pane-foot pane-foot-stack">
@@ -290,6 +292,8 @@
               </button>
             </div>
           </aside>
+
+          <div class="pane-resizer pane-resizer-left" id="resizerLeft" title="Drag to resize steps sidebar"></div>
 
           <div class="stage">
             <div class="stage-bar">
@@ -305,6 +309,10 @@
                   <option value="0.75">75%</option>
                   <option value="0.5">50%</option>
                 </select>
+                <button id="expandSidesBtn" class="btn btn-sm" title="Expand canvas workspace">
+                  <svg width="13" height="13"><use href="#i-external" /></svg>
+                  <span id="expandSidesLabel">Expand Canvas</span>
+                </button>
                 <button id="reloadPreviewBtn" class="btn btn-sm" title="Restart the preview">
                   <svg width="13" height="13"><use href="#i-refresh" /></svg>
                   Restart
@@ -329,8 +337,13 @@
             </div>
           </div>
 
-          <aside class="pane pane-right">
+          <div class="pane-resizer pane-resizer-right" id="resizerRight" title="Drag to resize customizer sidebar"></div>
+
+          <aside class="pane pane-right" id="paneRight">
             <div class="pane-head">
+              <button id="toggleRightPaneBtn" class="btn btn-ghost btn-icon btn-sm pane-toggle pane-toggle-right" title="Collapse Customizer Sidebar" aria-label="Collapse Customizer Sidebar" aria-expanded="true" aria-controls="paneRight">
+                <svg width="13" height="13"><use href="#i-chevron" /></svg>
+              </button>
               <span class="eyebrow">Step</span>
               <div style="display: flex; gap: 4px">
                 <button id="themeModalBtn" class="btn btn-ghost btn-sm" title="Funnel theme">
@@ -345,6 +358,21 @@
             </div>
             <div class="pane-body" id="inspector"></div>
           </aside>
+
+          <!--
+            Reopen handles. These MUST stay outside `.pane-left` / `.pane-right`:
+            each pane's own collapse chevron lives in its head, so collapsing a
+            pane hid the only control that could bring it back — and the choice
+            persists in localStorage, so the inspector stayed gone across
+            reloads with no visible affordance anywhere on the screen. CSS shows
+            each handle only while its pane is collapsed.
+          -->
+          <button class="pane-restore pane-restore-left" id="restoreLeftBtn" title="Show Steps Sidebar" aria-label="Show Steps Sidebar" aria-controls="paneLeft">
+            <svg width="14" height="14"><use href="#i-chevron" /></svg>
+          </button>
+          <button class="pane-restore pane-restore-right" id="restoreRightBtn" title="Show Customizer Sidebar" aria-label="Show Customizer Sidebar" aria-controls="paneRight">
+            <svg width="14" height="14"><use href="#i-chevron" /></svg>
+          </button>
         </div>
       </section>
 
@@ -489,13 +517,10 @@
                     <span class="select-wrap">
                       <select id="setCurrency" class="select">
                         <option value="USD">$ USD</option>
-                        <option value="EUR">€ EUR</option>
-                        <option value="GBP">£ GBP</option>
-                        <option value="CAD">C$ CAD</option>
-                        <option value="AUD">A$ AUD</option>
                       </select>
                       <span class="select-caret"><svg width="14" height="14"><use href="#i-chevron" /></svg></span>
                     </span>
+                    <p class="field-hint">USD is the only supported currency.</p>
                   </div>
                   <div class="field">
                     <label for="setLanguage">Default Language</label>
@@ -732,18 +757,15 @@
         <div class="modal-body">
           <p class="field-hint" style="margin-top:0;margin-bottom:16px">Choose a high-converting marketing blueprint or start from scratch.</p>
           <div class="blueprint-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px">
-            <button class="card card-pad blueprint-card" data-blueprint="lead-gen" style="text-align:left;cursor:pointer">
-              <div style="font-weight:600;font-size:15px;margin-bottom:4px">🎯 Lead Gen Quiz</div>
-              <p class="field-hint" style="margin:0">Multi-step qualification with contact capture & instant piping.</p>
-            </button>
-            <button class="card card-pad blueprint-card" data-blueprint="fitness" style="text-align:left;cursor:pointer">
-              <div style="font-weight:600;font-size:15px;margin-bottom:4px">💪 Fitness Assessment</div>
-              <p class="field-hint" style="margin:0">Goal assessment, workout frequency, and custom recommendation.</p>
-            </button>
-            <button class="card card-pad blueprint-card" data-blueprint="real-estate" style="text-align:left;cursor:pointer">
-              <div style="font-weight:600;font-size:15px;margin-bottom:4px">🏡 Real Estate Qualifier</div>
-              <p class="field-hint" style="margin:0">Buyer timeline, budget qualification, and agent consultation.</p>
-            </button>
+            <!--
+              Filled by renderBlueprints() from FUNNEL_TEMPLATES. The cards used to
+              be hardcoded here, and two of the three named a template key that does
+              not exist ("lead-gen" / "fitness" are categories) — so those cards were
+              silent dead clicks. Rendering from the table means a card cannot name a
+              funnel that isn't there. `display:contents` keeps the generated buttons
+              as direct children of the grid.
+            -->
+            <div id="blueprintCards" style="display:contents"></div>
             <button class="card card-pad blueprint-card" data-blueprint="blank" style="text-align:left;cursor:pointer">
               <div style="font-weight:600;font-size:15px;margin-bottom:4px">⚡ Blank Funnel</div>
               <p class="field-hint" style="margin:0">Clean 3-step sequence (Choice, Form, Success screen).</p>

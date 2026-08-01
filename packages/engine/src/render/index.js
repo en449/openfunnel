@@ -33,7 +33,8 @@ export function renderStep(step, ctrl) {
   }
 
   const heroImageSrc = step.image || step.heroImage;
-  const header = el("header", { class: "of-step-header" }, [
+  const headerClass = `of-step-header${step.align ? ` of-align-${step.align}` : ""}`;
+  const header = el("header", { class: headerClass }, [
     heroImageSrc ? el("img", { class: "of-hero-image", src: heroImageSrc, alt: step.headline || "", loading: "lazy" }) : null,
     step.headline ? el("h1", { class: "of-headline", text: pipe(step.headline, data) }) : null,
     step.subtext ? el("p", { class: "of-subtext", text: pipe(step.subtext, data) }) : null,
