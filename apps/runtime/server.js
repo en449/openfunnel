@@ -2378,6 +2378,27 @@ if (server) {
   console.log(`\n  OpenFunnel runtime → http://localhost:${server.port}`);
   console.log(`  funnels: ${FUNNELS_DIR}`);
   console.log(`  data:    ${DATA_DIR}${SUPABASE_ON ? "  (+ Supabase)" : ""}\n`);
+
+  // Every limit in this process is a Map in this process's heap: the rate-limit
+  // buckets, the OTP challenges, the verified-email record and the global mail
+  // cap. Run a second replica and each one gets its own copy, so an N-instance
+  // deploy multiplies every ceiling by N and an OTP issued by one instance
+  // cannot be verified by another — the visitor sees a valid code rejected.
+  //
+  // The README says this, but a deploy is exactly when nobody is reading the
+  // README, and the failure is silent: nothing errors, the limits are just
+  // wider than configured. Printing it at boot is the only place an operator
+  // reliably looks before scaling rather than after.
+  if (!DEV) {
+    console.log(
+      "  [scope] Single-process state: rate limits, OTP challenges and the\n" +
+      "          hourly mail cap all live in this process's memory. They are\n" +
+      "          NOT shared between replicas and reset on restart.\n" +
+      "          Running more than one instance? You need an edge rate limit\n" +
+      "          and a shared OTP store, or verification breaks and every\n" +
+      "          ceiling multiplies by your replica count.\n",
+    );
+  }
 }
 
 /* ========================================================================== *

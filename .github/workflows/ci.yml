@@ -1,0 +1,67 @@
+name: CI
+
+# Cheap insurance for a repo whose history is mostly security fixes: every push
+# and every PR — including from forks — runs the same two commands a maintainer
+# runs locally. A green tick is not a security review, but it does stop a
+# refactor from silently deleting a guard that a test asserts.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test + typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          # Pinned to the packageManager field in package.json. Bump both together.
+          bun-version: 1.3.14
+
+      # --frozen-lockfile so a PR cannot pull a dependency the lockfile does not
+      # already name. The tree is two devDependencies deep; there is no reason
+      # for CI to resolve anything new.
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      # Two tests log expected warnings (a missing branch target, an invalid-URL
+      # submitLead). Those are assertions about failure tolerance — a clean log
+      # here would mean the assertions stopped running.
+      - name: Test
+        run: bun test
+
+  # The engine is shipped as source and imported straight from the browser, so a
+  # bare-specifier import is a runtime 404 on a visitor's phone rather than a
+  # build error anyone sees first. Nothing else enforces this invariant.
+  engine-has-no-dependencies:
+    name: engine stays zero-dependency
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Assert no runtime dependencies anywhere
+        run: bun run scripts/check-no-deps.mjs
+
+      - name: Assert every engine import is relative
+        run: bun run scripts/check-engine-imports.mjs

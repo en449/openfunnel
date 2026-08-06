@@ -82,6 +82,30 @@ OpenFunnel is designed to run in two modes depending on your workflow:
 - **Live Tool Sync:** Operates 24/7 without needing your personal computer open. Automatically pushes leads to Zapier, GoHighLevel, HubSpot, and Supabase.
 - **⚠️ Required before going live:** set `ADMIN_TOKEN` (and `TRUST_PROXY=1` if your host terminates TLS in front of you) in your server environment, or the console APIs stay locked to localhost and you will not be able to reach your lead inbox remotely. See [Security & Privacy](#-security--privacy).
 
+> **⚠️ Run exactly one instance, or plan for shared state first.**
+>
+> Rate limits, OTP challenges, the verified-email record and the hourly mail cap
+> are all plain `Map`s in the server process. They are not shared between
+> replicas and they reset on restart. That is fine — good, even — for one
+> instance, which is what most self-hosters need. It breaks in two specific ways
+> the moment you scale out, and neither one throws:
+>
+> - **Email verification fails intermittently.** An OTP issued by instance A is
+>   not in instance B's memory, so a visitor who gets load-balanced between
+>   requests is told their correct code is invalid.
+> - **Every ceiling silently multiplies by your replica count.** Three instances
+>   means three times the configured `MAIL_MAX_PER_HOUR` and three independent
+>   sets of per-IP rate-limit buckets. Your limits are still "on"; they are just
+>   three times looser than the number you set.
+>
+> Before you add a second instance you need an edge rate limit (Cloudflare,
+> your load balancer) and a shared OTP store (Redis, or a Supabase table). The
+> server prints this same warning at boot when `NODE_ENV=production`.
+>
+> **Autoscaling counts as scaling out.** A PaaS that quietly adds a replica
+> under load puts you here without a deploy — pin the instance count to 1 on
+> Render/Railway/Fly unless you have done the above.
+
 ---
 
 ## 🎨 How to Build & Launch Your Funnel
