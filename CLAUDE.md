@@ -20,11 +20,19 @@ bun run start          # runtime server, no watch
 bun test               # full suite (engine + runtime smoke tests)
 bun run typecheck      # tsc over the engine's JSDoc types + tsconfig.base.json
 bun run demo           # zero-build static demo on :4321 (scripts/serve.mjs)
+
+bun run scripts/check-no-deps.mjs         # no runtime deps in any workspace pkg
+bun run scripts/check-engine-imports.mjs  # every engine import browser-resolvable
 ```
 
 Run a single test file: `bun test packages/engine/test/logic.test.js`.
 
-`bun test` (82 tests) and `bun run typecheck` both pass on `main` — keep it that
+CI (`.github/workflows/ci.yml`) runs typecheck, the suite, and those two
+invariant checks on every push and PR. The checks exist because both failures
+they catch are invisible locally — Bun resolves a bare specifier and an
+extensionless import happily, and the 404 only lands on a visitor's phone.
+
+`bun test` (109 tests) and `bun run typecheck` both pass on `main` — keep it that
 way. Two tests log expected warnings (`branch target "nope" not found`, an
 invalid-URL `submitLead` failure); those are assertions about failure tolerance,
 not breakage.
@@ -33,7 +41,7 @@ not breakage.
 
 ```
 packages/engine/     the funnel runtime — zero-dep browser ESM, no build step
-apps/runtime/        single-file Bun server (server.js) — the only backend
+apps/runtime/        the only backend — server.js (router) + lib/ + routes/
 apps/app/            the console SPA (dashboard, builder, leads, analytics)
 apps/builder/        legacy standalone builder UI  (superseded by apps/app)
 apps/admin/          legacy standalone admin UI    (superseded by apps/app)
@@ -85,9 +93,40 @@ The engine mounts into any container in any framework and mutates nothing else.
   gate for third-party sharing. Its header defines what is and is not gated.
 - `src/persist.js` — localStorage resume. Fails silently by design.
 
-### apps/runtime/server.js
+### apps/runtime
 
-One file, `Bun.serve`, no framework. Routes:
+`Bun.serve`, no framework. `server.js` is the router and nothing else (~175
+lines): it owns the order routes are tried in and the admin gate, and delegates
+to `lib/` and `routes/`.
+
+```
+server.js            Bun.serve + route order + the privileged gate
+lib/config.js        paths, env, SLUG_RE, isInside — imports nothing else
+lib/log.js           oneLine, errSummary
+lib/http.js          responses, CORS surface, readJson, clientIp
+lib/ratelimit.js     the buckets, tooMany, MAIL_HOURLY_CAP
+lib/auth.js          safeEqual, loopback trust, requireAdmin, PRIVILEGED_PREFIXES
+lib/funnels.js       load/list/cache + publicFunnel redaction
+lib/preview.js       hasPreviewFlag, isPreviewRecord
+lib/webhook.js       egress guard (resolveSafeTarget) + delivery
+lib/capi.js          Meta Conversions API forward
+lib/email.js         settings, transports, OTP, lead notifications
+lib/html.js          esc, jsonScript, themeVars, funnelPage
+lib/csp.js           FUNNEL_BOOT_SCRIPT, its hash, custom code, funnelCsp
+lib/static.js        console + engine asset serving
+lib/ai.js            provider calls, parseJsonFromAiText
+routes/*.js          one module per surface; each returns null to fall through
+```
+
+`lib/config.js` is the bottom of the dependency graph and imports nothing from
+the runtime — keep it that way and import cycles cannot start.
+
+A route module exports `handle<Name>(req, ctx)` where `ctx` is
+`{ url, path, server }`, returning a `Response` or `null` to fall through.
+Adding a route means adding it to the right module; adding a *surface* means a
+new module plus one dispatch line in `server.js`.
+
+Routes:
 
 | Route | Auth | Purpose |
 | --- | --- | --- |
@@ -172,14 +211,25 @@ inbox and the autoresponder — then filtered out of the console. A stranger cou
 inject records the operator could never see. Both sides now call
 `isPreviewRecord`.
 
-**Privileged routes are gated in one place.** A single prefix check in the
-router runs `requireAdmin` for `/api/admin/*`, `/api/builder/*` and `/api/ai/*`
-before any handler sees the request, so a new endpoint under those prefixes is
-protected the moment it exists. Do not add a privileged route outside them, and
-do not weaken the gate: with `ADMIN_TOKEN` set it requires a bearer token, and
-without one it allows only direct loopback callers. A request carrying
-`x-forwarded-for` is never treated as loopback — otherwise anyone reaching a
-reverse-proxied deployment would inherit localhost's privileges.
+**Privileged routes are gated structurally.** `PRIVILEGED_PREFIXES` in
+`lib/auth.js` is the single definition of what "privileged" means
+(`/api/admin/*`, `/api/builder/*`, `/api/ai/*`). The router checks it, runs
+`isCrossSiteRequest` then `requireAdmin`, and dispatches `handleBuilder` /
+`handleAdmin` / `handleAi` **inside that branch** — so those handlers are
+unreachable except through both checks. A new endpoint in one of those modules
+is protected by where it lives, not by its author remembering.
+
+This used to be an early `if` with the handlers following it in file order:
+correct, but only for as long as nobody added a handler above it. Do not move a
+privileged handler out of the branch, do not add a privileged route under a
+different prefix, and do not weaken the gate: with `ADMIN_TOKEN` set it requires
+a bearer token, and without one it allows only direct loopback callers. A request
+carrying `x-forwarded-for` is never treated as loopback — otherwise anyone
+reaching a reverse-proxied deployment would inherit localhost's privileges.
+
+A test sweeps every privileged endpoint against both refusal modes (proxied →
+401, cross-site → 403) and asserts public ingest is *not* caught by the gate, so
+a route that escapes the branch fails CI rather than production.
 
 Loopback trust also validates the `Host` header against `LOOPBACK_HOST_RE` (plus
 `ALLOWED_HOSTS`). Without that, DNS rebinding walks straight through every other

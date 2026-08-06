@@ -34,6 +34,19 @@ const SPECIFIER_RE =
  * Line comments are only stripped when `//` is not preceded by a colon, so a
  * `https://` inside a string survives. Blanking a comment out rather than
  * deleting it keeps the line numbers in the error messages honest.
+ *
+ * KNOWN LIMITATION: this is regex-only and string-unaware, so a comment opener
+ * inside a string literal blinds it to imports after that point. Both of these
+ * get missed:
+ *
+ *   const CDN = "//cdn.example.com";   // swallows the rest of the line
+ *   const open = "/*";                 // swallows everything up to the next * /
+ *
+ * That is tolerable because engine imports sit on their own lines at the top of
+ * a file, above any such string — the failure mode is a missed violation, never
+ * a false alarm that blocks CI on correct code. Reach for a real parser only if
+ * this ever misses something real; a dependency here would be ironic given what
+ * the script exists to enforce.
  */
 function stripComments(source) {
   return source
