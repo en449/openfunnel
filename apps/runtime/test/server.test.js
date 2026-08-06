@@ -376,6 +376,74 @@ describe("privileged route protection", () => {
     const { settings } = await res.json();
     expect(settings.smtpHost).not.toContain("attacker.example");
   });
+
+  /**
+   * The three tests above pick a route each. These sweep the whole privileged
+   * surface, because the gate is meant to be structural: the router dispatches
+   * the builder/admin/AI handlers INSIDE the branch that runs
+   * `isCrossSiteRequest` + `requireAdmin`, so a handler is unreachable without
+   * both. Enumerating every endpoint is what makes that claim testable — a new
+   * route added to one of those modules is covered the moment it exists, and a
+   * route moved out of the branch fails here rather than in production.
+   *
+   * `/api/ai/*` matters most: both its routes accept an `apiKey` in the body, so
+   * ungated they are an open proxy to four paid APIs — and they fall back to the
+   * operator's own OPENAI_API_KEY when the body omits one.
+   */
+  const PRIVILEGED_ENDPOINTS = [
+    ["GET", "/api/admin/leads"],
+    ["GET", "/api/admin/stats"],
+    ["GET", "/api/admin/email-settings"],
+    ["POST", "/api/admin/email-settings"],
+    ["POST", "/api/admin/test-email"],
+    ["GET", "/api/builder/funnel/lead-gen"],
+    ["POST", "/api/builder/save"],
+    ["POST", "/api/builder/delete"],
+    ["POST", "/api/builder/duplicate"],
+    ["POST", "/api/ai/generate"],
+    ["POST", "/api/ai/improve-copy"],
+  ];
+
+  test("every privileged endpoint refuses a proxied caller", async () => {
+    for (const [method, path] of PRIVILEGED_ENDPOINTS) {
+      const res = await fetch(`${base}${path}`, {
+        method,
+        headers: { "content-type": "application/json", ...proxied },
+        body: method === "POST" ? "{}" : undefined,
+      });
+      expect(`${method} ${path} → ${res.status}`).toBe(`${method} ${path} → 401`);
+    }
+  });
+
+  test("every privileged endpoint refuses a cross-site browser request", async () => {
+    // `Sec-Fetch-Site` is set by the browser and cannot be forged by page
+    // script. Without this check, a page the operator merely visits can drive
+    // the console on a loopback-trust deploy — `readJson` ignores Content-Type,
+    // so the write goes out as a CORS *simple* request with no preflight to stop
+    // it. Refused before `requireAdmin`, because on loopback the caller is
+    // already "authorised".
+    for (const [method, path] of PRIVILEGED_ENDPOINTS) {
+      const res = await fetch(`${base}${path}`, {
+        method,
+        headers: { "content-type": "application/json", "sec-fetch-site": "cross-site" },
+        body: method === "POST" ? "{}" : undefined,
+      });
+      expect(`${method} ${path} → ${res.status}`).toBe(`${method} ${path} → 403`);
+    }
+  });
+
+  test("the public surface is NOT caught by the privileged gate", async () => {
+    // The mirror image, and the reason the gate is a prefix list rather than a
+    // default-deny: a funnel is embedded on the operator's marketing site, so
+    // ingest and the email challenge have to keep working cross-site. If this
+    // ever starts returning 403, embedded funnels stop capturing leads.
+    const res = await fetch(`${base}/api/lead`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "sec-fetch-site": "cross-site" },
+      body: JSON.stringify({ funnelId: "gate-check", lead: { email: "embedded@example.com" } }),
+    });
+    expect(res.status).toBe(202);
+  });
 });
 
 describe("builder & admin", () => {
