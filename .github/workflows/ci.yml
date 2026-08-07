@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -52,9 +52,13 @@ jobs:
   engine-has-no-dependencies:
     name: engine stays zero-dependency
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # Both steps take seconds; this is a runaway guard, not a budget. It was 5,
+    # and a run where GitHub was slow to hand out a hosted runner burned the
+    # whole allowance queueing and failed with "exceeded the maximum execution
+    # time" — a red tick that had nothing to do with the code.
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: oven-sh/setup-bun@v2
         with:
