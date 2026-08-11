@@ -266,6 +266,23 @@ PORT=3000
 FUNNELS_DIR=examples/
 DATA_DIR=.data/
 
+# Interface to bind. Loopback by default, so a fresh install is not reachable
+# from the rest of the network — which matters because with ADMIN_TOKEN unset
+# the console trusts loopback callers. Set 0.0.0.0 in a container or behind a
+# proxy, and set ADMIN_TOKEN when you do.
+HOST=127.0.0.1
+
+# Ceiling per JSONL sink, in bytes (default 64MB). At the cap the file rotates
+# to <name>.jsonl.1 and a fresh one starts, so the pair is bounded and the
+# newest records always survive. Ingest is public and unauthenticated, so
+# without this a stranger decides how much of your disk it uses.
+MAX_SINK_BYTES=
+
+# Most bytes an admin reader pulls into memory from a sink (default 8MB, newest
+# tail). The lead inbox and the stats page read these files; unbounded, the same
+# stranger decides how much your dashboard allocates.
+MAX_READ_BYTES=
+
 # Admin access — REQUIRED once this server is reachable off-host.
 # Guards the lead inbox, the funnel editor and your mail credentials.
 # Generate with: openssl rand -hex 32
@@ -525,10 +542,11 @@ clear if you do:
 - the leads themselves: names, emails and phone numbers, in request bodies.
 
 On Render, Railway, Fly.io or DigitalOcean App Platform this is handled for you —
-just set `TRUST_PROXY=1` so per-IP limits see the real client address. On a bare
-VPS, put nginx, Caddy or Cloudflare in front with a certificate (Caddy issues one
-automatically) and bind this process to `127.0.0.1` so it is only reachable
-through the proxy.
+just set `TRUST_PROXY=1` so per-IP limits see the real client address, and
+`HOST=0.0.0.0` so the container's port is reachable at all. On a bare VPS, put
+nginx, Caddy or Cloudflare in front with a certificate (Caddy issues one
+automatically) and leave `HOST` at its `127.0.0.1` default so this process is
+only reachable through the proxy.
 
 ### What the runtime does for you
 

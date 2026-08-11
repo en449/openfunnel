@@ -36,7 +36,7 @@
  * Run:  bun run dev   (from apps/runtime)   ·   PORT=3000 bun server.js
  */
 
-import { PORT, SUPABASE_ON, DEV, FUNNELS_DIR, DATA_DIR } from "./lib/config.js";
+import { HOST, PORT, SUPABASE_ON, DEV, FUNNELS_DIR, DATA_DIR } from "./lib/config.js";
 import { isPrivilegedPath, requireAdmin } from "./lib/auth.js";
 import { CORS, MAX_BODY, PUBLIC_CORS_PATHS, isCrossSiteRequest, json } from "./lib/http.js";
 import { handleAdmin } from "./routes/admin.js";
@@ -56,6 +56,11 @@ import { handleOtp } from "./routes/otp.js";
 // own `server` argument, so nothing inside the router depends on this binding.
 const server = import.meta.main ? Bun.serve({
   port: PORT,
+
+  // Loopback unless HOST says otherwise. Omitting this bound every interface,
+  // which on a default install (no ADMIN_TOKEN, so the admin gate trusts
+  // loopback) put the console in reach of the whole local network.
+  hostname: HOST,
 
   // Refuse an oversized body at the transport layer instead of buffering it.
   //
@@ -136,7 +141,8 @@ const server = import.meta.main ? Bun.serve({
 }) : null;
 
 if (server) {
-  console.log(`\n  OpenFunnel runtime → http://localhost:${server.port}`);
+  console.log(`\n  OpenFunnel runtime → http://${HOST === "0.0.0.0" ? "localhost" : HOST}:${server.port}`);
+  console.log(`  bound:   ${HOST}${HOST === "0.0.0.0" ? "  (all interfaces — set ADMIN_TOKEN)" : ""}`);
   console.log(`  funnels: ${FUNNELS_DIR}`);
   console.log(`  data:    ${DATA_DIR}${SUPABASE_ON ? "  (+ Supabase)" : ""}\n`);
 

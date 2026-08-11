@@ -4,7 +4,7 @@
  * lead, fires the `lead` event + `submitLead()`, then advances.
  */
 
-import { el } from "../dom.js";
+import { el, richText } from "../dom.js";
 import { validateForm } from "../validate.js";
 
 /** @type {Record<string, { input: string, type?: string, autocomplete?: string }>} */
@@ -196,7 +196,13 @@ export function renderForm(step, ctrl) {
     );
   }
 
-  if (step.consent) form.appendChild(el("p", { class: "of-consent", html: step.consent }));
+  // Markup, not text, so an operator can link a privacy policy — but through
+  // `richText()`, never `html:`. This field is the engine's only HTML sink and
+  // funnel documents are imported from templates and bug reports; raw
+  // `innerHTML` here turned an import into console takeover.
+  if (step.consent) {
+    form.appendChild(el("p", { class: "of-consent" }, [richText(step.consent)]));
+  }
 
   form.appendChild(
     el("div", { class: "of-actions" }, [

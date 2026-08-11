@@ -30,7 +30,11 @@ export { pipe } from "./piping.js";
  * @property {boolean} [trackEvents]  POST events to `eventEndpoint`. Default true.
  * @property {string} [eventEndpoint] Analytics ingest URL. Default "/api/events".
  * @property {string} [leadEndpoint]  Lead capture URL. Overridden by the funnel's
- *                                    `integrations.leadEndpoint` if set.
+ *                                    `integrations.leadEndpoint` ONLY when that
+ *                                    field stays on this origin — a document can
+ *                                    travel, so an absolute URL there would send
+ *                                    every lead elsewhere. This option is code
+ *                                    rather than data, so it always stands.
  * @property {boolean} [resume]       Resume a persisted session. Default true.
  * @property {boolean} [isPreview]    Preview mode flag inside visual builder.
  *                                    Suppresses analytics; see `Controller._emit`.

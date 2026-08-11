@@ -11,7 +11,18 @@
 
 import { CORS, json } from "./http.js";
 
-/** @type {Map<string, number[]>} sliding windows keyed by action + subject. */
+/**
+ * @typedef {{ windowMs: number, hits: number[] }} Bucket
+ * @type {Map<string, Bucket>} sliding windows keyed by action + subject.
+ *
+ * The window is stored WITH the bucket. It used to be a bare `number[]`, and the
+ * prune below then tested every bucket against whichever `windowMs` the current
+ * caller happened to pass. An exhausted bucket stops appending timestamps, so an
+ * hourly bucket sitting at its ceiling looked "older than 60s" to the very next
+ * `ingest:` call — which deletes it, resetting the limit. That made
+ * `MAIL_HOURLY_CAP`, the one ceiling whose key a caller cannot rotate, resettable
+ * about once a minute by any unauthenticated request to `/api/events`.
+ */
 const rateBuckets = new Map();
 
 /**
@@ -23,18 +34,19 @@ const rateBuckets = new Map();
  */
 export function rateLimit(key, max, windowMs) {
   const now = Date.now();
-  const hits = (rateBuckets.get(key) || []).filter((t) => now - t < windowMs);
+  const hits = (rateBuckets.get(key)?.hits || []).filter((t) => now - t < windowMs);
   if (hits.length >= max) {
-    rateBuckets.set(key, hits);
+    rateBuckets.set(key, { windowMs, hits });
     return false;
   }
   hits.push(now);
-  rateBuckets.set(key, hits);
+  rateBuckets.set(key, { windowMs, hits });
 
   // Opportunistic prune so a long-running server cannot grow this unbounded.
+  // Each bucket is judged against its OWN window, never the caller's.
   if (rateBuckets.size > 5000) {
     for (const [k, v] of rateBuckets) {
-      if (!v.length || now - v[v.length - 1] > windowMs) rateBuckets.delete(k);
+      if (!v.hits.length || now - v.hits[v.hits.length - 1] > v.windowMs) rateBuckets.delete(k);
     }
   }
   return true;

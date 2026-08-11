@@ -9,7 +9,7 @@
  * field, so a new section type lands here once and every step type gains it.
  */
 
-import { el } from "../dom.js";
+import { el, embedUrl } from "../dom.js";
 import { pipe } from "../piping.js";
 
 /**
@@ -457,15 +457,15 @@ function renderCalculator(block, data) {
 
 /** @param {import('../types.js').VideoBlock} block */
 function renderVideo(block) {
-  const isEmbed = /youtube\.com|youtu\.be|vimeo\.com|player\./.test(block.src);
-  if (isEmbed) {
-    // Normalise common share urls to embeddable ones.
-    let src = block.src;
-    const yt = src.match(/(?:youtu\.be\/|youtube\.com\/watch\?v=)([\w-]+)/);
-    if (yt) src = `https://www.youtube.com/embed/${yt[1]}`;
+  // A player URL becomes an iframe; anything else is a file for <video>. Only
+  // the iframe path is gated — that is the one that executes on load. A `<video
+  // src>` renders or it doesn't, so validating it would only turn a `data:` URI
+  // into a silently empty player.
+  const embed = embedUrl(block.src);
+  if (embed) {
     return el("div", { class: "of-block-video" }, [
       el("iframe", {
-        src,
+        src: embed,
         allow: "accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture",
         allowfullscreen: true,
         loading: "lazy",

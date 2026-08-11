@@ -297,6 +297,11 @@
 /**
  * A contact-capture form.
  *
+ * `consent` is the one field rendered as markup rather than text, so a consent
+ * line can link a privacy policy. It is filtered through `richText()`: inline
+ * formatting and `<a href>` survive, every attribute and every other element
+ * does not. Write plain text with a link, not layout.
+ *
  * @typedef {StepBase & {
  *   type: "form",
  *   fields: FormField[],

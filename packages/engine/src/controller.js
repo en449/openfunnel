@@ -9,7 +9,7 @@
  * keeps the funnel logic in one auditable place.
  */
 
-import { el, clear, uid, prefersReducedMotion, isNavigableUrl, hasPreviewFlag } from "./dom.js";
+import { el, clear, uid, prefersReducedMotion, isNavigableUrl, isSameOriginUrl, hasPreviewFlag } from "./dom.js";
 import { resolveNext } from "./branching.js";
 import { renderStep } from "./render/index.js";
 import { applyTheme, loadThemeFont } from "./theme.js";
@@ -185,8 +185,16 @@ export class Controller {
     // Lead capture itself is never gated on consent: the visitor just filled the
     // form in and pressed submit. The consent signal rides along so the server
     // can decide whether to forward the lead onward to an ad platform.
+    // The DOCUMENT may name the endpoint, but only on this origin. A funnel
+    // travels — templates, shared packs, bug reports — so an absolute URL here
+    // is lead exfiltration written as configuration: every lead goes to that
+    // origin, the operator's inbox reads zero, and nothing is logged anywhere.
+    // The server strips it from the copy it serves, but the engine also mounts
+    // standalone in someone else's page, where no CSP or redaction is in play.
+    // The embedder's own `options.leadEndpoint` is code, not data, so it stands.
+    const docEndpoint = this.funnel.integrations?.leadEndpoint;
     void sendLead(this.state.lead, this.state.answers, {
-      endpoint: this.funnel.integrations?.leadEndpoint || this.options.leadEndpoint,
+      endpoint: isSameOriginUrl(docEndpoint) ? docEndpoint : this.options.leadEndpoint,
       funnelId: this.funnel.id,
       sessionId: this.state.sessionId,
       meta: { consent: consentSignal(this.funnel, this.key) },

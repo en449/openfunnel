@@ -239,15 +239,14 @@ export function funnelCsp(funnel) {
     hosts.img?.forEach((h) => img.add(h));
   }
 
-  // A funnel may post leads to the operator's own backend instead of ours.
-  const leadEndpoint = integrations.leadEndpoint;
-  if (typeof leadEndpoint === "string" && /^https?:\/\//i.test(leadEndpoint)) {
-    try {
-      connect.add(new URL(leadEndpoint).origin);
-    } catch {
-      /* unparseable endpoint — the engine's fetch will fail on its own */
-    }
-  }
+  // `integrations.leadEndpoint` gets NO allowance here. It used to add its own
+  // origin to `connect-src`, which meant a funnel document could name where the
+  // leads go and then authorise the browser to send them there — the CSP
+  // certifying the exfiltration it exists to prevent. `publicFunnel()` now keeps
+  // the field only when it is a path on this server, so `'self'` already covers
+  // every endpoint a browser can be told to use. An operator forwarding leads
+  // elsewhere does it server-side through the webhook, where the destination
+  // comes from the environment rather than from a document someone imported.
 
   // Operator-pasted script, only where the deployment has opted in.
   const custom = customCode(funnel);

@@ -33,10 +33,10 @@ say so and how you want to be named.
 
 - Anything requiring the operator's own admin token, which is total access by
   design. There is no privilege model below "admin" yet.
-- Missing hardening on the **legacy** UIs in `apps/builder` and `apps/admin`
-  (mounted at `/_builder/*`, `/_admin/*`). They are superseded by `apps/app` and
-  are on the way out. Still tell us if one of them can be used to attack the
-  main console.
+  (The legacy standalone UIs that used to be listed here — `apps/builder` and
+  `apps/admin`, mounted at `/_builder/*` and `/_admin/*` — are gone. Unmaintained
+  code on the console's own origin is not a category worth triaging, so it was
+  removed rather than scoped out.)
 - Reports that a self-hoster can configure this insecurely (running it public
   with no `ADMIN_TOKEN`, pointing a webhook somewhere hostile). Documented
   footguns are bugs in the docs; tell us about those too, just not as embargoed

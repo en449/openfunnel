@@ -23,10 +23,22 @@ import { join, resolve, sep } from "node:path";
 export const REPO_ROOT = resolve(import.meta.dir, "../../..");
 export const ENGINE_SRC = join(REPO_ROOT, "packages/engine/src");
 export const APP_DIR = join(REPO_ROOT, "apps/app");
-export const BUILDER_DIR = join(REPO_ROOT, "apps/builder");
-export const ADMIN_DIR = join(REPO_ROOT, "apps/admin");
 
 export const PORT = Number(process.env.PORT || 3000);
+
+/**
+ * Interface to bind. Loopback by default, which is what the README already tells
+ * operators to do and what the boot banner already claimed was happening —
+ * neither was true, because `Bun.serve` was called with no `hostname` and so took
+ * every interface, with no way to change it short of editing this file.
+ *
+ * Loopback is the safe default rather than a convenience one: with `ADMIN_TOKEN`
+ * unset the admin gate trusts loopback callers, so binding `0.0.0.0` on a shared
+ * or untrusted network handed the console to anyone on that network. Set
+ * `HOST=0.0.0.0` deliberately — in a container, or behind a proxy — and set
+ * `ADMIN_TOKEN` when you do.
+ */
+export const HOST = process.env.HOST || "127.0.0.1";
 export const FUNNELS_DIR = resolve(process.env.FUNNELS_DIR || join(REPO_ROOT, "examples"));
 export const DATA_DIR = resolve(process.env.DATA_DIR || join(REPO_ROOT, ".data"));
 export const DEV = process.env.NODE_ENV !== "production";

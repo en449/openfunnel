@@ -86,8 +86,7 @@ export function cacheFunnel(slug, funnel) {
  * keeping the endpoint private — and it stops the same lead being delivered
  * twice, once from the browser and once from here.
  */
-// `leadEndpoint` deliberately stays: it is a plain path the engine needs in
-// order to know where to POST, and it carries no secret.
+// `leadEndpoint` stays, but only as a SAME-ORIGIN PATH — see `sameOriginPath`.
 const SERVER_ONLY_INTEGRATIONS = [
   "webhookUrl",
   "webhook",
@@ -103,6 +102,35 @@ const SERVER_ONLY_INTEGRATIONS = [
   "secretToken",
 ];
 
+/** Stand-in origin: this server has no fixed public URL to resolve against. */
+const RELATIVE_BASE = "https://openfunnel.invalid";
+
+/**
+ * Is this a path on this server, rather than somewhere else entirely?
+ *
+ * Resolved through the URL parser, not pattern-matched. A `startsWith("/")` test
+ * that also rejects `//` and `/\` looks complete and is not: the parser strips
+ * every ASCII tab, newline and carriage return from anywhere in the input before
+ * resolving, so `"/\t/evil.tld/collect"` — one JSON escape — passes all three
+ * string tests and still resolves to `https://evil.tld/collect` in the browser
+ * that eventually fetches it. Asking the parser what the string becomes is the
+ * only check that cannot disagree with the thing doing the fetching.
+ *
+ * The leading-slash test stays as well, so a URL that happens to name the
+ * sentinel host cannot pass as a path.
+ *
+ * @param {unknown} value
+ * @returns {boolean}
+ */
+function sameOriginPath(value) {
+  if (typeof value !== "string" || !value.startsWith("/")) return false;
+  try {
+    return new URL(value, RELATIVE_BASE).origin === RELATIVE_BASE;
+  } catch {
+    return false;
+  }
+}
+
 /** @param {any} funnel @returns {any} a copy safe to hand to a browser. */
 export function publicFunnel(funnel) {
   if (!funnel) return funnel;
@@ -115,6 +143,27 @@ export function publicFunnel(funnel) {
   if (clean.integrations) {
     const integrations = { ...clean.integrations };
     for (const key of SERVER_ONLY_INTEGRATIONS) delete integrations[key];
+
+    // A cross-origin `leadEndpoint` is lead exfiltration wearing a config field.
+    // The engine prefers `integrations.leadEndpoint` over the endpoint the page
+    // supplies, the field was deliberately left in the public copy, and
+    // `funnelCsp` used to widen `connect-src` to whatever origin it named — so
+    // all three layers stepped aside for one string in an imported document.
+    // Every lead then goes to that origin instead: the operator's inbox reads
+    // zero, the server logs nothing, and the funnel looks healthy.
+    //
+    // Posting to your own backend is still supported — as a path on this server,
+    // which is what the field is documented to be. Anything else is dropped and
+    // named in the log, because a silently ignored setting is its own bug report.
+    if (integrations.leadEndpoint != null && !sameOriginPath(integrations.leadEndpoint)) {
+      console.warn(
+        `[runtime] funnel "${clean.slug || clean.id || "?"}" sets a non-path integrations.leadEndpoint — ` +
+          "ignoring it. Lead capture must post to a path on this server; a full URL here would send " +
+          "every lead to that origin. Use a webhook (server-side, env or funnel document) to forward leads.",
+      );
+      delete integrations.leadEndpoint;
+    }
+
     clean.integrations = integrations;
   }
   return clean;

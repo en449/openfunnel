@@ -22,7 +22,7 @@
  * like every other renderer.
  */
 
-import { el, isNavigableUrl } from "../dom.js";
+import { el, embedUrl, isNavigableUrl } from "../dom.js";
 import { pipe } from "../piping.js";
 import { renderBlocks, ctaButton } from "./blocks.js";
 
@@ -148,14 +148,14 @@ function renderHero(step, ctrl, layout, bg, hasMediaBg, data) {
 /** @param {import('../types.js').ImageBlock|import('../types.js').VideoBlock} media */
 function renderHeroMedia(media) {
   if (media.type === "video") {
-    const isEmbed = /youtube\.com|youtu\.be|vimeo\.com|player\./.test(media.src || "");
-    if (isEmbed) {
-      let src = media.src;
-      const yt = src.match(/(?:youtu\.be\/|youtube\.com\/watch\?v=)([\w-]+)/);
-      if (yt) src = `https://www.youtube.com/embed/${yt[1]}`;
+    // Same rule as `renderVideo` in blocks.js, same helper: a player URL is
+    // parsed and host-matched before it is allowed into an iframe src. The
+    // `<video>` fallback is not gated — see the note there.
+    const embed = embedUrl(media.src);
+    if (embed) {
       return el("div", { class: "of-hero-media of-hero-media-video" }, [
         el("iframe", {
-          src,
+          src: embed,
           allow: "accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture",
           allowfullscreen: true,
           loading: "lazy",

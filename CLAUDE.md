@@ -32,10 +32,16 @@ invariant checks on every push and PR. The checks exist because both failures
 they catch are invisible locally — Bun resolves a bare specifier and an
 extensionless import happily, and the 404 only lands on a visitor's phone.
 
-`bun test` (109 tests) and `bun run typecheck` both pass on `main` — keep it that
-way. Two tests log expected warnings (`branch target "nope" not found`, an
-invalid-URL `submitLead` failure); those are assertions about failure tolerance,
-not breakage.
+`bun test` (128 tests) and `bun run typecheck` both pass on `main` — keep it that
+way. Several tests log expected warnings (`branch target "nope" not found`, an
+invalid-URL `submitLead` failure, a refused non-path `leadEndpoint`, a sink
+rotation); those are assertions about failure tolerance, not breakage.
+
+One known failure that is not this codebase's: `ingest > refuses an oversized body
+without buffering it` expects Bun to answer 413 from `maxRequestBodySize` and gets
+400 on Bun 1.3.13. `package.json` pins `bun@1.3.14`, whose changelog fixes exactly
+that path (a chunked body over the limit with a pending-Promise handler). It fails
+identically on the pre-patch tree — run the pinned Bun before investigating it.
 
 ## Layout
 
@@ -43,8 +49,6 @@ not breakage.
 packages/engine/     the funnel runtime — zero-dep browser ESM, no build step
 apps/runtime/        the only backend — server.js (router) + lib/ + routes/
 apps/app/            the console SPA (dashboard, builder, leads, analytics)
-apps/builder/        legacy standalone builder UI  (superseded by apps/app)
-apps/admin/          legacy standalone admin UI    (superseded by apps/app)
 examples/*.json      funnel documents — this is the funnel "database"
 demo/                offline zero-build demo page
 .data/               JSONL lead/event sinks (gitignored)
@@ -253,10 +257,10 @@ carrying a cross-site `Origin` or `Sec-Fetch-Site`, checked *before*
   (`/api/lead`, `/api/events`, `/api/otp/*`). Answering `OPTIONS` with
   `Allow-Origin: *` for every path green-lit the preflight for privileged
   routes. Do not widen that set.
-- A funnel document is operator-authored and the engine trusts it (`form.js`
-  renders `step.consent` as HTML). That trust is only sound while the write path
-  is not forgeable, so anything that weakens the CSRF check re-opens stored XSS
-  on the console origin.
+- A funnel document is operator-authored and the engine renders one field of it
+  as markup (`step.consent`). That is now filtered through `richText()`, but a
+  forgeable write path is still a stored-content hole on the console origin, so
+  anything that weakens the CSRF check matters regardless.
 
 **`x-forwarded-for` is not trusted unless `TRUST_PROXY` is set.** It is a request
 header, so honouring it unconditionally made every per-IP limit bypassable by
@@ -368,6 +372,41 @@ settable through the API.
 **Path traversal.** Any route that reads or writes a file validates against
 `SLUG_RE` *and* checks the resolved path still `startsWith` its root dir. Copy
 that pattern for any new file-touching route.
+
+**A funnel document is operator-authored, not operator-trusted.** Documents
+arrive from templates, shared packs and bug reports, and the console previews an
+imported one in a same-origin, unsandboxed iframe — so any field that reaches a
+sink has to be filtered by the engine itself, not by the CSP that only the
+`/f/:slug` route sends. Three rules, one per sink that was found open:
+
+- **Markup:** `el(..., { html })` is `innerHTML` and takes string literals only.
+  A funnel field rendered as markup goes through `richText()` in `dom.js`, which
+  rebuilds the fragment from an allowlist so no attribute survives except an
+  `href` that passed `isNavigableUrl`. `step.consent` is the only such field
+  today; adding a second means calling `richText`, not widening the allowlist.
+- **iframes:** an embed URL goes through `embedUrl()`, which parses and matches
+  the hostname by equality. The check it replaced was an unanchored regex, so
+  `javascript:alert(1)//player.` satisfied it — and an iframe `src` executes on
+  load with nothing to click.
+- **Endpoints:** `integrations.leadEndpoint` is honoured only on this origin —
+  `publicFunnel()` drops anything else and logs the funnel, and `Controller`
+  re-checks with `isSameOriginUrl` because the engine also mounts standalone
+  where no redaction or CSP applies. A full URL there sent every lead to that
+  origin, and `funnelCsp` used to add the origin to `connect-src`, so the CSP
+  certified the exfiltration. Forwarding leads onward is a server-side webhook,
+  whose destination comes from the environment or the funnel document and never
+  from a visitor's request.
+
+**A URL check resolves the URL. It never pattern-matches the string.**
+`isNavigableUrl`, `isSameOriginUrl` and `sameOriginPath` all construct a `URL`
+and ask what came out. They used to test `startsWith("//")` and `startsWith("/\\")`,
+which reads the string a human sees rather than the one the browser acts on: the
+WHATWG parser deletes every ASCII tab, newline and carriage return from anywhere
+in the input *before* resolving, so `"/\t/evil.tld/x"` — one JSON escape — passed
+all three tests and still arrived as `https://evil.tld/x`. That defeated the
+`leadEndpoint` guard and the `href` filter in `richText` with the same character.
+Any new check on an operator-supplied URL parses it; a textual test will lose
+this race again in a way the test suite reads as correct.
 
 **Escaping.** Server-rendered HTML goes through `esc()`; funnel JSON embedded in
 a `<script>` goes through `jsonScript()` (which escapes `<`, U+2028, U+2029).
@@ -528,5 +567,17 @@ once per accumulated listener.
   and a shared store.
 - Supabase and webhook forwarding are opt-in via env; with nothing configured
   everything still works against local JSONL files.
-- `apps/builder` and `apps/admin` are the older standalone UIs still mounted at
-  `/_builder/*` and `/_admin/*`. New work belongs in `apps/app`.
+- `apps/builder` and `apps/admin` (the legacy standalone UIs at `/_builder/*`
+  and `/_admin/*`) are **deleted**. All console work belongs in `apps/app`. Do
+  not restore them: `builder.js` broadcast the whole funnel document, including
+  `webhookSecret`, with `postMessage(doc, "*")` — the only `"*"` targetOrigin in
+  the codebase — to whatever origin the preview iframe had navigated to, which an
+  ordinary redirect-to-Calendly success step was enough to trigger.
+- The server binds `HOST` (default `127.0.0.1`). It used to pass no `hostname` at
+  all, so it took every interface while the banner said "localhost". A default
+  install has no `ADMIN_TOKEN` and therefore trusts loopback, which is exactly
+  what a 0.0.0.0 bind hands to the local network.
+- `.data/*.jsonl` rotates at `MAX_SINK_BYTES` (64MB) to `<name>.jsonl.1`, and
+  `readJsonlRecords` reads only the newest `MAX_READ_BYTES` (8MB). Ingest is
+  public, so both files are anonymously writable in size; treat this directory as
+  a buffer, not an archive, and forward anything you need to keep.
