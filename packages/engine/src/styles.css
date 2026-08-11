@@ -1030,6 +1030,11 @@ textarea.of-input { min-height: 96px; resize: vertical; }
 /* ---- OpenFunnel Branding Footer ------------------------------------------ */
 .of-branding-footer {
   flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
   text-align: center;
   padding: 6px 12px 10px;
   font-size: 11px;
@@ -1050,5 +1055,16 @@ textarea.of-input { min-height: 96px; resize: vertical; }
 }
 .of-branding-link strong {
   font-weight: 700;
+}
+/* The AGPL §13 source offer. Always rendered — see SOURCE_URL in controller.js.
+   Styled like the legal footer links a German funnel needs anyway (Impressum,
+   Datenschutz), not like a badge, so it reads as what it is. */
+.of-source-link {
+  color: var(--of-text-secondary, #64748b);
+  text-decoration: underline;
+  font-weight: 500;
+}
+.of-source-link:hover {
+  color: var(--of-primary, inherit);
 }
 

@@ -176,10 +176,13 @@ light/dark mode and three button styles (`flat`, `glow`, `pressable-3d`).
 **Settings** holds the funnel-level behaviour flags — back button, swipe
 navigation, resume-on-return and the GDPR consent bar. These are saved onto the
 funnel *document*, not your browser, which is what lets them reach a real
-visitor. **Hide OpenFunnel Branding** removes the "Powered by OpenFunnel" footer;
-note that AGPL-3.0 still requires you to offer your source to users of a modified
-public deployment, so hiding the footer is a styling choice, not a licence
-waiver.
+visitor. **Hide OpenFunnel Branding** removes the "Powered by OpenFunnel"
+attribution. It does **not** remove the source link beside it: AGPL-3.0 §13
+requires a networked modified version to offer its Corresponding Source to the
+visitors interacting with it, so that link ships on every funnel with no off
+switch. Set `branding.sourceLabel` to translate it ("Quellcode"); put it in the
+same footer as your Impressum and Datenschutz links, which a German deployment
+needs regardless.
 
 > **Preset themes hotlink Google Fonts.** Every built-in preset names a
 > non-system font family, so a funnel using one asks `fonts.googleapis.com` for
@@ -205,8 +208,8 @@ Share your live funnel link (`/f/your-funnel-slug`). Review submitted leads in y
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/luispdoesai/openFunnel.git
-   cd openFunnel
+   git clone https://github.com/en449/openfunnel.git
+   cd openfunnel
    ```
 
 2. **Install dependencies with [Bun](https://bun.sh):**
@@ -666,3 +669,37 @@ features, and are listed here so you don't ship a campaign depending on one:
 This project is licensed under the **GNU Affero General Public License v3.0** ([AGPL-3.0](LICENSE)).
 
 AGPL v3 ensures OpenFunnel remains free and open-source forever. Anyone hosting a modified version as a public service must release their source code back to the open-source community.
+
+### Modified version — notice of changes (AGPL-3.0 §5(a))
+
+This repository is a **modified fork** of
+[luispdoesai/openFunnel](https://github.com/luispdoesai/openFunnel), branched at
+commit `4164afd` (2026-08-07). Upstream is unaffiliated with these changes and
+carries no responsibility for them.
+
+Changes made in this fork:
+
+- **2026-08-10 — security hardening** following an independent audit of the
+  upstream tree (findings and reasoning in [`security-audit/`](security-audit/)):
+  the server binds `HOST` rather than every interface, lead/read sinks are
+  size-capped, `x-forwarded-for` is only honoured behind `TRUST_PROXY`, webhook
+  targets are resolved and pinned before the request, URL checks parse instead of
+  pattern-matching, and funnel-document fields that reach markup, iframes or
+  endpoints are filtered by the engine itself.
+- **2026-08-10 — the legacy standalone UIs `apps/builder` and `apps/admin` were
+  deleted.** They were superseded by `apps/app`, and `builder.js` broadcast the
+  whole funnel document — `webhookSecret` included — with `postMessage(doc, "*")`.
+- **2026-08-11 — licence compliance:** the full AGPL-3.0 text now ships in
+  [`LICENSE`](LICENSE) (§4), this notice was added (§5(a)), and every funnel page
+  renders a source link to the deployment's Corresponding Source (§13).
+
+### Running a modified version publicly
+
+If you deploy your own fork, §13 applies to you the same way: point `SOURCE_URL`
+in [`packages/engine/src/controller.js`](packages/engine/src/controller.js) at
+**your** published tree. It ships pointing at this one, and a link to somebody
+else's source satisfies nothing.
+
+Client funnel documents, leads and credentials are data, not part of the Program
+— the licence never asks you to publish those. Keep them out of the tree you
+publish; `FUNNELS_DIR` defaults to `examples/`, which is inside it.

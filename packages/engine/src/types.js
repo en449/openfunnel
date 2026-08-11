@@ -458,8 +458,14 @@
  * visitor. `Controller.mount` also honours the `of.branding.hidden` key and the
  * `hideBranding` option, so the operator's own preview matches what ships.
  *
+ * `hidden` covers the attribution only. The AGPL §13 source link in the same
+ * footer is always rendered and has no off switch — see `SOURCE_URL` in
+ * `controller.js` for why.
+ *
  * @typedef {Object} FunnelBranding
- * @property {boolean} [hidden]  Suppress the footer. Shown by default.
+ * @property {boolean} [hidden]       Suppress the "Powered by" line. Shown by default.
+ * @property {string} [sourceLabel]   Label for the source link, for non-English
+ *                                    funnels ("Quellcode"). Defaults to "Source code".
  */
 
 /**

@@ -237,6 +237,7 @@ export interface FunnelConsent {
 /** "Powered by OpenFunnel" footer. Shown unless `hidden` is set. */
 export interface FunnelBranding {
   hidden?: boolean;
+  sourceLabel?: string;
 }
 
 export interface Funnel {

@@ -119,6 +119,27 @@ test("back button returns to the previous step", async () => {
   expect(app.querySelector(".of-headline")?.textContent).toBe("Pick");
 });
 
+// AGPL-3.0 §13: a networked modified version must offer its Corresponding Source
+// to the visitors interacting with it. `branding.hidden` suppresses the "Powered
+// by" attribution, which the licence does not require — it must never take the
+// source link with it, or turning off the badge silently ends compliance.
+test("the source link survives every way of hiding the branding", async () => {
+  const { createFunnel } = await import("../src/index.js");
+  document.body.innerHTML = '<div id="app"></div>';
+  const app = /** @type {HTMLElement} */ (document.getElementById("app"));
+  const funnel = funnelFixture();
+  funnel.branding = { hidden: true, sourceLabel: "Quellcode" };
+  localStorage.setItem("of.branding.hidden", "true");
+  createFunnel(app, funnel, { trackEvents: false, resume: false, hideBranding: true });
+  localStorage.removeItem("of.branding.hidden");
+
+  expect(app.querySelector(".of-branding-link")).toBe(null);
+  const link = /** @type {HTMLAnchorElement} */ (app.querySelector(".of-source-link"));
+  expect(link).not.toBe(null);
+  expect(link.textContent).toBe("Quellcode");
+  expect(link.getAttribute("href")).toMatch(/^https:\/\/\S+$/);
+});
+
 test("progress bar advances as steps are completed", async () => {
   const { app } = await freshEngine();
   const fill = /** @type {HTMLElement} */ (app.querySelector(".of-progress-fill"));

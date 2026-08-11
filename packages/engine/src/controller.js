@@ -18,6 +18,22 @@ import { buildConsentBar, consentSignal, marketingAllowed } from "./consent.js";
 import { submitLead as sendLead, trackEvent } from "./leads.js";
 import { loadState, saveState, clearState } from "./persist.js";
 
+/**
+ * Where a visitor can obtain the Corresponding Source of this deployment.
+ *
+ * AGPL-3.0 §13 requires a modified version offered over a network to
+ * "prominently offer all users interacting with it remotely … an opportunity to
+ * receive the Corresponding Source". The visitors of a funnel page are those
+ * users, so the link below ships on every funnel and is deliberately NOT
+ * suppressible by `branding.hidden` — that flag governs the "Powered by"
+ * attribution, which the licence does not require. A compliance obligation must
+ * not sit behind a field every operator will switch off.
+ *
+ * Fork it and this constant has to follow, pointing at the source of what is
+ * actually deployed. A link to somebody else's tree offers nothing.
+ */
+const SOURCE_URL = "https://github.com/en449/openfunnel";
+
 export class Controller {
   /**
    * @param {HTMLElement} container  Where the funnel mounts.
@@ -118,16 +134,23 @@ export class Controller {
       this.options.hideBranding ||
       (typeof localStorage !== "undefined" && localStorage.getItem("of.branding.hidden") === "true")
     );
-    if (!hideBranding) {
-      this.container.appendChild(
-        el("div", { class: "of-branding-footer" }, [
-          el("span", {
-            class: "of-branding-link",
-            html: "⚡ Powered by <strong>OpenFunnel</strong>",
-          }),
-        ])
-      );
-    }
+    this.container.appendChild(
+      el("div", { class: "of-branding-footer" }, [
+        hideBranding
+          ? null
+          : el("span", {
+              class: "of-branding-link",
+              html: "⚡ Powered by <strong>OpenFunnel</strong>",
+            }),
+        el("a", {
+          class: "of-source-link",
+          href: SOURCE_URL,
+          target: "_blank",
+          rel: "noopener license",
+          text: this.funnel.branding?.sourceLabel || "Source code",
+        }),
+      ])
+    );
 
     const consentBar = buildConsentBar(this.funnel, (decision) => {
       if (decision === "granted") this._grantConsent();
