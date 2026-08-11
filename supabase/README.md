@@ -7,12 +7,17 @@ Phase 1 database. Design and rationale live in [../PHASE-1-PLAN.md](../PHASE-1-P
 migrations/
   20260811120000_phase1_schema.sql     tables, indexes, RLS
   20260811120100_phase1_functions.sql  the state machine, ingest, rate limiter
+  20260811130000_otp_functions.sql     issue/verify/is-verified for the challenge
 seed.sql                               synthetic client + funnel + targets (dev only)
 cron.sql                               pg_cron jobs — run by hand, see the header
 postgrest.local.conf                   standalone PostgREST for local dev
 tests/state-machine.sql                the queue's behaviour, as assertions
+tests/otp.sql                          the challenge's behaviour, as assertions
 tests/db-integration.mjs               lib/db.js → PostgREST → those functions
 ```
+
+`seed.sql` and `cron.sql` are **not** migrations and must never be applied as ones —
+`cron.sql` needs a deployed drain URL and the secret in Vault, `seed.sql` is dev fixtures.
 
 ## Running it locally
 
@@ -35,6 +40,8 @@ for f in supabase/migrations/*.sql supabase/seed.sql; do
 done
 psql -h 127.0.0.1 -p 54399 -U postgres -d of_dev -v ON_ERROR_STOP=1 \
      -f supabase/tests/state-machine.sql
+psql -h 127.0.0.1 -p 54399 -U postgres -d of_dev -v ON_ERROR_STOP=1 \
+     -f supabase/tests/otp.sql
 ```
 
 The test ends in `ROLLBACK`, so it leaves nothing behind and can be run against any database
@@ -43,7 +50,12 @@ Expected last line:
 
 ```
 NOTICE:  state-machine check: all assertions passed
+NOTICE:  otp check: all assertions passed
 ```
+
+Do NOT paste a migration into the Supabase SQL editor instead. It applies the SQL but writes
+no row to the migration ledger, so the next `db push` re-runs it and "what is actually applied"
+stops being answerable. `supabase migration list` is the check.
 
 ## The runtime against a real database
 
@@ -74,6 +86,7 @@ against a linked remote project runs the migrations server-side.
 supabase link --project-ref <ref>
 supabase db push
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/tests/state-machine.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/tests/otp.sql
 # then cron.sql by hand, once /api/internal/drain is deployed
 ```
 
