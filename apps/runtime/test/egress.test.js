@@ -16,6 +16,7 @@
 import { describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { isInside, isPreviewRecord, isSafeWebhookTarget, isSafeWebhookTargetResolved, resolveSafeTarget } from "../server.js";
+import { withDnsTimeout } from "../lib/webhook.js";
 
 describe("isSafeWebhookTarget", () => {
   test("allows ordinary public destinations", () => {
@@ -220,5 +221,60 @@ describe("isPreviewRecord — suppression must need a real flag", () => {
     // Only an explicit `true` counts, so a stray string cannot discard a lead.
     expect(isPreviewRecord({ preview: "no" })).toBe(false);
     expect(isPreviewRecord({ isPreview: 0 })).toBe(false);
+  });
+});
+
+/* ========================================================================== *
+ *  The name lookup is bounded
+ * ========================================================================== */
+
+// `dns.lookup()` takes no signal and no timeout. It sits on the delivery path
+// before any per-attempt signal exists, so against a nameserver that black-holes
+// queries nothing else in the system bounds it — not DELIVERY_TIMEOUT_MS, not
+// DRAIN_BUDGET_MS, not the caller's own abort. One such target inside a drain
+// chunk holds up the whole batch and can carry the invocation past pg_net's
+// 55s timeout.
+//
+// Tested at the wrapper rather than through `resolveSafeTarget`, because
+// `dns.lookup` goes through getaddrinfo rather than the resolver `dns.setServers`
+// configures — there is no hermetic way to make a real lookup hang.
+describe("withDnsTimeout", () => {
+  // The slow lookup RESOLVES late rather than never settling, and that detail is
+  // the test rather than an incidental. Handed a promise that never settles, a
+  // regression in the timeout does not fail this test — it hangs it: measured at
+  // 100% CPU for a full 60 seconds with no verdict, `await` or not. A test
+  // guarding an unbounded-wait bug must not itself wait unboundedly when the
+  // bound is gone. Settling at 2s means the broken case fails in 2s and the
+  // working case rejects in 250ms, and the explicit per-test timeout below is
+  // the backstop if either assumption ever stops holding.
+  test(
+    "a lookup slower than the ceiling is given up on rather than waited out",
+    async () => {
+      process.env.DNS_TIMEOUT_MS = "250";
+      try {
+        const slow = new Promise((resolve) => setTimeout(() => resolve([{ address: "93.184.216.34", family: 4 }]), 2000));
+        // No elapsed-time assertion, deliberately. The lookup RESOLVES, so the
+        // only thing in the race that can reject is the timer — a rejection is
+        // already proof it fired first, and measuring the clock as well would
+        // add a flake window (contention delays `setTimeout`, pushing elapsed
+        // time UP toward any ceiling) in exchange for nothing. The per-test
+        // timeout below is the backstop.
+        await expect(withDnsTimeout(slow)).rejects.toThrow("dns_timeout");
+      } finally {
+        delete process.env.DNS_TIMEOUT_MS;
+      }
+    },
+    3000,
+  );
+
+  test("a lookup that answers in time is passed straight through", async () => {
+    const answers = [{ address: "93.184.216.34", family: 4 }];
+    expect(await withDnsTimeout(Promise.resolve(answers))).toEqual(answers);
+  });
+
+  // A rejected lookup must still reject — the timeout may only ever make this
+  // refuse more, never turn a failed resolution into a usable one.
+  test("a lookup that fails still fails", async () => {
+    await expect(withDnsTimeout(Promise.reject(new Error("ENOTFOUND")))).rejects.toThrow("ENOTFOUND");
   });
 });

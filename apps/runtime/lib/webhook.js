@@ -113,6 +113,52 @@ export async function isSafeWebhookTargetResolved(raw) {
 }
 
 /**
+ * Ceiling on the name lookup inside `resolveSafeTarget`.
+ *
+ * `dns.lookup()` takes no signal and no timeout — it hands off to the OS
+ * resolver and returns when that resolver is done, which against a nameserver
+ * that black-holes queries (drops them rather than answering REFUSED) can be
+ * tens of seconds or effectively never. That call sits on the delivery path
+ * BEFORE any per-attempt signal exists, so nothing else in this system bounds
+ * it: not `DELIVERY_TIMEOUT_MS`, not `DRAIN_BUDGET_MS`, not the caller's
+ * `req.signal`. One such target inside a chunk holds up the whole `Promise.all`
+ * and can carry a drain past `pg_net`'s 55s timeout in `supabase/cron.sql`.
+ *
+ * A timed-out lookup is treated exactly like a failed one — null, "we could not
+ * vet this destination" — so the timeout can only ever make this function refuse
+ * more, never less. The delivery is retried rather than dead-lettered, because a
+ * resolver that is slow now may not be in thirty seconds.
+ */
+const dnsTimeoutMs = () => Math.max(250, Number(process.env.DNS_TIMEOUT_MS) || 3000);
+
+/**
+ * Exported only so `test/egress.test.js` can reach it — this is the DNS bound for
+ * `resolveSafeTarget`, not a general-purpose `withTimeout()`. Racing an arbitrary
+ * promise against a timer is fine in isolation, but the losing promise here is
+ * deliberately abandoned rather than cancelled, which is correct for a name
+ * lookup and wrong for anything with a side effect. Write a separate helper.
+ *
+ * @template T
+ * @param {Promise<T>} lookup
+ * @returns {Promise<T>}
+ */
+export function withDnsTimeout(lookup) {
+  // The losing promise is left running — there is no way to cancel a `dns.lookup`
+  // — so its rejection is swallowed rather than surfacing as an unhandled one.
+  lookup.catch(() => {});
+  /** @type {ReturnType<typeof setTimeout>} */
+  let timer;
+  const expiry = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error("dns_timeout")), dnsTimeoutMs());
+    // Otherwise every resolved lookup leaves a live timer holding the event loop
+    // open for the remainder of the window — three seconds added to the exit of
+    // any short-lived process that ever sent one webhook.
+    timer.unref?.();
+  });
+  return Promise.race([lookup, expiry]).finally(() => clearTimeout(timer));
+}
+
+/**
  * Vet a webhook destination and return a request that connects to the exact
  * address that was vetted.
  *
@@ -149,7 +195,7 @@ export async function resolveSafeTarget(raw) {
   /** @type {Array<{ address: string, family: number }>} */
   let answers;
   try {
-    answers = await dnsLookup(host, { all: true, verbatim: true });
+    answers = await withDnsTimeout(dnsLookup(host, { all: true, verbatim: true }));
   } catch {
     return null; // a destination we cannot resolve is one we cannot vet
   }

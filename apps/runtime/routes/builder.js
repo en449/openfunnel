@@ -15,11 +15,11 @@
  * file-touching route; the redundancy is deliberate.
  */
 
-import { mkdir, unlink, writeFile } from "node:fs/promises";
 import { join, normalize } from "node:path";
 import { FUNNELS_DIR, SLUG_RE, isInside } from "../lib/config.js";
-import { cacheFunnel, invalidateFunnel, loadFunnel } from "../lib/funnels.js";
+import { cacheFunnel, loadFunnel, removeFunnel, saveFunnel } from "../lib/funnels.js";
 import { json, readJson } from "../lib/http.js";
+import { errSummary } from "../lib/log.js";
 
 /**
  * @param {Request} req
@@ -45,26 +45,18 @@ export async function handleBuilder(req, ctx) {
     }
     const slug = body.slug;
     if (!SLUG_RE.test(slug)) return json({ error: "invalid_slug" }, 400);
+    if (!containable(slug)) return json({ error: "forbidden_path" }, 403);
 
-    const targetPath = normalize(join(FUNNELS_DIR, `${slug}.json`));
-    if (!isInside(targetPath, FUNNELS_DIR)) return json({ error: "forbidden_path" }, 403);
-    await mkdir(FUNNELS_DIR, { recursive: true });
-    await writeFile(targetPath, JSON.stringify(body, null, 2), "utf8");
-    invalidateFunnel(slug);
-    return json({ ok: true, slug });
+    return storeWrite(() => saveFunnel(slug, body, { clientId: body.clientId }), slug);
   }
 
   if (path === "/api/builder/delete" && req.method === "POST") {
     const body = await readJson(req);
     const slug = body?.slug;
     if (!slug || !SLUG_RE.test(slug)) return json({ error: "invalid_slug" }, 400);
-    const targetPath = normalize(join(FUNNELS_DIR, `${slug}.json`));
-    if (!isInside(targetPath, FUNNELS_DIR)) return json({ error: "forbidden_path" }, 403);
-    try {
-      await unlink(targetPath);
-    } catch {}
-    invalidateFunnel(slug);
-    return json({ ok: true, slug });
+    if (!containable(slug)) return json({ error: "forbidden_path" }, 403);
+
+    return storeWrite(() => removeFunnel(slug), slug);
   }
 
   if (path === "/api/builder/duplicate" && req.method === "POST") {
@@ -82,14 +74,59 @@ export async function handleBuilder(req, ctx) {
     if (!SLUG_RE.test(newSlug)) return json({ error: "invalid_slug" }, 400);
 
     const copyDoc = { ...source, id: newSlug, slug: newSlug, name: `${source.name || slug} (Copy)` };
-    const targetPath = normalize(join(FUNNELS_DIR, `${newSlug}.json`));
     // Same guard as save/delete. `newSlug` is safe by construction here, but a
     // write path that skips the check is exactly how the next edit regresses.
-    if (!isInside(targetPath, FUNNELS_DIR)) return json({ error: "forbidden_path" }, 403);
-    await writeFile(targetPath, JSON.stringify(copyDoc, null, 2), "utf8");
+    if (!containable(newSlug)) return json({ error: "forbidden_path" }, 403);
+
+    const failed = await storeWrite(() => saveFunnel(newSlug, copyDoc), newSlug, { silent: true });
+    if (failed) return failed;
     cacheFunnel(newSlug, copyDoc);
     return json({ ok: true, funnel: copyDoc });
   }
 
   return null;
+}
+
+/* ========================================================================== *
+ *  Shared write plumbing
+ * ========================================================================== */
+
+/**
+ * Would this slug resolve to a path inside FUNNELS_DIR?
+ *
+ * Kept even when the store is Postgres and no file is touched. It costs a path
+ * join, it is still correct if the deployment falls back to the file store, and
+ * the invariant it encodes — a route that writes validates the slug AND the
+ * resolved path — is one that stops holding the moment somebody makes it
+ * conditional.
+ *
+ * @param {string} slug  Already matched against SLUG_RE by the caller.
+ */
+function containable(slug) {
+  return isInside(normalize(join(FUNNELS_DIR, `${slug}.json`)), FUNNELS_DIR);
+}
+
+/**
+ * Run a store write and turn its failures into responses the console can act on.
+ *
+ * `client_missing` / `client_ambiguous` are the two an operator can actually fix
+ * — the builder has no client picker until Phase 2, so a funnel saved while
+ * there is more than one client has to say so rather than pick one.
+ *
+ * @param {() => Promise<void>} write
+ * @param {string} slug
+ * @param {{ silent?: boolean }} [opts]  silent: return null on success, for callers with their own reply.
+ */
+async function storeWrite(write, slug, opts = {}) {
+  try {
+    await write();
+  } catch (err) {
+    const code = /** @type {any} */ (err)?.code;
+    if (code === "client_missing" || code === "client_ambiguous") {
+      return json({ error: code }, 400);
+    }
+    console.warn(`[runtime] funnel "${slug}" write failed: ${errSummary(err)}`);
+    return json({ error: "save_failed" }, 502);
+  }
+  return opts.silent ? null : json({ ok: true, slug });
 }

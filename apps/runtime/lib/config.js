@@ -60,6 +60,22 @@ export const SUPABASE_ON = Boolean(SUPABASE_URL && SUPABASE_KEY);
 export const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
 
 /**
+ * Shared secret guarding `/api/internal/*` — the delivery drain, called by a
+ * `pg_cron` job through `pg_net` and by nothing else.
+ *
+ * Deliberately NOT `ADMIN_TOKEN`. That token lives in the operator's browser and
+ * gets rotated when a laptop is lost; this one lives in Supabase Vault and gets
+ * rotated when the database is re-provisioned. Sharing them means rotating
+ * either one silently stops the queue draining, and a queue that stopped
+ * draining looks exactly like a queue with nothing in it.
+ *
+ * Unset means the route does not exist — `/api/internal/*` answers 404, not 401,
+ * because an unconfigured endpoint should not advertise itself. A self-hoster
+ * with no cron never sets it and never sees it.
+ */
+export const INTERNAL_SECRET = process.env.INTERNAL_SECRET || "";
+
+/**
  * Set when the server genuinely sits behind a proxy that rewrites the client
  * address. Off by default because `x-forwarded-for` is a request header: anyone
  * can send one, so honouring it unconditionally means every per-IP limit is

@@ -5,12 +5,20 @@
  * actually implemented: `Promise.allSettled` means a dead webhook, a Supabase
  * outage or a mail failure is a `console.warn`, never an exception that reaches
  * the route handler. The route has already returned 202 by the time these run.
+ *
+ * Phase 1 demoted the fan-out rather than removing it. It is now the fallback
+ * for when the delivery queue could not take a lead — see `fanOut` below — and
+ * the reason it survives at all is that it is the only path a self-hoster with
+ * no Supabase project ever uses. The legacy `supabaseInsert` that posted the
+ * whole record into a flat `leads` table is gone: the schema in
+ * `supabase/migrations/` replaced it, and leaving it in place meant every
+ * ingest also fired a doomed request at a table that no longer exists.
  */
 
 import { mkdir, appendFile, open, rename, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { forwardMetaCapi } from "./capi.js";
-import { DATA_DIR, SUPABASE_KEY, SUPABASE_ON, SUPABASE_URL } from "./config.js";
+import { DATA_DIR } from "./config.js";
 import { processLeadEmailNotifications } from "./email.js";
 import { errSummary } from "./log.js";
 import { forwardWebhook } from "./webhook.js";
@@ -27,13 +35,24 @@ import { forwardWebhook } from "./webhook.js";
  *  Two independent bounds, because they fail differently: SINK caps what can be
  *  written, READ caps what is ever held in memory at once. Neither may make
  *  ingest fail a visitor, so the write side rotates rather than refusing.
+ *
+ *  Read per call, not captured at import — same reason `lib/db.js` does. These
+ *  were module-level constants, so whichever module happened to import this file
+ *  first decided their values for the whole process, and a test that sets the
+ *  environment before its own dynamic import silently got the defaults as soon
+ *  as an unrelated file imported the chain earlier. The production value never
+ *  changes mid-process, so reading it per call costs nothing and removes an
+ *  ordering dependency nobody can see in the file that breaks.
  * ========================================================================== */
 
 /** Per-sink ceiling. At the cap the file rotates to `.1`, so disk peaks at 2×. */
-const MAX_SINK_BYTES = Math.max(1_000_000, Number(process.env.MAX_SINK_BYTES) || 64 * 1024 * 1024);
+const maxSinkBytes = () => Math.max(1_000_000, Number(process.env.MAX_SINK_BYTES) || 64 * 1024 * 1024);
 
 /** Most bytes a reader will pull into memory — the newest tail of the file. */
-const MAX_READ_BYTES = Math.max(1_000_000, Number(process.env.MAX_READ_BYTES) || 8 * 1024 * 1024);
+const maxReadBytes = () => Math.max(1_000_000, Number(process.env.MAX_READ_BYTES) || 8 * 1024 * 1024);
+
+/** Where the sinks live. Mirrors `config.js`, resolved per call for the same reason. */
+const dataDir = () => resolve(process.env.DATA_DIR || DATA_DIR);
 
 /**
  * Append one record to a JSONL file. Local-first storage: readable with `tail`,
@@ -55,14 +74,15 @@ const MAX_READ_BYTES = Math.max(1_000_000, Number(process.env.MAX_READ_BYTES) ||
  * @param {Record<string, unknown>} record
  */
 async function appendJsonl(kind, record) {
-  await mkdir(DATA_DIR, { recursive: true });
-  const file = join(DATA_DIR, `${kind}.jsonl`);
+  const dir = dataDir();
+  await mkdir(dir, { recursive: true });
+  const file = join(dir, `${kind}.jsonl`);
 
   try {
     const { size } = await stat(file);
-    if (size >= MAX_SINK_BYTES) {
+    if (size >= maxSinkBytes()) {
       await rename(file, `${file}.1`);
-      console.warn(`[runtime] ${kind}.jsonl hit ${MAX_SINK_BYTES} bytes — rotated to ${kind}.jsonl.1`);
+      console.warn(`[runtime] ${kind}.jsonl hit ${maxSinkBytes()} bytes — rotated to ${kind}.jsonl.1`);
     }
   } catch (err) {
     // ENOENT is the normal first write, and the expected loser of a rotation
@@ -85,32 +105,6 @@ async function appendJsonl(kind, record) {
 }
 
 /**
- * Best-effort insert into a Supabase table via PostgREST. Skipped entirely when
- * the service-role key is absent, so self-hosters get file storage for free.
- *
- * @param {string} table
- * @param {Record<string, unknown>} row
- */
-async function supabaseInsert(table, row) {
-  if (!SUPABASE_ON) return;
-  try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
-      method: "POST",
-      headers: {
-        apikey: SUPABASE_KEY,
-        authorization: `Bearer ${SUPABASE_KEY}`,
-        "content-type": "application/json",
-        prefer: "return=minimal",
-      },
-      body: JSON.stringify(row),
-    });
-    if (!res.ok) console.warn(`[runtime] supabase ${table} insert ${res.status}`);
-  } catch (err) {
-    console.warn(`[runtime] supabase ${table} insert failed: ${errSummary(err)}`);
-  }
-}
-
-/**
  * Read a JSONL sink back, for the admin readers. Missing file reads as empty.
  *
  * Reads only the last MAX_READ_BYTES rather than the whole file. `/api/admin/stats`
@@ -127,9 +121,9 @@ async function supabaseInsert(table, row) {
 export async function readJsonlRecords(filename) {
   let fh;
   try {
-    fh = await open(join(DATA_DIR, filename), "r");
+    fh = await open(join(dataDir(), filename), "r");
     const { size } = await fh.stat();
-    const start = Math.max(0, size - MAX_READ_BYTES);
+    const start = Math.max(0, size - maxReadBytes());
     const buf = Buffer.alloc(size - start);
     // Trust the count, not the buffer length: a short read would otherwise leave
     // a tail of zero bytes that parses as one more empty line.
@@ -156,12 +150,24 @@ export async function readJsonlRecords(filename) {
  * Persist a record to every configured sink. Never throws — a failed write must
  * not turn into a 500 that breaks the visitor's funnel.
  *
+ * `fanOut` is what the delivery queue turned from an always into a decision.
+ * When a lead made it into Postgres its deliveries are queued rows with retries
+ * and a dead-letter state, so sending here as well would deliver the same lead
+ * twice — once durably, once not. The route passes `false` in exactly that case
+ * and `true` whenever the queue did not take the lead, which is what makes an
+ * outage a degraded delivery rather than a lost one.
+ *
+ * The JSONL sink is written either way. It is the operator's own copy and the
+ * console's lead inbox, not a delivery channel.
+ *
  * @param {"leads"|"events"} kind
  * @param {Record<string, unknown>} record
+ * @param {{ fanOut?: boolean }} [opts]
  */
-export async function persist(kind, record) {
-  const tasks = [appendJsonl(kind, record), supabaseInsert(kind, record), forwardMetaCapi(record)];
-  if (kind === "leads") {
+export async function persist(kind, record, opts = {}) {
+  const { fanOut = true } = opts;
+  const tasks = [appendJsonl(kind, record), forwardMetaCapi(record)];
+  if (kind === "leads" && fanOut) {
     tasks.push(forwardWebhook(record));
     tasks.push(processLeadEmailNotifications(record));
   }

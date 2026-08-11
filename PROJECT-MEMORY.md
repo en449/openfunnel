@@ -41,7 +41,7 @@ Decisions taken 2026-08-10 (session 2), after a revised pre-mortem:
    **Brevo** is the researched replacement).
 4. **Infrastructure: Vercel + Supabase, not a Hetzner VPS** (decided session 3, supersedes the
    original §2). Two Vercel projects — public `funnel`, private `console` behind Vercel
-   Authentication — against one Supabase Postgres in `eu-central-1`. **DSGVO consequence accepted
+   Authentication — against one Supabase Postgres in `eu-west-1` (Ireland; project created 2026-08-11, the plan had said Frankfurt and Supabase cannot move a project after creation — Ireland is EU/EEA so nothing in §8 changes). **DSGVO consequence accepted
    explicitly (PLAN.md §8.0): both are US companies in EU regions, lawful under SCCs + DPAs, but
    the "kein US-Anbieter / Hosting in Deutschland" positioning is withdrawn.** Do not put it in
    sales copy. Three things move into Phase 1 that the VPS design deferred: the `Bun.serve` → 

@@ -9,7 +9,7 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { copyFile, mkdir, mkdtemp, readdir, readFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -21,15 +21,20 @@ let base = "";
 let dataDir = "";
 let funnelsDir = "";
 
+/** Every scratch dir this file creates, removed in afterAll. */
+const scratchDirs = [];
+
 beforeAll(async () => {
   const tmpParent = resolve(import.meta.dir, "../../../.tmp");
   await mkdir(tmpParent, { recursive: true });
   dataDir = await mkdtemp(join(tmpParent, "openfunnel-test-"));
+  scratchDirs.push(dataDir);
 
   // Serve funnels from a throwaway copy of examples/. The builder tests write
   // real files into FUNNELS_DIR, so pointing it at the repo left their scratch
   // funnels behind as untracked changes after every run.
   funnelsDir = await mkdtemp(join(tmpParent, "openfunnel-funnels-"));
+  scratchDirs.push(funnelsDir);
   const sourceDir = resolve(import.meta.dir, "../../../examples");
   for (const name of await readdir(sourceDir)) {
     if (name.endsWith(".json")) await copyFile(join(sourceDir, name), join(funnelsDir, name));
@@ -38,11 +43,23 @@ beforeAll(async () => {
   const port = 4000 + Math.floor(Math.random() * 1000);
   base = `http://localhost:${port}`;
 
-  proc = Bun.spawn(["bun", SERVER], {
-    env: { ...process.env, PORT: String(port), DATA_DIR: dataDir, FUNNELS_DIR: funnelsDir },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  // Bun loads `.env` from the repo root, so a developer with a real Supabase
+  // project configured would otherwise run this whole file against it — reading
+  // funnels that are not there, and writing test funnels and a client row that
+  // are. Blanked rather than omitted, because `{ ...process.env }` copies them.
+  // The Postgres store has its own end-to-end check in
+  // `supabase/tests/db-integration.mjs`, pointed at a scratch database.
+  const env = {
+    ...process.env,
+    PORT: String(port),
+    DATA_DIR: dataDir,
+    FUNNELS_DIR: funnelsDir,
+    SUPABASE_URL: "",
+    NEXT_PUBLIC_SUPABASE_URL: "",
+    SUPABASE_SERVICE_ROLE_KEY: "",
+  };
+
+  proc = Bun.spawn(["bun", SERVER], { env, stdout: "pipe", stderr: "pipe" });
 
   // Poll until it answers rather than sleeping a fixed amount.
   for (let i = 0; i < 50; i++) {
@@ -57,7 +74,13 @@ beforeAll(async () => {
   throw new Error("runtime did not start in time");
 });
 
-afterAll(() => proc?.kill());
+// Removed rather than left behind: this file makes five scratch dirs per run and
+// nothing was deleting them, so `.tmp/` had grown to 310 directories. Gitignored,
+// so it never showed up in a diff — which is exactly why it kept growing.
+afterAll(async () => {
+  proc?.kill();
+  await Promise.all(scratchDirs.map((dir) => rm(dir, { recursive: true, force: true })));
+});
 
 describe("funnel pages", () => {
   test("serves a funnel page with the config embedded", async () => {
@@ -432,6 +455,50 @@ describe("privileged route protection", () => {
     }
   });
 
+  // The machine surface is a second gate with a second secret. This server runs
+  // with no INTERNAL_SECRET, which is the default for anyone not running the
+  // cron — and the route must then not exist at all rather than answer 401,
+  // because a 401 tells a stranger a drain endpoint is there to be guessed at.
+  test("the drain does not exist without INTERNAL_SECRET, and never 401s its way into being advertised", async () => {
+    for (const method of ["GET", "POST"]) {
+      const res = await fetch(`${base}/api/internal/drain`, {
+        method,
+        headers: { "content-type": "application/json" },
+        body: method === "POST" ? "{}" : undefined,
+      });
+      expect(`${method} → ${res.status}`).toBe(`${method} → 404`);
+    }
+    // Presenting a token must not change the answer either — otherwise the 404
+    // is an oracle for "you guessed the secret".
+    const guessed = await fetch(`${base}/api/internal/drain`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer guess" },
+      body: "{}",
+    });
+    expect(guessed.status).toBe(404);
+  });
+
+  test("the drain refuses a cross-site browser request before authenticating", async () => {
+    const res = await fetch(`${base}/api/internal/drain`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "sec-fetch-site": "cross-site" },
+      body: "{}",
+    });
+    expect(res.status).toBe(403);
+  });
+
+  // A route that fell out of the internal branch would land in the public
+  // fall-through and answer 404 for a different reason. This asserts the branch
+  // is what answers: an unknown path under the prefix is refused by the gate.
+  test("an unknown internal path is answered by the gate, not by the public fall-through", async () => {
+    const res = await fetch(`${base}/api/internal/anything-else`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "sec-fetch-site": "cross-site" },
+      body: "{}",
+    });
+    expect(res.status).toBe(403);
+  });
+
   test("the public surface is NOT caught by the privileged gate", async () => {
     // The mirror image, and the reason the gate is a prefix list rather than a
     // default-deny: a funnel is embedded on the operator's marketing site, so
@@ -584,10 +651,22 @@ describe("custom script injection", () => {
   /** Boot a second runtime with its own env, so both flag states are covered. */
   async function bootWith(env) {
     const dir = await mkdtemp(join(resolve(import.meta.dir, "../../../.tmp"), "openfunnel-custom-"));
+    scratchDirs.push(dir);
     await Bun.write(join(dir, "custom-code.json"), JSON.stringify(funnelDoc));
     const port = 5000 + Math.floor(Math.random() * 900);
     const child = Bun.spawn(["bun", SERVER], {
-      env: { ...process.env, PORT: String(port), DATA_DIR: dir, FUNNELS_DIR: dir, ...env },
+      // Same reason as the main spawn above: Bun loads `.env`, and these servers
+      // would otherwise read funnels from a developer's real Supabase project.
+      env: {
+        ...process.env,
+        PORT: String(port),
+        DATA_DIR: dir,
+        FUNNELS_DIR: dir,
+        SUPABASE_URL: "",
+        NEXT_PUBLIC_SUPABASE_URL: "",
+        SUPABASE_SERVICE_ROLE_KEY: "",
+        ...env,
+      },
       stdout: "pipe",
       stderr: "pipe",
     });

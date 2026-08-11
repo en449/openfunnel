@@ -35,7 +35,7 @@ Non-goals, stated so they stop coming back:
 - Not a self-serve SaaS. Nobody signs up. There is no pricing page, no trial, no billing.
 - Not a Perspective competitor. Competing on features with a Berlin GmbH holding 5,000+ customers is a losing frame at one person.
 - Not a CRM. Leads leave the system; they do not live in it.
-- Not multi-region. One region, `fra1` / `eu-central-1`. (Multi-*instance* is no longer a choice — serverless makes it the default, which is why §2.2 moves three in-memory stores to Postgres in Phase 1.)
+- Not multi-region. One region, `dub1` / `eu-west-1` (Ireland). The project was created there 2026-08-11 and Supabase cannot move a project afterwards; Ireland is EU/EEA, so DSGVO applies unchanged and §8.0's analysis — which is about the processors being US *companies*, not about which datacentre — is untouched. Vercel functions go in `dub1` to sit next to the database rather than paying ~25-30ms per round trip to Frankfurt. (Multi-*instance* is no longer a choice — serverless makes it the default, which is why §2.2 moves three in-memory stores to Postgres in Phase 1.)
 
 ---
 
@@ -95,7 +95,7 @@ project has no admin code deployed to it at all.
         ▼                                        ▼
 ┌───────────────────────────┐          ┌──────────────────────┐
 │  PROJECT: funnel  (public)│          │ PROJECT: console     │
-│  region fra1, Node runtime│          │ region fra1          │
+│  region dub1, Node runtime│          │ region dub1          │
 │                           │          │ Vercel Authentication│
 │  kunde.de                 │          │ (SSO) on the whole   │
 │  *.f.enno.de  (wildcard)  │          │ deployment           │
@@ -112,7 +112,7 @@ project has no admin code deployed to it at all.
               └─────────────┬─────────────────────┘
                             ▼
               ┌──────────────────────────────┐
-              │  Supabase — eu-central-1     │
+              │  Supabase — eu-west-1        │
               │  Postgres  (leads, queue,    │
               │             rate limits, OTP)│
               │  Storage   (funnel assets)   │
@@ -667,14 +667,14 @@ New requirements this plan adds:
 
 1. **GitHub repo** — the control plane. Public if the AGPL fork is published there too (Phase 0);
    otherwise a private repo plus a separate public fork mirror.
-2. **Supabase project**, region `eu-central-1` (Frankfurt), **Pro** for PITR. Record the region for
+2. **Supabase project**, region `eu-west-1` (Ireland) — created 2026-08-11, ref `guzvadxfoufsetkrvbfj`. **Pro** for PITR before any client funnel. Record the region for
    the DSGVO statement. Enable `pg_cron` and `pg_net`.
 3. **Schema + migrations** applied (§2.5). A dedicated role for the app — not the service role for
    anything the public project touches.
 4. **Supabase Storage bucket** for assets, public-read, with upload restricted to the console.
-5. **Vercel project `funnel`** — public. Region `fra1`, **Node runtime**, connected to the repo.
+5. **Vercel project `funnel`** — public. Region `dub1`, **Node runtime**, connected to the repo.
    Wildcard domain `*.f.enno.de`.
-6. **Vercel project `console`** — private, same repo, different entry point/build. Region `fra1`.
+6. **Vercel project `console`** — private, same repo, different entry point/build. Region `dub1`.
    **Deployment Protection → Vercel Authentication ON.** Verify by loading it in a logged-out
    browser and confirming the SSO wall before anything else is configured.
 7. **Env vars**, per project, in Vercel (never in the repo): `SUPABASE_URL`,
@@ -742,7 +742,7 @@ Everything in this section is a build requirement, not a compliance to-do list. 
 ### 8.0 The accepted trade — US processors under SCCs
 
 **Decided 2026-08-10.** The stack is Vercel + Supabase. Both are **US companies** (Vercel Inc.,
-Supabase Inc.), running in EU regions (`fra1`, `eu-central-1`). Enno chose this knowingly. What it
+Supabase Inc.), running in EU regions (`dub1`, `eu-west-1` — Ireland). Enno chose this knowingly. What it
 means, stated plainly so nobody rediscovers it later:
 
 - **It is lawful.** Both offer a DPA incorporating Standard Contractual Clauses. Both must be named
@@ -764,17 +764,17 @@ means, stated plainly so nobody rediscovers it later:
 | Where | What | Legal basis | Processor / location |
 | --- | --- | --- | --- |
 | Funnel page in the visitor's browser | answers, contact details, localStorage resume | Art. 6(1)(b) — pre-contractual, at the visitor's request | visitor's device (TTDSG §25 — see 8.4) |
-| Funnel page delivery + function execution | request data, IP | Art. 6(1)(b)/(f) | **Vercel Inc., `fra1` Frankfurt — US processor, SCCs** |
-| `POST /api/lead` → Postgres | lead record | Art. 6(1)(b) | **Supabase Inc., `eu-central-1` Frankfurt — US processor, SCCs** |
-| `POST /api/events` → Postgres | step/drop-off events, session id | Art. 6(1)(f) — first-party, no profiling | Supabase, Frankfurt |
-| Supabase Storage | funnel assets only — **never lead data** | n/a | Supabase, Frankfurt |
+| Funnel page delivery + function execution | request data, IP | Art. 6(1)(b)/(f) | **Vercel Inc., `dub1` Ireland — US processor, SCCs** |
+| `POST /api/lead` → Postgres | lead record | Art. 6(1)(b) | **Supabase Inc., `eu-west-1` Ireland — US processor, SCCs** |
+| `POST /api/events` → Postgres | step/drop-off events, session id | Art. 6(1)(f) — first-party, no profiling | Supabase, Ireland |
+| Supabase Storage | funnel assets only — **never lead data** | n/a | Supabase, Ireland |
 | Email delivery target | lead notification to the client | Art. 28 processing | **Brevo SAS, France/Germany (OVHcloud)** — see 8.3 |
 | Webhook delivery target | lead to the client's own system | Art. 28, then the client's own responsibility | client's choice; disclosed in their notice |
 | Google Sheets delivery target | lead row | Art. 28 | **Google Ireland/LLC — US transfer, opt-in only, see 8.3** |
 | SMS delivery target | name + phone | Art. 28 | provider TBD, EU required |
 | Meta Pixel + Conversions API | hashed contact data, event | Art. 6(1)(a) — **consent only** | Meta, US transfer |
 | GA4 / GTM / TikTok / LinkedIn | behavioural | Art. 6(1)(a) — **consent only** | US transfer |
-| Backups (PITR) | everything in Postgres | as above | Supabase, Frankfurt |
+| Backups (PITR) | everything in Postgres | as above | Supabase, Ireland |
 | Function + platform logs | IP, user agent, paths | Art. 6(1)(f) — security | Vercel, retention per plan |
 
 Revised rule, replacing the old "nothing leaves Germany" (§8.0): **personal data stays in EU regions
@@ -821,9 +821,9 @@ five seconds. The infrastructure claim ("kein US-Anbieter") is withdrawn; do not
 Every third party touching lead data is a subprocessor, must be named in the AVV, and the client has
 a right to object to changes.
 
-- **Vercel Inc.** (US, `fra1` Frankfurt execution) — DPA with SCCs required, TIA required, named in
+- **Vercel Inc.** (US, `dub1` Ireland execution) — DPA with SCCs required, TIA required, named in
   every client AVV. Sees every funnel request including lead submissions in transit.
-- **Supabase Inc.** (US, `eu-central-1` Frankfurt) — DPA with SCCs required, TIA required, named in
+- **Supabase Inc.** (US, `eu-west-1` Ireland) — DPA with SCCs required, TIA required, named in
   every client AVV. Holds every lead at rest, plus the backups.
 - **Mail provider — GATE. Researched 2026-08-10 →
   [reference/eu-mail-providers-2026-08-10.md](reference/eu-mail-providers-2026-08-10.md).**
@@ -1045,7 +1045,7 @@ in-memory stores to Postgres are real work the VPS design did not need.
 
 *Deploy + safety*
 - [ ] Two Vercel projects, `funnel` public and `console` behind Vercel Authentication — **verified logged-out** (§5.2)
-- [ ] Supabase Pro, `eu-central-1`, PITR window set explicitly + **one verified restore**
+- [ ] Supabase Pro, `eu-west-1`, PITR window set explicitly + **one verified restore**
 - [ ] Uptime monitor on a real funnel URL, off-platform
 
 *DSGVO gates*

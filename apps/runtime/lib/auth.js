@@ -13,7 +13,7 @@
  */
 
 import { timingSafeEqual } from "node:crypto";
-import { ADMIN_TOKEN } from "./config.js";
+import { ADMIN_TOKEN, INTERNAL_SECRET } from "./config.js";
 import { json } from "./http.js";
 
 /** Constant-time string compare, so a wrong token leaks no timing signal. */
@@ -38,6 +38,44 @@ export const PRIVILEGED_PREFIXES = ["/api/admin/", "/api/builder/", "/api/ai/"];
 /** @param {string} path @returns {boolean} */
 export function isPrivilegedPath(path) {
   return PRIVILEGED_PREFIXES.some((prefix) => path.startsWith(prefix));
+}
+
+/**
+ * Route prefixes the machine surface lives under — today only the delivery
+ * drain. Its own list, its own gate, and its own secret, for the reason in
+ * `INTERNAL_SECRET`'s comment: the caller is a `pg_cron` job, not a browser and
+ * not the operator, so folding it into the admin gate would tie the lifetime of
+ * a Vault secret to the lifetime of the operator's login token.
+ *
+ * Same structural rule as `PRIVILEGED_PREFIXES`: the router checks this list and
+ * dispatches the handler INSIDE the branch, so a route added under this prefix
+ * is gated by where it lives.
+ */
+export const INTERNAL_PREFIXES = ["/api/internal/"];
+
+/** @param {string} path @returns {boolean} */
+export function isInternalPath(path) {
+  return INTERNAL_PREFIXES.some((prefix) => path.startsWith(prefix));
+}
+
+/**
+ * Gate for `/api/internal/*`.
+ *
+ * 404 rather than 401 when the secret is unset: the endpoint is opt-in, and a
+ * 401 tells an unauthenticated caller that a drain endpoint exists and is worth
+ * guessing at. Loopback is NOT trusted here — unlike the admin gate, there is no
+ * developer convenience to buy, and `pg_net` never arrives over loopback anyway.
+ *
+ * @param {Request} req
+ * @returns {Response|null} null when the caller may proceed.
+ */
+export function requireInternal(req) {
+  if (!INTERNAL_SECRET) return new Response("Not found", { status: 404 });
+  const header = req.headers.get("authorization") || "";
+  const provided = header.startsWith("Bearer ")
+    ? header.slice(7).trim()
+    : req.headers.get("x-internal-secret") || "";
+  return safeEqual(provided, INTERNAL_SECRET) ? null : json({ error: "unauthorized" }, 401);
 }
 
 /**

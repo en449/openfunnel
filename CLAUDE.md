@@ -112,7 +112,9 @@ lib/ratelimit.js     the buckets, tooMany, MAIL_HOURLY_CAP
 lib/auth.js          safeEqual, loopback trust, requireAdmin, PRIVILEGED_PREFIXES
 lib/funnels.js       load/list/cache + publicFunnel redaction
 lib/preview.js       hasPreviewFlag, isPreviewRecord
-lib/webhook.js       egress guard (resolveSafeTarget) + delivery
+lib/db.js            PostgREST client + the error classification callers branch on
+lib/delivery.js      dispatch a claimed delivery, report the outcome, drainOnce()
+lib/webhook.js       egress guard (resolveSafeTarget) + the direct fan-out delivery
 lib/capi.js          Meta Conversions API forward
 lib/email.js         settings, transports, OTP, lead notifications
 lib/html.js          esc, jsonScript, themeVars, funnelPage
@@ -138,8 +140,9 @@ Routes:
 | `GET /_of/*` | public | engine source served raw, mirroring `packages/engine/src` |
 | `GET /_app/*`, `/`, `/builder`, `/leads`, … | public | console shell (see `APP_ROUTES`) |
 | `GET /api/funnels`, `/api/funnels/:slug` | public | funnel list / document |
-| `POST /api/lead`, `/api/events` | public, rate-limited | ingest → JSONL + Supabase + webhook |
+| `POST /api/lead`, `/api/events` | public, rate-limited | ingest → JSONL + the Postgres delivery queue (or the direct fan-out) |
 | `POST /api/otp/send`, `/api/otp/verify` | public, rate-limited | email verification challenge |
+| `POST /api/internal/drain` | **INTERNAL_SECRET** | delivery-queue drain, called by pg_cron via pg_net |
 | `GET /healthz` | public | liveness |
 | `POST /api/builder/save\|delete\|duplicate` | **admin** | writes JSON into `FUNNELS_DIR` |
 | `GET /api/admin/leads`, `/api/admin/stats` | **admin** | console data, preview-filtered |
@@ -186,11 +189,57 @@ table in `app.js`. They are per-browser, not per-funnel and not server-side.
 the engine must never gain an npm dependency. This is the whole reason a funnel
 is fast on 4G.
 
-**Ingest must never fail a visitor.** `/api/lead` and `/api/events` return `202`
-immediately and persist in the background; `persist()` fans out with
-`Promise.allSettled` so a dead webhook or Supabase outage is a `console.warn`,
-never a `500`. Client-side, `leads.js` uses `sendBeacon` with a `keepalive`
-fetch fallback and swallows errors.
+**Ingest must never fail a visitor.** `/api/lead` and `/api/events` answer `202`
+whatever happens downstream — a dead webhook, an unknown funnel or a Supabase
+outage is a `console.warn`, never a `500`. Client-side, `leads.js` uses
+`sendBeacon` with a `keepalive` fetch fallback and swallows errors.
+
+The invariant is that ingest never *fails* a visitor, not that it never waits.
+With a database configured, `/api/lead` **awaits** the `ingest_lead` RPC before
+answering: one round trip to Postgres in the same region, against the
+alternative of an insert that only ever existed in an invocation the platform
+froze the moment the response was written.
+
+**A lead is delivered by the queue or by the fan-out, never by both.**
+`persist(kind, record, { fanOut })` is where that is decided. When `ingest_lead`
+succeeded, its delivery rows own the outbound calls — retried, backed off,
+dead-lettered, readable — so `fanOut` is `false` and the old `Promise.allSettled`
+path stays out of it. Every other outcome (database unreachable, unknown slug, a
+row the schema refused) passes `fanOut: true` and delivers the old way *now*: a
+degraded delivery beats a lost lead. Both at once is the operator receiving
+every lead twice, which is why the flag is passed explicitly rather than derived
+inside `store.js` from `dbConfigured()`.
+
+The JSONL sink is written on every path. It is the operator's own copy and the
+console's lead inbox — not a delivery channel.
+
+`fanOut` answers "will anything else deliver this lead?", and it is deliberately
+NOT `Boolean(leadId)`. Those came apart in both directions, and both reached the
+operator:
+
+- A **deduped** resubmit has no rows to drain — the first submit queued them —
+  but the queue does own the delivery. Inferring it from a null lead id fanned
+  out a second copy, so a double-tapped submit button sent the CRM and the alert
+  inbox the same lead twice.
+- A lead stored with **`queued === 0`** has a lead id and nobody to deliver it.
+  Inferring it from a truthy id suppressed the fan-out and took the operator's
+  webhook and lead alert silently dark. That is the state every deployment is in
+  the moment it configures Postgres, because nothing creates `delivery_target`
+  rows yet — the console gains that in WO12.
+
+So `storeLead()` returns `{ leadId, queueOwnsIt }` and the two are read
+separately: `queueOwnsIt` decides the fan-out, `leadId` decides the drain.
+`apps/runtime/test/ingest-queue.test.js` pins both, and it is the only test that
+exercises this route with a database configured — which is why the first version
+of it shipped broken.
+
+**Nothing stores a raw IP.** `routes/ingest.js` hashes it with `IP_HASH_SALT`
+into `lead.ip_hash`, and with no salt set it stores nothing at all rather than
+an unsalted hash — the IPv4 space is 2^32, so an unsalted digest is the address
+wearing a disguise. Rate limiting is unaffected either way: that runs on the
+address in this process and never touches the column. `lib/delivery.js` strips
+`ip`, `referer` and `user_agent` from the payload again on the way out, because
+a webhook body leaving the server is the one copy that cannot be recalled.
 
 **Preview traffic must never pollute analytics.** Two independent guards, and
 new code needs both: `Controller._emit()` bails when `isPreview` or
@@ -234,6 +283,22 @@ reaching a reverse-proxied deployment would inherit localhost's privileges.
 A test sweeps every privileged endpoint against both refusal modes (proxied →
 401, cross-site → 403) and asserts public ingest is *not* caught by the gate, so
 a route that escapes the branch fails CI rather than production.
+
+**`/api/internal/*` is a second structural gate, with a second secret.**
+`INTERNAL_PREFIXES` + `requireInternal` in `lib/auth.js`, built exactly like the
+privileged branch and dispatched inside it for the same reason. It guards the
+delivery drain, whose caller is a `pg_cron` job going out through `pg_net` — not
+a browser and not the operator. It does **not** use `ADMIN_TOKEN`: that token
+lives in the operator's browser and is rotated when a laptop is lost, while
+`INTERNAL_SECRET` lives in Supabase Vault and is rotated when the database is
+re-provisioned. Share them and rotating either one silently stops the queue
+draining — which looks exactly like a queue with nothing in it.
+
+With `INTERNAL_SECRET` unset the route answers **404, not 401**, including to a
+caller presenting a guess: an unconfigured endpoint must not advertise that it
+exists and is worth guessing at. Loopback is not trusted here either — there is
+no developer convenience to buy, and `pg_net` never arrives over loopback.
+`/api/internal/*` is never added to `PUBLIC_CORS_PATHS`.
 
 Loopback trust also validates the `Host` header against `LOOPBACK_HOST_RE` (plus
 `ALLOWED_HOSTS`). Without that, DNS rebinding walks straight through every other
@@ -280,6 +345,25 @@ certificate for the operator's configured name, and overriding SNI would trade a
 closed hole for an untestable one. Use `resolveSafeTarget()` for any new outbound
 call to an operator-supplied URL; `isSafeWebhookTarget()` alone is the textual
 check only.
+
+**Its lookup is bounded, because `dns.lookup()` is not.** That call takes no
+signal and no timeout — it hands off to getaddrinfo and returns when the OS
+resolver is done, which against a nameserver that drops queries rather than
+refusing them can be effectively never. It sits on the delivery path *before*
+any per-attempt signal exists, so nothing else bounds it: not
+`DELIVERY_TIMEOUT_MS`, not `DRAIN_BUDGET_MS`, not the caller's own abort. One
+such target inside a drain chunk holds up the whole batch and can carry the cron
+invocation past `pg_net`'s 55s timeout. It is now raced against `DNS_TIMEOUT_MS`,
+and a timed-out lookup is treated exactly like a failed one — so the bound can
+only ever make the guard refuse MORE, never less. The delivery is retried, not
+dead-lettered: a resolver that is slow now may not be in thirty seconds.
+
+The two failure modes of `resolveSafeTarget` returning null are NOT the same and
+callers must not merge them. A URL it rejects on sight (loopback literal, private
+range, a scheme that is not HTTP) can never start working, so `lib/delivery.js`
+dead-letters it. A name it could not resolve may work on the next attempt, so
+that retries. Merging them meant one DNS blip dead-lettered every webhook in the
+system on its first attempt.
 
 **Operator-pasted script is opt-in, and never `'unsafe-inline'`.** A funnel's
 `customHead` / `customBody` are injected raw, but script inside them is refused
@@ -565,8 +649,16 @@ once per accumulated listener.
 - Rate limits and the OTP store are in-memory, so they are per-process and
   reset on restart. Behind more than one instance you need an edge rate limit
   and a shared store.
-- Supabase and webhook forwarding are opt-in via env; with nothing configured
-  everything still works against local JSONL files.
+- Supabase is opt-in via env. With nothing configured everything still works
+  against local JSONL files and the direct webhook/email fan-out — that path is
+  the self-hoster's whole deployment, so it is maintained, not deprecated.
+- With Supabase configured, funnel documents live in the `funnel` table and
+  `examples/*.json` becomes a FALLBACK for slugs the table does not hold. Not an
+  either/or: pointing a running install at a fresh project would otherwise blank
+  out every funnel the operator already had. An archived row is a decision, so
+  `loadFromDb` returns a sentinel for it rather than null — otherwise the disk
+  fallback would serve a funnel the operator had just deleted. `removeFunnel`
+  clears both stores for the same reason.
 - `apps/builder` and `apps/admin` (the legacy standalone UIs at `/_builder/*`
   and `/_admin/*`) are **deleted**. All console work belongs in `apps/app`. Do
   not restore them: `builder.js` broadcast the whole funnel document, including

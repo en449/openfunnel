@@ -160,9 +160,20 @@ export async function saveEmailSettings(patch) {
  *  Transports
  * ========================================================================== */
 
-export async function sendEmail({ to, subject, html, text }) {
+/** Ceiling on one outbound send. Mirrors DELIVERY_TIMEOUT_MS, and read per call for the same reason. */
+const sendTimeoutMs = () => Math.max(1000, Number(process.env.EMAIL_TIMEOUT_MS) || 10_000);
+
+export async function sendEmail({ to, subject, html, text, signal }) {
   if (!to) return { ok: false, error: "missing_recipient" };
   const cfg = await getEmailSettings();
+
+  // Bound every transport call. A mail provider that accepts the connection and
+  // then never answers otherwise holds the invocation open until the platform
+  // kills it — on the delivery path that burns the whole drain budget while the
+  // rest of the queue waits. The webhook side already had this ceiling; mail
+  // did not, which is the only reason the two behaved differently.
+  const deadline = AbortSignal.timeout(sendTimeoutMs());
+  const abort = signal ? AbortSignal.any([deadline, signal]) : deadline;
 
   if (cfg.provider === "resend" || (cfg.resendApiKey && cfg.provider !== "smtp")) {
     try {
@@ -179,6 +190,7 @@ export async function sendEmail({ to, subject, html, text }) {
           html,
           text: text || String(html || "").replace(/<[^>]+>/g, " "),
         }),
+        signal: abort,
       });
       if (res.ok) return { ok: true, provider: "resend" };
       const errText = await res.text();
@@ -186,7 +198,7 @@ export async function sendEmail({ to, subject, html, text }) {
       return { ok: false, error: `resend_${res.status}` };
     } catch (err) {
       console.warn(`[email] Resend exception: ${errSummary(err)}`);
-      return { ok: false, error: String(err) };
+      return { ok: false, error: "resend_failed" };
     }
   }
 
@@ -198,6 +210,7 @@ export async function sendEmail({ to, subject, html, text }) {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ to, subject, html, text }),
+        signal: abort,
       });
       return { ok: res.ok, provider: "http_relay" };
     } catch (err) {
@@ -331,35 +344,38 @@ export function isEmailVerified(email) {
  *  Lead notifications
  * ========================================================================== */
 
-export async function processLeadEmailNotifications(record) {
-  try {
-    const cfg = await getEmailSettings();
-    const lead = record.lead || {};
-    const answers = record.answers || {};
-    const funnelId = record.funnelId || "Funnel";
-    const leadName = lead.name || lead.first_name || "Lead";
-    const leadEmail = lead.email;
+/**
+ * Render the operator's "new lead" alert from a lead record.
+ *
+ * Split out of `processLeadEmailNotifications` because the delivery queue's
+ * `email` target sends the same mail to a per-client address — two renderers
+ * would drift, and the one that drifts is the one nobody reads until a lead's
+ * answers stop showing up in the alert.
+ *
+ * Everything interpolated here originates with the visitor, so every value is
+ * escaped. An unescaped name field would let a lead inject markup into the
+ * operator's inbox — a phishing link inside a trusted alert.
+ *
+ * @param {Record<string, any>} record
+ * @returns {{ subject: string, html: string }}
+ */
+export function leadNotificationEmail(record) {
+  const lead = record.lead || {};
+  const answers = record.answers || {};
+  const funnelId = record.funnelId || "Funnel";
+  const leadName = lead.name || lead.first_name || "Lead";
+  const leadEmail = lead.email;
 
-    // The notification goes to a fixed operator address, so it is not a relay —
-    // but it is still outbound mail on the operator's quota, driven by a public
-    // endpoint, and README claims the hourly ceiling covers all outbound mail.
-    // Its own bucket, so a burst of alerts cannot exhaust the OTP budget.
-    if (cfg.notifyEnabled && cfg.notifyEmail && !rateLimit("notify-global", MAIL_HOURLY_CAP, 60 * 60 * 1000)) {
-      console.warn("[email] lead-notification hourly ceiling reached — see MAIL_MAX_PER_HOUR");
-    } else if (cfg.notifyEnabled && cfg.notifyEmail) {
-      // Everything below originates with the visitor, so every interpolation
-      // is escaped. An unescaped name field would let a lead inject markup
-      // into the operator's inbox — a phishing link in a trusted alert.
-      const answersHtml = Object.entries(answers)
-        .map(([q, a]) => `<tr><td style="padding:8px;border-bottom:1px solid #eee;font-weight:600;">${esc(q)}</td><td style="padding:8px;border-bottom:1px solid #eee;">${esc(Array.isArray(a) ? a.join(", ") : a)}</td></tr>`)
-        .join("");
+  const answersHtml = Object.entries(answers)
+    .map(([q, a]) => `<tr><td style="padding:8px;border-bottom:1px solid #eee;font-weight:600;">${esc(q)}</td><td style="padding:8px;border-bottom:1px solid #eee;">${esc(Array.isArray(a) ? a.join(", ") : a)}</td></tr>`)
+    .join("");
 
-      const utmHtml = Object.entries(record.utm || record)
-        .filter(([k]) => k.startsWith("utm_") || k === "gclid" || k === "fbclid" || k === "ttclid" || k === "ref")
-        .map(([k, v]) => `<li><b>${esc(k)}:</b> ${esc(v)}</li>`)
-        .join("");
+  const utmHtml = Object.entries(record.utm || record)
+    .filter(([k]) => k.startsWith("utm_") || k === "gclid" || k === "fbclid" || k === "ttclid" || k === "ref")
+    .map(([k, v]) => `<li><b>${esc(k)}:</b> ${esc(v)}</li>`)
+    .join("");
 
-      const html = `
+  const html = `
         <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:600px;margin:0 auto;padding:24px;border:1px solid #e5e7eb;border-radius:16px;background:#ffffff;">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
             <h2 style="margin:0;color:#111827;font-size:22px;">🚀 New Lead Captured</h2>
@@ -379,11 +395,25 @@ export async function processLeadEmailNotifications(record) {
         </div>
       `;
 
-      await sendEmail({
-        to: cfg.notifyEmail,
-        subject: oneLine(`🚀 New Lead: ${leadName} (${funnelId})`),
-        html,
-      });
+  return { subject: oneLine(`🚀 New Lead: ${leadName} (${funnelId})`), html };
+}
+
+export async function processLeadEmailNotifications(record) {
+  try {
+    const cfg = await getEmailSettings();
+    const lead = record.lead || {};
+    const leadName = lead.name || lead.first_name || "Lead";
+    const leadEmail = lead.email;
+
+    // The notification goes to a fixed operator address, so it is not a relay —
+    // but it is still outbound mail on the operator's quota, driven by a public
+    // endpoint, and README claims the hourly ceiling covers all outbound mail.
+    // Its own bucket, so a burst of alerts cannot exhaust the OTP budget.
+    if (cfg.notifyEnabled && cfg.notifyEmail && !rateLimit("notify-global", MAIL_HOURLY_CAP, 60 * 60 * 1000)) {
+      console.warn("[email] lead-notification hourly ceiling reached — see MAIL_MAX_PER_HOUR");
+    } else if (cfg.notifyEnabled && cfg.notifyEmail) {
+      const { subject, html } = leadNotificationEmail(record);
+      await sendEmail({ to: cfg.notifyEmail, subject, html });
     }
 
     if (cfg.autoresponderEnabled && leadEmail && EMAIL_RE.test(String(leadEmail).trim())) {
