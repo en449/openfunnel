@@ -36,6 +36,12 @@ afterEach(() => {
   globalThis.fetch = realFetch;
 });
 
+// Deleted, deliberately NOT restored to whatever the repo root `.env` supplied.
+// Bun auto-loads that file, so "restore what was there" would hand the next test
+// file the developer's real Supabase project and real webhook destination —
+// which is the bug that made `db-integration.mjs` run against production. UNSET
+// is the safe terminal state for anything naming a connection or an egress
+// target; a test that needs one sets its own, as every file here does.
 afterAll(async () => {
   delete process.env.SUPABASE_URL;
   delete process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -111,7 +117,11 @@ test("a queued lead is delivered by the queue and NOT by the fan-out", async () 
   const { rpcCalls, outbound } = stub((fn) => {
     if (fn === "ingest_lead") return [{ lead_id: "lead-1", queued: 2, deduped: false }];
     if (fn === "claim_deliveries") return [];
-    return null;
+    // rate_hit — not what this test is about, so allow. A bare `null` default
+    // reads as `Boolean(null) === false`, which is a rate-limit denial and
+    // would turn every request in this file into a 429 rather than the 202
+    // the route actually answers with.
+    return true;
   });
 
   const res = await handleIngest(post(lead()), ctx());
@@ -132,7 +142,9 @@ test("a deduped resubmit delivers nothing at all — not by the queue, not by th
   const { rpcCalls, outbound } = stub((fn) => {
     if (fn === "ingest_lead") return [{ lead_id: "lead-1", queued: 0, deduped: true }];
     if (fn === "claim_deliveries") return [];
-    return null;
+    // See the sibling test above: rate_hit needs a truthy default or every
+    // request in this file 429s instead of exercising the dedupe path.
+    return true;
   });
 
   const res = await handleIngest(post(lead()), ctx());
@@ -229,7 +241,16 @@ test("the stored row carries a salted IP hash and never the address itself", asy
 // challenge. The claim in the body is the visitor's, and the visitor controls it.
 test("a claimed email_verified does not survive into the insert", async () => {
   const { handleIngest } = await import("../routes/ingest.js");
-  const { rpcCalls } = stub((fn) => (fn === "ingest_lead" ? [{ lead_id: "l", queued: 1 }] : []));
+  const { rpcCalls } = stub((fn) => {
+    if (fn === "ingest_lead") return [{ lead_id: "l", queued: 1 }];
+    // `is_email_verified` is a scalar function; PostgREST returns the raw
+    // boolean, never wrapped in an array. Answering `false` here is what makes
+    // this test actually exercise the re-derivation — the empty-array default
+    // used elsewhere in this file is truthy (`Boolean([]) === true`) and would
+    // make the claim survive by accident rather than by the server trusting it.
+    if (fn === "is_email_verified") return false;
+    return true;
+  });
 
   await handleIngest(post(lead({ lead: { email: "liar@example.invalid", email_verified: true } })), ctx());
   await settle();

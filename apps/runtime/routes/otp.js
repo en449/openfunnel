@@ -34,9 +34,9 @@ export async function handleOtp(req, ctx) {
     const ip = clientIp(req, server) || "unknown";
     // One code per address per minute, a handful per hour, and a ceiling per
     // caller so one host cannot mail every address it can think of.
-    if (!rateLimit(`otp-send:${email}`, 1, 60 * 1000)) return tooMany();
-    if (!rateLimit(`otp-send-hourly:${email}`, 5, 60 * 60 * 1000)) return tooMany();
-    if (!rateLimit(`otp-send-ip:${ip}`, 20, 60 * 60 * 1000)) return tooMany();
+    if (!(await rateLimit(`otp-send:${email}`, 1, 60 * 1000))) return tooMany();
+    if (!(await rateLimit(`otp-send-hourly:${email}`, 5, 60 * 60 * 1000))) return tooMany();
+    if (!(await rateLimit(`otp-send-ip:${ip}`, 20, 60 * 60 * 1000))) return tooMany();
 
     // The per-caller ceiling above is keyed on `clientIp`, which honours
     // `x-forwarded-for` so a proxied deploy attributes traffic correctly — and
@@ -49,7 +49,7 @@ export async function handleOtp(req, ctx) {
     // This cap is global and keyed on nothing the caller controls, so no header
     // rotates past it. It sits after the per-address limits so ordinary traffic
     // never reaches it. Raise it with MAIL_MAX_PER_HOUR on a high-volume funnel.
-    if (!rateLimit("otp-send-global", MAIL_HOURLY_CAP, 60 * 60 * 1000)) return tooMany();
+    if (!(await rateLimit("otp-send-global", MAIL_HOURLY_CAP, 60 * 60 * 1000))) return tooMany();
 
     const res = await sendOtpCode(email);
     return json(res, res.ok ? 200 : 502, CORS);
@@ -60,9 +60,9 @@ export async function handleOtp(req, ctx) {
     const email = String(body?.email || "").trim().toLowerCase();
     const code = body?.code;
     const ip = clientIp(req, server) || "unknown";
-    if (!rateLimit(`otp-verify:${ip}`, 30, 10 * 60 * 1000)) return tooMany();
+    if (!(await rateLimit(`otp-verify:${ip}`, 30, 10 * 60 * 1000))) return tooMany();
 
-    const valid = verifyOtpCode(email, code);
+    const valid = await verifyOtpCode(email, code);
     return json({ ok: valid, valid }, 200, CORS);
   }
 

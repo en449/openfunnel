@@ -259,7 +259,7 @@ export async function handleIngest(req, ctx) {
   const ip = clientIp(req, server);
   // Public endpoints: bound them so a script cannot flood the JSONL sink,
   // the webhook, and the autoresponder in a loop.
-  if (!rateLimit(`ingest:${ip || "unknown"}`, path === "/api/lead" ? 30 : 300, 60 * 1000)) {
+  if (!(await rateLimit(`ingest:${ip || "unknown"}`, path === "/api/lead" ? 30 : 300, 60 * 1000))) {
     return tooMany();
   }
 
@@ -276,7 +276,10 @@ export async function handleIngest(req, ctx) {
   // the stored lead reflects what actually happened, not what was claimed.
   if (path === "/api/lead" && record.lead && typeof record.lead === "object") {
     const claimed = Boolean(record.lead.email_verified);
-    const actual = claimed && isEmailVerified(record.lead.email);
+    // `await` binds tighter than `&&`, so this short-circuits exactly like the
+    // sync version did: an ordinary lead that never claims `email_verified`
+    // never evaluates the right side, and therefore never pays the round trip.
+    const actual = claimed && (await isEmailVerified(record.lead.email));
     record.lead = { ...record.lead, email_verified: actual };
     if (claimed && !actual) {
       console.warn(`[runtime] unverified lead claimed email_verified: ${oneLine(record.lead.email, 120)}`);

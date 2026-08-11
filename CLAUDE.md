@@ -646,9 +646,18 @@ once per accumulated listener.
   the two working transports; setting only `SMTP_*` logs a warning and sends
   nothing. `sendEmail` reports `ok: false` in that case rather than claiming
   success, so don't "fix" a failing send by making it return true.
-- Rate limits and the OTP store are in-memory, so they are per-process and
-  reset on restart. Behind more than one instance you need an edge rate limit
-  and a shared store.
+- Rate limits and OTP verification are Postgres-backed (`rate_hit`, `issue_otp`,
+  `verify_otp`, `is_email_verified` — see PHASE-1-PLAN.md §4.1) when a database
+  is configured. `rateLimit` falls back to the old in-process bucket when no
+  database is configured, or when the RPC throws for any reason — a database
+  blip degrades the ceiling, it never blocks or fails the request. OTP needs
+  `OTP_HASH_SALT` on top of that (falls back to `IP_HASH_SALT`, warns once if
+  neither is set): without a salt a six-digit code hashed into a table is barely
+  disguised, so `sendOtpCode`/`verifyOtpCode`/`isEmailVerified` use the same
+  in-process `Map`s they always did rather than write an unsalted digest.
+  Unlike the rate limiter, `verifyOtpCode` and `isEmailVerified` FAIL CLOSED on
+  a database error — an unreachable database reads as "not verified", never
+  "verified", because the wrong direction writes a lie onto a stored lead.
 - Supabase is opt-in via env. With nothing configured everything still works
   against local JSONL files and the direct webhook/email fan-out — that path is
   the self-hoster's whole deployment, so it is maintained, not deprecated.

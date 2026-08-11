@@ -176,7 +176,7 @@ async function deliverEmail(claim, signal) {
   // one cap over all lead alerts, so N clients cannot each get their own 500.
   // A breach retries rather than dying — the backoff reaches 40 minutes by the
   // fifth attempt, which is inside the hour the bucket needs to drain.
-  if (!rateLimit("notify-global", MAIL_HOURLY_CAP, 60 * 60 * 1000)) {
+  if (!(await rateLimit("notify-global", MAIL_HOURLY_CAP, 60 * 60 * 1000))) {
     return { ok: false, status: null, error: "mail hourly ceiling reached — see MAIL_MAX_PER_HOUR" };
   }
 

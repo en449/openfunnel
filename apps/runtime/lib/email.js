@@ -2,13 +2,17 @@
  * @file Mail settings, the transports, the OTP challenge, and the two messages
  * a captured lead triggers.
  *
- * Three things here are security controls, not plumbing:
+ * Four things here are security controls, not plumbing:
  *
  *  - `redactEmailSettings` / `WRITABLE_EMAIL_KEYS`. Secrets never travel
  *    outward, writes go through an allowlist, and a blank secret means "keep the
  *    existing value" rather than wiping it.
- *  - `verifiedEmails`. The browser can claim `email_verified` in a lead payload;
- *    only this map decides whether the claim is true.
+ *  - `issue_otp` / `verify_otp` / `is_email_verified` (Postgres) and, as their
+ *    fallback, `otpStore` / `verifiedEmails` (in-process). The browser can claim
+ *    `email_verified` in a lead payload; only these decide whether the claim is
+ *    true — see `otpDbReady()` for which one answers on a given call, and the
+ *    comments on `verifyOtpCode` / `isEmailVerified` for why a database error
+ *    answers "not verified" rather than falling back to the `Map`.
  *  - The `MAIL_HOURLY_CAP` calls. Both the OTP challenge and the autoresponder
  *    mail an address taken from a public request body, so both need a ceiling
  *    keyed on something the caller cannot rotate.
@@ -20,9 +24,10 @@
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { randomInt } from "node:crypto";
+import { createHash, randomInt } from "node:crypto";
 import { safeEqual } from "./auth.js";
 import { DATA_DIR } from "./config.js";
+import { dbConfigured, dbErrorKind, rpc } from "./db.js";
 import { esc } from "./html.js";
 import { errSummary, oneLine } from "./log.js";
 import { MAIL_HOURLY_CAP, rateLimit } from "./ratelimit.js";
@@ -239,13 +244,20 @@ export async function sendEmail({ to, subject, html, text, signal }) {
  *  Email verification challenge
  * ========================================================================== */
 
-/** @type {Map<string, { code: string, expires: number, attempts: number }>} */
+/**
+ * NO-DATABASE / NO-SALT FALLBACK ONLY — see `otpDbReady()`. When a database is
+ * configured and salted, nothing here is written or read; `issue_otp` /
+ * `verify_otp` are the source of truth and a request served by a DIFFERENT
+ * process instance can verify a code issued by this one, which a `Map` in this
+ * process's heap never could.
+ *
+ * @type {Map<string, { code: string, expires: number, attempts: number }>}
+ */
 const otpStore = new Map();
 
 /**
- * Emails that have actually completed a challenge, with an expiry. The browser
- * can claim `email_verified` in a lead payload, but only this map decides
- * whether the claim is true — see `isEmailVerified`.
+ * Emails that have actually completed a challenge, with an expiry. Same
+ * fallback-only status as `otpStore` — see `isEmailVerified`.
  *
  * @type {Map<string, number>}
  */
@@ -258,12 +270,74 @@ const VERIFIED_TTL_MS = 30 * 60 * 1000;
 /**
  * Drop expired entries. Both maps otherwise only shrink when a key happens to
  * be read again, so addresses that are never verified would accumulate for the
- * life of the process.
+ * life of the process. Only reachable on the fallback path.
  */
 function sweepExpired() {
   const now = Date.now();
   for (const [key, entry] of otpStore) if (now > entry.expires) otpStore.delete(key);
   for (const [key, until] of verifiedEmails) if (now > until) verifiedEmails.delete(key);
+}
+
+let warnedNoOtpSalt = false;
+
+/**
+ * Is the Postgres-backed OTP path usable for this call? Both a database AND a
+ * salt are required. Read per call rather than resolved once at import — same
+ * reason `lib/db.js` and `routes/ingest.js`'s `IP_HASH_SALT` are: on serverless
+ * the environment belongs to the invocation, and a value frozen at module load
+ * is a setting an operator can change without it ever taking effect.
+ *
+ * With no salt, a six-digit code has a million preimages — an UNSALTED digest
+ * in a table is the code wearing a disguise, worse than the in-process store it
+ * would replace. That is why this is a hard gate rather than "salt if you have
+ * one", mirroring the existing `IP_HASH_SALT` rule for `lead.ip_hash`.
+ *
+ * The warning fires once per process, not once per call: an operator who wired
+ * up Postgres but forgot the salt would otherwise get no signal at all for why
+ * a code issued by one instance cannot be verified by another.
+ *
+ * @returns {boolean}
+ */
+function otpDbReady() {
+  if (!dbConfigured()) return false;
+  if (process.env.OTP_HASH_SALT || process.env.IP_HASH_SALT) return true;
+  if (!warnedNoOtpSalt) {
+    warnedNoOtpSalt = true;
+    console.warn(
+      "[email] OTP_HASH_SALT (and IP_HASH_SALT) are both unset — DB-backed OTP verification is off. " +
+        "Falling back to the in-process store, which does not survive a restart and does not bind " +
+        "across instances. Set OTP_HASH_SALT to enable it.",
+    );
+  }
+  return false;
+}
+
+/**
+ * Hash a code the same way `routes/ingest.js` hashes an IP: salted SHA-256, hex
+ * digest, then Postgres's `bytea` hex-input format (`\x…`) so PostgREST's JSON
+ * string passes straight through and the cast happens on the parameter's
+ * declared type. The email is folded into the hash alongside the code so the
+ * same six digits issued to two different addresses never collide in storage.
+ *
+ * @param {string} email  normalized (lowercased, trimmed)
+ * @param {string} code
+ * @param {string} salt
+ * @returns {string}
+ */
+function hashOtpCode(email, code, salt) {
+  return `\\x${createHash("sha256").update(`${salt}:${email}:${code}`).digest("hex")}`;
+}
+
+/** @param {string} code */
+function otpEmailHtml(code) {
+  return `
+    <div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;max-width:480px;margin:0 auto;padding:24px;border:1px solid #e5e7eb;border-radius:16px;background:#ffffff;text-align:center;">
+      <h2 style="margin:0 0 8px 0;color:#111827;">Verification Code</h2>
+      <p style="margin:0 0 20px 0;color:#6b7280;font-size:14px;">Enter the code below to verify your email address:</p>
+      <div style="font-size:36px;font-weight:800;letter-spacing:8px;color:#4f46e5;background:#f3f4f6;padding:16px;border-radius:12px;display:inline-block;margin-bottom:20px;">${code}</div>
+      <p style="margin:0;color:#9ca3af;font-size:12px;">Code expires in 10 minutes. If you did not request this code, please ignore this email.</p>
+    </div>
+  `;
 }
 
 export async function sendOtpCode(email) {
@@ -273,23 +347,47 @@ export async function sendOtpCode(email) {
   // Six digits from a CSPRNG. Math.random is predictable from prior outputs,
   // which would let an attacker derive a victim's code instead of guessing it.
   const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
+
+  if (otpDbReady()) {
+    const salt = process.env.OTP_HASH_SALT || process.env.IP_HASH_SALT || "";
+    try {
+      await rpc("issue_otp", {
+        p_email: normalized,
+        p_code_hash: hashOtpCode(normalized, code, salt),
+        p_ttl_ms: OTP_TTL_MS,
+      });
+    } catch (err) {
+      // Deliberately NOT falling back to `otpStore` here. `verifyOtpCode` takes
+      // the same `otpDbReady()` branch, so a code this call wrote to memory
+      // would be unverifiable for as long as the database stays configured —
+      // the feature would break silently rather than degrade. Telling the
+      // visitor the send failed, so they retry, is the honest answer.
+      console.warn(`[email] issue_otp failed (${dbErrorKind(err)}): ${errSummary(err)}`);
+      return { ok: false, error: "send_failed" };
+    }
+
+    const res = await sendEmail({ to: normalized, subject: `${code} is your email verification code`, html: otpEmailHtml(code) });
+    if (!res.ok) {
+      // The row `issue_otp` just wrote is now orphaned: a code nobody received.
+      // There is no `revoke_otp` function, and `lib/db.js`'s `update()` refuses
+      // an unfiltered PATCH, so cleaning it up needs a second filtered write.
+      // Chosen instead: leave it. `issue_otp` deletes any live, unconsumed
+      // challenge for the address before inserting a new one, so the visitor's
+      // very next resend already clears this row for free; left untouched it is
+      // otherwise inert within `OTP_TTL_MS`. The cost is one wasted challenge
+      // slot for an address that never got a usable code — cheaper than a
+      // second round trip on every failed send, and self-healing either way.
+      console.warn(`[email] OTP send failed after issue for ${oneLine(normalized, 120)}: ${res.error}`);
+      return { ok: false, error: "send_failed" };
+    }
+    return { ok: true };
+  }
+
+  // Fallback: no database, or no salt. Exactly the pre-Postgres behaviour.
   otpStore.set(normalized, { code, expires: Date.now() + OTP_TTL_MS, attempts: 0 });
   sweepExpired();
 
-  const html = `
-    <div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;max-width:480px;margin:0 auto;padding:24px;border:1px solid #e5e7eb;border-radius:16px;background:#ffffff;text-align:center;">
-      <h2 style="margin:0 0 8px 0;color:#111827;">Verification Code</h2>
-      <p style="margin:0 0 20px 0;color:#6b7280;font-size:14px;">Enter the code below to verify your email address:</p>
-      <div style="font-size:36px;font-weight:800;letter-spacing:8px;color:#4f46e5;background:#f3f4f6;padding:16px;border-radius:12px;display:inline-block;margin-bottom:20px;">${code}</div>
-      <p style="margin:0;color:#9ca3af;font-size:12px;">Code expires in 10 minutes. If you did not request this code, please ignore this email.</p>
-    </div>
-  `;
-
-  const res = await sendEmail({
-    to: normalized,
-    subject: `${code} is your email verification code`,
-    html,
-  });
+  const res = await sendEmail({ to: normalized, subject: `${code} is your email verification code`, html: otpEmailHtml(code) });
 
   // The code is never returned to the caller — not even in development. It
   // previously was, gated on NODE_ENV !== "production", which is the default:
@@ -301,9 +399,39 @@ export async function sendOtpCode(email) {
   return { ok: true };
 }
 
-export function verifyOtpCode(email, code) {
+/**
+ * @param {string} email
+ * @param {string} code
+ * @returns {Promise<boolean>}
+ */
+export async function verifyOtpCode(email, code) {
   if (!email || !code) return false;
   const normalized = String(email).toLowerCase().trim();
+
+  if (otpDbReady()) {
+    const salt = process.env.OTP_HASH_SALT || process.env.IP_HASH_SALT || "";
+    try {
+      return Boolean(
+        await rpc("verify_otp", {
+          p_email: normalized,
+          p_code_hash: hashOtpCode(normalized, String(code).trim(), salt),
+          p_max_attempts: OTP_MAX_ATTEMPTS,
+        }),
+      );
+    } catch (err) {
+      // FAIL CLOSED. An unreachable database must read as "not verified", never
+      // "verified" — the opposite of `rateLimit`'s fallback, and deliberately
+      // so: a false "verified" here writes a lie onto the operator's stored
+      // lead, while a false "not verified" only costs the visitor a retry once
+      // the database answers again. Also do not fall back to `otpStore`: in DB
+      // mode nothing was ever written there, so checking it would only be a
+      // slower way to arrive at the same false.
+      console.warn(`[email] verify_otp failed (${dbErrorKind(err)}): ${errSummary(err)}`);
+      return false;
+    }
+  }
+
+  // Fallback path, unchanged from the pre-Postgres implementation.
   const stored = otpStore.get(normalized);
   if (!stored) return false;
   if (Date.now() > stored.expires) {
@@ -328,9 +456,26 @@ export function verifyOtpCode(email, code) {
   return false;
 }
 
-/** Did this address actually pass a challenge recently? */
-export function isEmailVerified(email) {
+/**
+ * Did this address actually pass a challenge recently?
+ *
+ * @param {string} email
+ * @returns {Promise<boolean>}
+ */
+export async function isEmailVerified(email) {
   const normalized = String(email || "").toLowerCase().trim();
+  if (!normalized) return false;
+
+  if (otpDbReady()) {
+    try {
+      return Boolean(await rpc("is_email_verified", { p_email: normalized, p_ttl_ms: VERIFIED_TTL_MS }));
+    } catch (err) {
+      // Same fail-closed rule as `verifyOtpCode` — see the comment there.
+      console.warn(`[email] is_email_verified failed (${dbErrorKind(err)}): ${errSummary(err)}`);
+      return false;
+    }
+  }
+
   const until = verifiedEmails.get(normalized);
   if (!until) return false;
   if (Date.now() > until) {
@@ -409,7 +554,7 @@ export async function processLeadEmailNotifications(record) {
     // but it is still outbound mail on the operator's quota, driven by a public
     // endpoint, and README claims the hourly ceiling covers all outbound mail.
     // Its own bucket, so a burst of alerts cannot exhaust the OTP budget.
-    if (cfg.notifyEnabled && cfg.notifyEmail && !rateLimit("notify-global", MAIL_HOURLY_CAP, 60 * 60 * 1000)) {
+    if (cfg.notifyEnabled && cfg.notifyEmail && !(await rateLimit("notify-global", MAIL_HOURLY_CAP, 60 * 60 * 1000))) {
       console.warn("[email] lead-notification hourly ceiling reached — see MAIL_MAX_PER_HOUR");
     } else if (cfg.notifyEnabled && cfg.notifyEmail) {
       const { subject, html } = leadNotificationEmail(record);
@@ -421,7 +566,7 @@ export async function processLeadEmailNotifications(record) {
       // public by necessity. Cap it per recipient so the funnel cannot be driven
       // as a spam cannon against a third party from the operator's domain.
       const recipient = String(leadEmail).toLowerCase().trim();
-      if (!rateLimit(`autoresponder:${recipient}`, 3, 60 * 60 * 1000)) {
+      if (!(await rateLimit(`autoresponder:${recipient}`, 3, 60 * 60 * 1000))) {
         console.warn(`[email] autoresponder rate limit hit for ${oneLine(recipient, 120)}`);
         return;
       }
@@ -429,7 +574,7 @@ export async function processLeadEmailNotifications(record) {
       // unbounded number of addresses each get their 3. Same open-relay shape as
       // /api/otp/send, so the same absolute cap applies — mail leaving the
       // operator's domain is bounded by something the caller cannot rotate.
-      if (!rateLimit("autoresponder-global", MAIL_HOURLY_CAP, 60 * 60 * 1000)) {
+      if (!(await rateLimit("autoresponder-global", MAIL_HOURLY_CAP, 60 * 60 * 1000))) {
         console.warn("[email] autoresponder hourly ceiling reached — see MAIL_MAX_PER_HOUR");
         return;
       }

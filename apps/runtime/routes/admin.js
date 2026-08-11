@@ -60,7 +60,7 @@ export async function handleAdmin(req, ctx) {
     if (!EMAIL_RE.test(targetEmail)) return json({ error: "invalid_email" }, 400);
     // Authenticated, but still capped: a leaked token should not turn the
     // operator's mail domain into a spam source.
-    if (!rateLimit(`test-email:${clientIp(req, server) || "unknown"}`, 10, 60 * 60 * 1000)) return tooMany();
+    if (!(await rateLimit(`test-email:${clientIp(req, server) || "unknown"}`, 10, 60 * 60 * 1000))) return tooMany();
 
     const res = await sendEmail({
       to: targetEmail,

@@ -21,6 +21,18 @@ process.env.DATA_DIR = dataDir;
 process.env.MAX_SINK_BYTES = "1000000";
 process.env.MAX_READ_BYTES = "1000000";
 
+// The prune test below asserts the behaviour of the in-process bucket, which
+// `rateLimit` only reaches with no database configured. Bun auto-loads the repo
+// root `.env`, so without this the file inherits whatever Supabase project the
+// developer is actually pointed at and fires five thousand `rate_hit` calls at
+// it — slow, dependent on a network, and aimed at production. Blanked rather
+// than pointed at a fake host so nothing leaves the machine at all. They stay
+// unset afterwards rather than being restored, for the same reason: the next
+// test file inheriting the developer's real project is the hazard, not the
+// absence of one.
+delete process.env.SUPABASE_URL;
+delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+
 afterAll(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
@@ -36,9 +48,9 @@ test("an exhausted long-window bucket survives a flood of short-window calls", a
   // rotate, and therefore the one worth resetting.
   const CAP = "mail:global";
   const LONG = 2000;
-  expect(rateLimit(CAP, 2, LONG)).toBe(true);
-  expect(rateLimit(CAP, 2, LONG)).toBe(true);
-  expect(rateLimit(CAP, 2, LONG)).toBe(false);
+  expect(await rateLimit(CAP, 2, LONG)).toBe(true);
+  expect(await rateLimit(CAP, 2, LONG)).toBe(true);
+  expect(await rateLimit(CAP, 2, LONG)).toBe(false);
 
   // Exhausted buckets stop recording hits, so this one's newest timestamp now
   // ages while the limit is still meant to hold.
@@ -48,9 +60,9 @@ test("an exhausted long-window bucket survives a flood of short-window calls", a
   // prune. The old code compared every bucket against *this* window, so the
   // hourly one looked stale after 60s and was deleted by the very traffic it
   // was supposed to be independent of.
-  for (let i = 0; i < 5100; i++) rateLimit(`ingest:flood-${i}`, 300, 60);
+  for (let i = 0; i < 5100; i++) await rateLimit(`ingest:flood-${i}`, 300, 60);
 
-  expect(rateLimit(CAP, 2, LONG)).toBe(false);
+  expect(await rateLimit(CAP, 2, LONG)).toBe(false);
 });
 
 /* ========================================================================== *

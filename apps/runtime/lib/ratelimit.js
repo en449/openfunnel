@@ -1,15 +1,26 @@
 /**
  * @file The abuse limiter and the global outbound-mail ceiling.
  *
- * Everything here is a `Map` in this process's heap, which is a deliberate
- * trade — no Redis to run, no shared state to operate — and a real constraint:
- * the limits are per-process, so they reset on restart and do not compose across
- * replicas. `server.js` prints that at boot under NODE_ENV=production and the
- * README says it twice, because the failure is silent: with N instances every
- * ceiling below is effectively N times looser than the number configured.
+ * Backed by Postgres now. `rate_hit()` (`supabase/migrations/*_phase1_functions.sql`)
+ * makes every ceiling durable and shared across every instance a deployment
+ * runs — which the in-process `Map` this file used to be built around never
+ * was. See PHASE-1-PLAN.md §4.1 for the failure that forced the move: with N
+ * instances, every limit below used to be N times looser than the number
+ * configured, and `MAIL_HOURLY_CAP` — the one ceiling whose key a caller cannot
+ * rotate — is exactly the limit that mattered.
+ *
+ * The `Map` did not go away. It is now the FALLBACK, not the design: `rateLimit`
+ * degrades to it when no database is configured, or when `rate_hit` throws for
+ * any reason. That degrade is deliberate — ingest must never fail a visitor, and
+ * a limiter that blocks or 500s on a database blip is a worse outage than the
+ * abuse it exists to stop. The fallback is never worse than the status quo
+ * before this file called Postgres at all, so failing the request over a
+ * database hiccup was never on the table.
  */
 
+import { dbConfigured, rpc } from "./db.js";
 import { CORS, json } from "./http.js";
+import { errSummary } from "./log.js";
 
 /**
  * @typedef {{ windowMs: number, hits: number[] }} Bucket
@@ -22,17 +33,31 @@ import { CORS, json } from "./http.js";
  * `ingest:` call — which deletes it, resetting the limit. That made
  * `MAIL_HOURLY_CAP`, the one ceiling whose key a caller cannot rotate, resettable
  * about once a minute by any unauthenticated request to `/api/events`.
+ *
+ * Reachable only through the fallback path below — see the `@file` header.
  */
 const rateBuckets = new Map();
 
 /**
- * Fixed-cost sliding-window limiter. In-memory and therefore per-process —
- * enough to stop scripted abuse of the mail and OTP endpoints, not a
- * substitute for an edge rate limit on a multi-instance deploy.
+ * Last time the RPC-failure fallback logged, so an outage under real ingest
+ * traffic writes one line a minute instead of one line per request. A database
+ * being down is already the incident; flooding the log on every one of dozens
+ * of requests a second would be a second one.
+ */
+let lastRpcFallbackWarnAt = 0;
+
+/**
+ * Fixed-cost sliding-window limiter, in this process's heap. Unchanged from the
+ * pre-Postgres implementation — this is exactly what every deployment ran
+ * before `rate_hit` existed, and it is what every deployment still runs with no
+ * database configured, or mid-outage.
  *
+ * @param {string} key
+ * @param {number} max
+ * @param {number} windowMs
  * @returns {boolean} true when the call is allowed.
  */
-export function rateLimit(key, max, windowMs) {
+function inMemoryRateLimit(key, max, windowMs) {
   const now = Date.now();
   const hits = (rateBuckets.get(key)?.hits || []).filter((t) => now - t < windowMs);
   if (hits.length >= max) {
@@ -50,6 +75,37 @@ export function rateLimit(key, max, windowMs) {
     }
   }
   return true;
+}
+
+/**
+ * The one rate limiter in the codebase — every caller from `/api/lead` to the
+ * admin test-email route goes through this, so a new endpoint cannot pick up a
+ * weaker check by accident.
+ *
+ * With a database configured, this calls `rate_hit(p_key, p_max, p_window_ms)`
+ * and returns its answer directly. Anything that stops that call from
+ * completing — no database configured, a timeout, a 5xx, a rotated key — falls
+ * back to `inMemoryRateLimit` rather than throwing or blocking. See the `@file`
+ * header for why that direction is safe and the other direction is not.
+ *
+ * @param {string} key
+ * @param {number} max
+ * @param {number} windowMs
+ * @returns {Promise<boolean>} true when the call is allowed.
+ */
+export async function rateLimit(key, max, windowMs) {
+  if (!dbConfigured()) return inMemoryRateLimit(key, max, windowMs);
+
+  try {
+    return Boolean(await rpc("rate_hit", { p_key: key, p_max: max, p_window_ms: windowMs }));
+  } catch (err) {
+    const now = Date.now();
+    if (now - lastRpcFallbackWarnAt > 60_000) {
+      lastRpcFallbackWarnAt = now;
+      console.warn(`[ratelimit] rate_hit unavailable, falling back to the in-process bucket: ${errSummary(err)}`);
+    }
+    return inMemoryRateLimit(key, max, windowMs);
+  }
 }
 
 export const tooMany = () => json({ error: "rate_limited" }, 429, CORS);

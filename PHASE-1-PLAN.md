@@ -511,6 +511,74 @@ delete the Google Fonts path; strip `fonts.googleapis.com` / `fonts.gstatic.com`
 
 ---
 
+## 4.1 WO9 + WO10 — the last in-process state moves into Postgres
+
+**Delivered as one work order, not two.** WO9 makes `rateLimit` async and WO10 awaits it at
+the OTP call sites; splitting them means two agents editing `lib/email.js`, `routes/otp.js` and
+`routes/ingest.js` at the same time for one coherent change.
+
+### Why this is not a cleanup task
+
+`lib/ratelimit.js` and the two `Map`s in `lib/email.js` are correct for exactly one long-lived
+server, which is what the project has today and is not what WO11 is porting it to. On a platform
+that gives each request its own process, every one of them stops binding — silently, which is the
+part that matters:
+
+- **`MAIL_HOURLY_CAP` is the open-relay bound.** `/api/otp/send` and the lead autoresponder both
+  mail an address taken from a public request body. Their per-address and per-IP limits are the
+  everyday guards, but the per-IP key comes from `clientIp`, which honours caller-supplied
+  `x-forwarded-for` — rotate it and only the global cap is left. Per-process, that cap is
+  `N × configured` across N instances and effectively absent on serverless.
+- **The OTP store breaks the feature outright**, not just its ceiling. A code issued by one
+  invocation cannot be found by the next, so a visitor is told their valid code is invalid.
+- **`verifiedEmails` fails in the dangerous direction.** `isEmailVerified` answers false for an
+  address that just passed the challenge, so `routes/ingest.js` writes `email_verified: false`
+  onto a lead that *was* verified and logs the visitor as a liar. The lead is not lost, but the
+  operator's data is quietly wrong and nothing indicates it.
+- **The ingest limiter** stops bounding how much a script can push into the operator's Postgres.
+
+### The shape
+
+`rate_hit(p_key, p_max, p_window_ms)` already exists in `0002` and is already tested. The three
+OTP functions land in `20260811130000_otp_functions.sql` (written, in tree, unreviewed): the
+attempt counter has to be incremented under `for update`, because a select-then-update from the
+runtime is a lost update and a lost update on that counter turns a five-guess cap into an
+unbounded one.
+
+Three decisions that are not the executor's to make:
+
+1. **`rateLimit` becomes `async` and keeps its name, its parameters and its meaning.** One
+   limiter, not a fast local one plus a shared one — the moment there are two, a new endpoint
+   gets the weak one by accident, and this is the function whose whole job is to bound abuse.
+2. **A database failure falls back to the in-process bucket. It never throws and never blocks.**
+   Ingest must never fail a visitor, and a rate limiter that 500s under database trouble is a
+   worse outage than the abuse it prevents. Degrading to a per-process ceiling is exactly the
+   status quo, so the fallback is never worse than today.
+3. **Postgres-backed OTP requires a salt.** With `OTP_HASH_SALT` (falling back to `IP_HASH_SALT`)
+   unset, the in-memory store stays in use and a warning is logged once. This mirrors the existing
+   `IP_HASH_SALT` rule for `lead.ip_hash`: a six-digit code has a million preimages, so an
+   unsalted digest in a table is the code wearing a disguise, and storing one would be worse than
+   the per-process store it replaces.
+
+### Known cost, accepted
+
+Every rate-limited request gains one PostgREST round trip. `/api/lead` already awaits
+`ingest_lead`, so it goes from one to two; `/api/events` already awaits `ingest_event` and does
+the same. The alternative — folding the rate check into those two RPCs — saves a round trip on
+the hot path and is worth doing if the free tier's connection ceiling is ever actually reached.
+Not before: it would put the limiter in two places, and the point of decision 1 is that there is
+one.
+
+`/api/otp/send` is the worst case, at **five sequential round trips** before the response — four
+ceilings plus `issue_otp` — each bounded by `DB_TIMEOUT_MS` individually and by nothing in
+aggregate. Accepted rather than overlooked: they are sequential *because* each one is allowed to
+short-circuit the next, which is the behaviour that keeps a refused caller from reaching the mail
+path at all, and this route is a deliberate human speed bump rather than the hot path. If it ever
+needs bounding, the fix is one `rate_hit_many` RPC taking an array, not a shared deadline — a
+partial check is a ceiling that did not bind.
+
+---
+
 ## 5. Open — needs Enno's answer
 
 1. **Down migrations.** PLAN.md §10 asks for up *and* down. The Supabase CLI is up-only by
