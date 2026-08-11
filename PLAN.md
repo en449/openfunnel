@@ -120,8 +120,32 @@ project has no admin code deployed to it at all.
               └──────────────────────────────┘
 ```
 
-Vercel Pro + Supabase Pro, ~€45/month. Both Pro tiers are effectively mandatory: Hobby caps
-functions at 10s and allows only daily crons, and PITR backups are a Pro feature.
+**Plan tiers — build on Free, upgrade at the first real client (decided 2026-08-11).**
+Vercel Pro + Supabase Pro is ~€45/month and is where this lands, but not until a client's
+leads are involved.
+
+The two reasons originally given here were wrong and are corrected for the record:
+Hobby's 10s function cap applies only to projects deployed before 2025-04-23 without
+Fluid compute — with Fluid (default on new projects) Hobby is **300s default and max**.
+And Vercel's daily-only cron limit never applied, because the retry drain runs on
+`pg_cron` inside Supabase (§5.3), deliberately.
+
+The reasons that do bind, all three at the moment a real lead arrives:
+
+| | Hobby / Free | Why it blocks client work |
+| --- | --- | --- |
+| Vercel DPA | **Pro and Enterprise only** — the DPA's own scope line | No Art. 28 processor contract, so the §8.0 gate cannot be met at all. Decisive. |
+| Vercel ToS | "non-commercial, personal use only" (fair-use guidelines) | Client funnels are commercial. Suspension risk on the page the ads point at. |
+| Deployment Protection | Standard Protection only — "your production domain remains publicly accessible" | The console has no login of its own by design (§5.2). On Hobby it would be world-readable. |
+| Supabase Free | no automatic backups, 500 MB, 5 GB egress, pauses after 7 days idle | A lead database with no backups is the failure this project exists to prevent. |
+
+Supabase's DPA is auto-incorporated on every tier, so Free is lawful — its limits are
+operational, not legal. `pg_cron` and `pg_net` are not tier-gated either.
+
+**So the build runs on Free with one rule: no real personal data.** Synthetic test leads
+only, console never on a production domain (run it locally or as a preview deployment),
+and the upgrade to both Pro tiers happens *before* the first client funnel goes live —
+not after.
 
 ### 2.2 What this costs in porting work
 
@@ -978,13 +1002,25 @@ than build something.
 
 Ordered by what kills the business, not by what is interesting. Each phase ends in something usable — no six-month cliff.
 
-### Phase 0 — Housekeeping (hours)
-- [ ] `git rm -r apps/builder apps/admin`
-- [ ] `HOST`, `MAX_SINK_BYTES`, `MAX_READ_BYTES` into `.env.example`
-- [ ] Commit the security patch set (currently uncommitted on `4164afd` — this is pre-mortem failure mode 6 already in progress)
-- [ ] Decide fork vs downstream, record it in `PROJECT-MEMORY.md`
-- [ ] **Push to GitHub.** Publishing the fork there also discharges **AGPL §13 in about an hour** — deploying to Vercel is a network service, so the obligation is live from the first deploy. Link the repo from the funnel footer.
-- **Done means:** clean tree, CI green, repo pushed, licence obligation satisfied.
+### Phase 0 — Housekeeping (hours) — **DONE 2026-08-11**
+- [x] `git rm -r apps/builder apps/admin`
+- [ ] `HOST`, `MAX_SINK_BYTES`, `MAX_READ_BYTES` into `.env.example` — **the one item still open**
+- [x] Commit the security patch set — `b3526dd`, 38 files
+- [x] Fork vs downstream: **fork.** `github.com/en449/openfunnel`, public; `upstream` remotes at `luispdoesai/openFunnel`
+- [x] **Pushed to GitHub**, and the licence obligations closed with it (`1064bdf`):
+  - §4 — the full AGPL text ships in `LICENSE` (it was a 24-line notice pointing at gnu.org)
+  - §5(a) — modification notice in `README.md`: branch point `4164afd`, every change dated
+  - §13 — every funnel page renders a source link, **not suppressible by `branding.hidden`**
+    (that flag governs the "Powered by" badge, which the licence does not require).
+    `SOURCE_URL` lives in `packages/engine/src/controller.js`; `branding.sourceLabel`
+    translates the label. A test asserts the link survives all three hide paths.
+- **Done means:** clean tree, CI green (128 pass / 1 known Bun failure), repo pushed, licence obligations satisfied. ✅
+
+**Correction to the §13 reading recorded earlier:** publishing the repo is necessary but not
+sufficient on its own. §13 requires the offer be made *to the users interacting with the
+program remotely* — the funnel's visitors, not the operator. Hence the in-page link. Put it in
+the same footer as Impressum and Datenschutz, which a German funnel needs regardless, and it
+costs nothing extra in design.
 
 ### Phase 1 — Never lose a lead (3–4 weeks)
 The reason the project exists. Sized up from 2–3 weeks: the serverless port and moving three
@@ -1016,7 +1052,7 @@ in-memory stores to Postgres are real work the VPS design did not need.
 - [ ] **GATE — self-host the preset fonts, remove the Google Fonts path entirely** (§8.2)
 - [ ] **GATE — strip `fonts.googleapis.com` / `fonts.gstatic.com` from the default `funnelCsp`** (§8.2, found in the spike)
 - [ ] **GATE — Brevo wired, Resend removed from the default path** (§8.3). Needs an adapter; `SMTP_RELAY_URL` posts a fixed `{to, subject, html, text}` body no provider accepts as-is
-- [ ] **GATE — Vercel + Supabase DPAs signed, SCCs in place, TIA written** (§8.0, §8.3)
+- [ ] **GATE — Vercel + Supabase DPAs in force, SCCs in place, TIA written** (§8.0, §8.3). Neither is signed in the classic sense: Supabase's is auto-incorporated on acceptance of the terms on every tier, Vercel's binds on entering the agreement **but covers Pro and Enterprise only** — so this gate is not passable while the build sits on Hobby (§2.1). Action is: upgrade, archive both PDFs with their acceptance dates, then write the TIA and name both processors in every client AVV
 - [ ] IP hashing with a salt; no raw IP written anywhere ([REALITY-CHECK.md](REALITY-CHECK.md) §3)
 - [ ] Measure real-device LCP on a preset funnel over 4G — 22 unbundled module requests per page load, decide whether the no-build-step invariant still pays ([REALITY-CHECK.md](REALITY-CHECK.md) §6)
 

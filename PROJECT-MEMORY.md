@@ -52,6 +52,30 @@ Decisions taken 2026-08-10 (session 2), after a revised pre-mortem:
 stands, PLAN.md is the direction, the kill switches in PLAN.md §13 are real, and code may start.
 Building is unblocked.
 
+Decisions taken 2026-08-11 (session 4) — **Phase 0 is done, Phase 1 is next**:
+
+5. **Build on Vercel Free + Supabase Free; upgrade to both Pro tiers before the first client
+   funnel goes live.** Rewritten into PLAN.md §2.1 with the evidence. The two reasons recorded
+   in session 3 were wrong — Hobby's 10s function cap applies only to pre-2025-04-23 projects
+   without Fluid compute (Fluid Hobby is 300s), and the daily-cron limit never applied because
+   the drain runs on `pg_cron`. What actually blocks client work: **Vercel's DPA covers Pro and
+   Enterprise only** (so the §8.0 gate is unpassable on Hobby), Hobby is contractually
+   non-commercial, and Hobby cannot protect a production domain — which the console's
+   no-login-of-our-own design depends on. Supabase Free is lawful (DPA auto-incorporated on
+   every tier) but has no backups. **Standing rule while on Free: no real personal data.**
+6. **Local Postgres on an external SSD: rejected for production, fine for dev.** Vercel
+   functions reach the database from Vercel's network; a Mac-attached SSD needs a tunnel, and
+   then a sleeping laptop loses leads. Use the Supabase CLI locally (same Postgres, `pg_cron`,
+   `pg_net`, same migrations, `supabase db push` to go live) — no schema drift, no rewrite.
+7. **AGPL: fork published, obligations closed, Phase R still deferred.** §13's requirement runs
+   to *the funnel's visitors*, not to Enno — so publishing the repo alone was not enough and an
+   in-page source link now ships. Enno's stated trigger for the clean-room rewrite: **wanting to
+   sell the software or give clients direct access to it.** Until then the licence costs one
+   footer link. The repo can go private any time nothing is deployed; while funnels are live the
+   source of *that version* must stay publicly reachable. Client funnel documents, leads and
+   credentials are data, never covered — but `FUNNELS_DIR` defaults to `examples/`, inside the
+   published tree, so Phase 1's move to Postgres is also what keeps client copy out of GitHub.
+
 The kill switches he agreed to, repeated here because they are the part with teeth:
 no live funnel 6 weeks after Phase 1 completes → stop · one lead confirmed lost in production →
 all feature work stops until the cause is closed · Phase 1 over 6 weeks → cut to leads + email +
@@ -322,17 +346,20 @@ Not solved by choosing any backend. These are the actual roadmap:
 - [x] 2026-08-10 — Ran `bun install --frozen-lockfile` (devDeps only) so the suite runs.
 - [x] 2026-08-10 — Added regression tests for every patched finding.
 
+- [x] 2026-08-11 — Enno ran `git rm -r apps/builder apps/admin` (the classifier refuses it for
+  the agent, every time — do not retry it, hand him the command).
+- [x] 2026-08-11 — Committed the patch set as `b3526dd` (38 files) and pushed to a new public
+  fork, `github.com/en449/openfunnel`. `origin` = the fork, `upstream` = `luispdoesai/openFunnel`.
+- [x] 2026-08-11 — Closed the three AGPL obligations in `1064bdf`: full licence text in
+  `LICENSE` (§4), modification notice in `README.md` (§5a), and a source link on every funnel
+  page (§13).
+
 ### Open right now
-- [ ] **Delete the `apps/builder` and `apps/admin` directories.** The routes are unmounted
-  and the config constants are gone, so the code is unreachable over HTTP — but the files
-  are still on disk. `git rm -r apps/builder apps/admin` was refused by the sandbox's
-  permission classifier, so this is Enno's to run. Recoverable either way:
-  `git checkout 4164afd -- apps/builder apps/admin`.
-- [ ] Mirror `HOST`, `MAX_SINK_BYTES` and `MAX_READ_BYTES` into `.env.example`. The README's
-  env block already documents all three; `.env*` is unreadable to the agent by hook policy
-  (the secrets No-Go), so the example file was left untouched.
-- [ ] Decide whether to commit. Nothing is committed; the whole patch set is working-tree
-  only, on top of `4164afd`.
+- [ ] Mirror `HOST`, `MAX_SINK_BYTES` and `MAX_READ_BYTES` into `.env.example`. **Enno's to
+  run** — `.env*` is unreadable to the agent through two independent layers (the
+  `Read(//**/.env.*)` deny rule and the secrets regex in `guard.sh`), and `.env.example`
+  matches both. The paste block is in the Phase 0 list above; the README env block documents
+  all three already.
 
 ### Planned — SUPERSEDED 2026-08-10 by [PLAN.md](PLAN.md) §10
 Kept for the record. The shape decision (done-for-you, not SaaS) reorders this: 6/8/9 became
