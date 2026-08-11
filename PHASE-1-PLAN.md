@@ -494,8 +494,8 @@ run after every non-trivial one; the parent applies all fixes. Baseline after ea
 | 6 | Inline first attempt after the 202, abort-polled | **Opus** | 4, 5 | ✅
 | 7 | `/api/internal/drain` + its own router gate (§1.4) | **Opus** | 5 | ✅
 | 8 | pg_cron + pg_net jobs (§3.3), secret in Vault | Sonnet | 7 |
-| 9 | Rate limits → `rate_hit` RPC; `lib/ratelimit.js` keeps its signature | Sonnet | 2 |
-| 10 | OTP + verified-email → Postgres; `MAIL_HOURLY_CAP` via `rate_hit` | Sonnet | 2, 9 |
+| 9 | Rate limits → `rate_hit` RPC; `lib/ratelimit.js` keeps its signature | Sonnet | 2 | ✅
+| 10 | OTP + verified-email → Postgres; `MAIL_HOURLY_CAP` via `rate_hit` | Sonnet | 2, 9 | ✅ (§4.1, delivered with 9)
 | 11 | `Bun.serve` → `handleRequest(req)`, two entry points | **Opus** | 3–10 |
 | 12 | Delivery-log view in the console + manual re-send | Sonnet | 5 |
 | 13 | Dead-letter alerting to Enno | Sonnet | 5 |
