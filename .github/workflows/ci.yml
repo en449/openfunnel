@@ -1,21 +1,33 @@
 name: CI
 
 # Cheap insurance for a repo whose history is mostly security fixes: every push
-# and every PR — including from forks — runs the same two commands a maintainer
+# and every PR — including from forks — runs the same commands a maintainer
 # runs locally. A green tick is not a security review, but it does stop a
 # refactor from silently deleting a guard that a test asserts.
+#
+# `push` is deliberately unfiltered. It used to be `branches: [main]`, on the
+# assumption that everything reaches main through a pull request and would be
+# checked there — and a long-lived feature branch is the counterexample. On
+# 2026-08-12 `phase-1-delivery-queue` had fourteen work orders on it and had
+# never run CI once, so nobody knew the engine suite was 219/18 on a runner
+# while being 236/1 on the machine that pushed it (PHASE-1-PLAN.md §4.8). CI
+# that only watches the branch work has already landed on is insurance bought
+# after the fire.
 
 on:
   push:
-    branches: [main]
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# head_ref on a pull_request is the branch name; ref_name on a push is the same
+# string. Normalising them means a PR and the push that updated it share one
+# group and the older run is cancelled, rather than both building because
+# `github.ref` spells the same branch two different ways.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
