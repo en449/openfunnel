@@ -402,6 +402,82 @@ must not be inside this repo).
 
 ## Session Log
 
+### 2026-08-12 (session 7) — WO14: the tests were already there, and nothing ran them
+
+The work order read "tests: state machine (claim/lease/sweep/dead), dedupe, rate window,
+cancelled-on-restrict". Reading before writing found all of it already in the tree:
+`supabase/tests/state-machine.sql` is 55 assertions covering every item on that line, plus
+`otp.sql` (19) and `targets.sql` (22). They shipped with WO1 in `f882a2c` and the work order
+stayed open behind them. Design for the corrected scope written into
+[PHASE-1-PLAN.md](PHASE-1-PLAN.md) §4.8 before any code, per the Build Workflow.
+
+**The rot was measurable, not theoretical.** The local `of_dev` cluster was two migrations behind
+— no `otp` functions, no `delivery_target.source` — so every schema change since 2026-08-11 had
+landed without these files running once. A `postgrest` process from 2026-08-11 17:29 was still
+holding a connection to it. Rebuilt from the four migrations, all three files pass, and
+`supabase/tests/db-integration.mjs` passes against a real PostgREST too. The assertions were
+honest all along; they were invisible.
+
+**So WO14 became a runner and a CI job, not a test suite.** `scripts/db-test.sh` owns a database
+named `of_test` and refuses every other name — it applies migrations, and applying migrations to a
+database the Supabase CLI manages breaks the ledger exactly the way the SQL editor does. `bun test`
+stays Postgres-free; the assertions get their own CI job on a `postgres:17` service container.
+
+**A suite built on `assert` needs a tripwire.** `plpgsql.check_asserts` is a session GUC, and with
+it off every assertion in all three files is a no-op while each still prints
+`all assertions passed` and exits 0. Measured, not inferred. The runner's first act is now a
+deliberately failing assertion of its own — and it requires the assertion's own *message*, because
+psql also exits non-zero for an unreachable host or a missing database, so the first version
+printed "tripwire ok — assertions are checked" for a run that had not connected at all.
+
+**Three holes closed, each one a branch that could be deleted from a migration with every existing
+assertion still passing:** the `deleted_at` half of `cancel_pending_on_restrict` (soft-delete must
+cancel pending rows, and only the claim-time join was covering it); `ingest_lead` on a funnel with
+no enabled target (`queued = 0` with a real lead id — the `queueOwnsIt` bug class, pinned in SQL
+for the first time); and `for update of d skip locked`, which no single-session test can see at all
+— the file's second claim returns 0 because the row is `delivering`, which `status = 'pending'`
+alone would produce. It lives in the runner, which is the only place with two connections.
+
+**Two rounds of review, both FAIL, both on real findings — all in the runner, none in the SQL.**
+Round 1: the `${...%/*}` URL splicing broke on a server URL with no dbname
+(`postgres://postgres@host:5432` became `postgres://of_test`) and on a trailing slash; the
+connection URL was echoed, which is this repo's own never-log-a-DSN rule applied to a test script;
+and under `set -e` a failed command substitution exited before `wait`, orphaning a psql session
+still holding a row lock. Round 2 caught that the fix's credential mask only masks a *URI* — psql
+accepts libpq's keyword/value form just as readily, so `host=… password=… dbname=…` was printed
+verbatim on the refusal path. The refusal now prints no value at all: a message does not need the
+secret to be useful.
+
+Every fix red-checked by breaking the thing it defends: the trigger branch, `ingest_lead`'s count,
+`skip locked` removed from `claim_deliveries` (session B blocks at 4008ms against a 1000ms
+ceiling; 36ms when it is present), the tripwire against an unreachable host, and session B pointed
+at a function that does not exist. Migrations byte-identical to HEAD afterwards each time.
+
+**One timing bug was mine to catch rather than the reviewer's.** The first `skip locked` check had
+session A hold for 3s, B start at 1s and be judged against 2000ms — so a *blocked* B came back at
+2006ms. Six milliseconds of margin. A `sleep 1` overshooting on a loaded runner would have passed a
+`claim_deliveries` with no `SKIP LOCKED` as healthy, which is the one outcome the check exists to
+prevent. A holds 5s now and B is judged against 1000ms.
+
+Verified: 236 pass / 1 fail (the known Bun 1.3.13 413-vs-400), typecheck and all three check
+scripts green, and the runner green across 20+ consecutive runs. One non-reproducing failure was
+reported by an executor mid-development (`expected 2 delivery rows, got 1` in two files at once)
+and did not recur in any run against the final script; noted rather than hidden.
+
+**Worth knowing before the next live test.** `POST /api/admin/targets/sync` cannot give `fitness`,
+`agency-landing` or `real-estate` delivery targets: `syncAllFunnelTargets()` selects from the
+`funnel` table, so a funnel existing only as `examples/*.json` is invisible to it. The row has to
+be created first (`saveFunnel` does it and syncs in the same call) — and a row is still not a
+target, because `deriveTargets` returns nothing without a webhook URL or a notification address,
+and `NOTIFY_EMAIL` is unset.
+
+Still Enno's, unchanged: `BREVO_FROM` on a verified sending domain, `NOTIFY_EMAIL`, the signed AVV,
+whether to merge this branch into `main`, and the `dub1` function region.
+
+**Next is the phase-exit DSGVO gate**, flagged and deliberately not started: self-host the eight
+preset fonts, delete the Google Fonts path in `packages/engine/src/theme.js`, and strip
+`fonts.googleapis.com` / `fonts.gstatic.com` from the default `funnelCsp`.
+
 ### 2026-08-12 (session 6) — The transport lands: Brevo behind a seam, and dead letters reach a person
 
 WO12b and WO13, both on `phase-1-delivery-queue`. Design written into

@@ -43,6 +43,38 @@ psql -h 127.0.0.1 -p 54399 -U postgres -c "create database of_dev;"
 for f in supabase/migrations/*.sql supabase/seed.sql; do
   psql -h 127.0.0.1 -p 54399 -U postgres -d of_dev -v ON_ERROR_STOP=1 -f "$f"
 done
+```
+
+That gives you a working `of_dev` to point the runtime at. To check the assertions in
+`supabase/tests/*.sql` actually still pass, run `./scripts/db-test.sh` instead of the
+manual `psql -f` recipe below — it is the one-command path, and the one CI runs on
+every push (§4.8). It reads a **server** URL from `OF_TEST_PG_URL` (defaulting to the
+cluster above, `postgres://postgres@127.0.0.1:54399/postgres`), then drops and recreates a
+database of its own — always named `of_test` — applies every migration to it, and runs every
+assertion file. It never touches `of_dev` or any other database; that separation is load-bearing,
+not tidiness, because applying migrations to a database the Supabase CLI owns (`of_dev`, or a
+linked live project) breaks the migration ledger the same way pasting SQL into the Supabase
+editor does (see below). Pointing `OF_TEST_PG_URL` at `of_test` itself is refused rather than
+attempted, since dropping the database you're connected through is not something Postgres
+allows anyway.
+
+**Point it at a local cluster.** Nothing stops `OF_TEST_PG_URL` naming a live project's server,
+and the invariant still technically holds there — it would create and drop a database called
+`of_test` beside the real one and never touch the migration ledger — but running the
+one-command path against a production server is not a thing to do by accident. Note also that
+the URL is a DSN: if yours carries a password, treat it like any other secret. The script never
+echoes it (it prints `***@` in place of the userinfo), but your shell history will.
+
+```bash
+export PATH="/opt/homebrew/opt/postgresql@17/bin:$PATH"
+./scripts/db-test.sh
+```
+
+Running the assertion files against a database you already have — `of_dev`, or a live
+project — stays a deliberately manual decision (§4.8 Decision 1), and the recipe for it is
+unchanged:
+
+```bash
 psql -h 127.0.0.1 -p 54399 -U postgres -d of_dev -v ON_ERROR_STOP=1 \
      -f supabase/tests/state-machine.sql
 psql -h 127.0.0.1 -p 54399 -U postgres -d of_dev -v ON_ERROR_STOP=1 \
@@ -51,9 +83,9 @@ psql -h 127.0.0.1 -p 54399 -U postgres -d of_dev -v ON_ERROR_STOP=1 \
      -f supabase/tests/targets.sql
 ```
 
-The test ends in `ROLLBACK`, so it leaves nothing behind and can be run against any database
+Each file ends in `ROLLBACK`, so it leaves nothing behind and can be run against any database
 carrying this schema, including a live one — every assertion is scoped to the rows it created.
-Expected last line:
+Expected last line, whichever way you run them:
 
 ```
 NOTICE:  state-machine check: all assertions passed

@@ -19,10 +19,13 @@ do $$
 declare
   v_client  uuid;
   v_funnel  uuid;
+  v_funnel2 uuid;
   v_target1 uuid;
   v_target2 uuid;
   v_lead    uuid;
   v_lead2   uuid;
+  v_lead3   uuid;
+  v_lead4   uuid;
   v_queued  int;
   v_dedup   boolean;
   v_id      bigint;
@@ -79,6 +82,49 @@ begin
   assert v_lead2 = v_lead,    'a deduped lead must return the id of the row that already exists';
   assert (select count(*) from delivery where lead_id = v_lead) = 2,
          'dedupe must not add delivery rows';
+
+  /* --- ingest: a funnel with no enabled target must still queue 0, not error -
+   *
+   * A real lead id together with queued = 0 is the state CLAUDE.md names the
+   * queueOwnsIt bug class: the runtime has to fan out, because nothing else
+   * will ever deliver this lead. Until now only a stubbed fetch in
+   * apps/runtime/test/ingest-queue.test.js pinned this — assert the SQL side
+   * of the contract too.
+   */
+
+  insert into funnel (client_id, slug, name, doc, status)
+    values (v_client, 'check-funnel2-' || gen_random_uuid(), 'Check 2', '{}'::jsonb, 'live')
+    returning id into v_funnel2;
+
+  -- v_target1 has funnel_id = null, i.e. "every funnel of this client" (see
+  -- the fixtures above), so a naive second funnel would inherit it for free
+  -- and this fixture would not be target-less at all. Disable it for exactly
+  -- the width of this check and restore it before the claim assertions below
+  -- rely on it again. v_target2 needs no such treatment — it is already
+  -- scoped to v_funnel by funnel_id and was never going to match v_funnel2.
+  update delivery_target set enabled = false where id = v_target1;
+
+  select l.lead_id, l.queued, l.deduped into v_lead3, v_queued, v_dedup
+    from ingest_lead((select slug from funnel where id = v_funnel2),
+                     '{"lead":{"email":"b@example.invalid"}}'::jsonb,
+                     null, null, false, null, null, 'dedupe-b') l;
+
+  assert v_lead3 is not null, 'ingest_lead must still create the lead row when a funnel has no enabled target';
+  assert v_queued = 0, format('a funnel with no enabled target must queue 0 rows, got %s', v_queued);
+  assert v_dedup = false, 'a fresh dedupe_key must not report deduped';
+  assert exists (select 1 from lead where id = v_lead3),
+         'the lead row must exist even though nothing was queued to deliver it — this is the row the fan-out has to find';
+
+  update delivery_target set enabled = true where id = v_target1;
+
+  -- Mirror, so this check cannot pass by ingest being broken for everyone: the
+  -- original, fully-targeted funnel must still queue both rows.
+  select l.lead_id, l.queued, l.deduped into v_lead4, v_queued, v_dedup
+    from ingest_lead((select slug from funnel where id = v_funnel),
+                     '{"lead":{"email":"c@example.invalid"}}'::jsonb,
+                     null, null, false, null, null, 'dedupe-c') l;
+
+  assert v_queued = 2, format('the original, fully-targeted funnel must still queue 2 rows, got %s', v_queued);
 
   /* --- unknown slug is distinguishable from an outage ----------------- */
 
@@ -240,7 +286,26 @@ begin
   select count(*) into v_n from claim_deliveries(10, v_lead);
   assert v_n = 0, 'a restricted lead must never be claimed, even with pending rows';
 
+  -- cancel_pending_on_restrict fires on `restricted` OR `deleted_at` (§3.1 rule
+  -- 5), and everything above has only ever driven the `restricted` branch.
+  -- Rebuild the same shape — v_id genuinely pending, v_id2 genuinely done —
+  -- right before deleted_at is set, or the trigger finds nothing pending to
+  -- cancel and the assertion below would pass whether or not the deleted_at
+  -- branch exists at all. v_id is already pending here: the reset two lines
+  -- up put every row for this lead back to pending, and the claim attempt
+  -- just above found nothing to claim (restricted was still true), so it
+  -- never left pending. v_id2 needs putting back explicitly, since that same
+  -- reset also caught it.
+  update delivery set status = 'done', delivered_at = now() where id = v_id2;
+
   update lead set restricted = false, deleted_at = now() where id = v_lead;
+  assert (select status from delivery where id = v_id) = 'cancelled',
+         'soft-deleting a lead must cancel its pending deliveries — the deleted_at branch of cancel_pending_on_restrict';
+  -- Same mirror as the restricted case above: a delivery already handed over
+  -- must not be retracted by a deletion any more than by a restriction.
+  assert (select status from delivery where id = v_id2) = 'done',
+         'soft-deletion must not retract a delivery that already went out';
+
   select count(*) into v_n from claim_deliveries(10, v_lead);
   assert v_n = 0, 'a soft-deleted lead must never be claimed';
 

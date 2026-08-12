@@ -499,9 +499,9 @@ run after every non-trivial one; the parent applies all fixes. Baseline after ea
 | 11 | `Bun.serve` → `handleRequest(req)`, two entry points (§4.2) | **Opus** | 3–10 | ✅
 | 12a | Something creates `delivery_target` rows (§4.3) — pulled out of 12 | **Opus** | 3, 5 | ✅ (migration NOT pushed to the live project yet)
 | 12 | Delivery-log view in the console + manual re-send (§4.4) | **Opus** (routes) + Sonnet (console) | 5, 12a | ✅
-| 12b | Brevo behind a provider seam in `lib/email.js` (§4.6) — pulled ahead of 13 | **Opus** | 12 |
-| 13 | Dead-letter alerting to Enno (§4.7) | **Opus** (delivery/mail) + Sonnet (docs) | 5, 12b |
-| 14 | Tests: state machine (claim/lease/sweep/dead), dedupe, rate window, cancelled-on-restrict | Sonnet | 5–10 |
+| 12b | Brevo behind a provider seam in `lib/email.js` (§4.6) — pulled ahead of 13 | **Opus** | 12 | ✅ mail proven end to end on the live preview
+| 13 | Dead-letter alerting to Enno (§4.7) | **Opus** (delivery/mail) + Sonnet (docs) | 5, 12b | ✅ (`NOTIFY_EMAIL` still unset, so it has nobody to mail)
+| 14 | Tests: state machine (claim/lease/sweep/dead), dedupe, rate window, cancelled-on-restrict | Sonnet | 5–10 | ✅ the assertions already existed — §4.8 is about nothing running them
 
 Opus keeps 4, 6, 7 and 11 — each one is either the ingest invariant, the privileged-gate
 structure, or a decision about what breaks when the process dies between requests. Everything
@@ -1083,6 +1083,148 @@ copy of that leaving the server permanently. Everything interpolated goes throug
 the funnel slug and the error text both originate outside this process.
 
 ---
+
+## 4.8 WO14 — the assertions exist. Nothing runs them.
+
+Written 2026-08-12, before any code, and it opens with a correction: **WO14's stated content is
+already in the tree and already passes.** `supabase/tests/state-machine.sql` is 55 assertions
+covering claim, the lease, the sweeper, the fencing pair, the dead letter, dedupe, the rate window
+and cancelled-on-restrict — every item on the work-order line. `otp.sql` (19) and `targets.sql`
+(22) do the same for their halves. They shipped with WO1 in `f882a2c` and the work order stayed
+open behind them.
+
+So this is not a work order about writing tests. It is about the fact that **nothing has run them
+since the day they were written**, and two pieces of evidence say the rot is real rather than
+theoretical:
+
+- The local `of_dev` cluster was two migrations behind — no `otp` functions, no
+  `delivery_target.source`. Every schema change since 2026-08-11 landed without these files being
+  run once.
+- A `postgrest` process from 2026-08-11 17:29 was still holding a connection to it, twenty-two
+  hours later. Nobody had been back.
+
+Rebuilt from the four migrations, all three files pass, and `supabase/tests/db-integration.mjs`
+passes against a real PostgREST as well. The assertions are honest. They are simply invisible: not
+in `bun test`, not in CI, reachable only by a five-command README recipe against a cluster someone
+has to remember to start.
+
+### Decision 1 — the deliverable is a runner and a CI job, not a test suite
+
+`bun test` stays Postgres-free. It is the check that runs on every push from every fork, and
+making it require a database would trade a suite that always runs for a suite that usually skips —
+which is how a green tick starts meaning nothing. The SQL assertions get their own CI job with a
+`postgres:17` service container, and one script both CI and a developer run.
+
+`scripts/db-test.sh` takes a **server** URL and always drops and recreates a database named
+`of_test`. That constraint is not tidiness: the script applies migrations, and applying migrations
+to a database the Supabase CLI owns is exactly the ledger-breaking move `supabase/README.md`
+forbids. Refusing every database name but its own makes "this script wrote to the linked project"
+unreachable rather than discouraged. Running the assertions against a live database stays the
+manual `psql` recipe, which is where a decision that needs a human belongs.
+
+### Decision 2 — a suite built on `assert` needs a tripwire, or it can pass while asserting nothing
+
+`plpgsql.check_asserts` is a session GUC. With it off, every `assert` in all three files is a
+no-op, each file prints its `all assertions passed` notice, and psql exits 0. Measured, not
+inferred:
+
+```
+$ psql -c "set plpgsql.check_asserts=off;" -c "do \$\$ begin assert 1=2, 'deliberate'; raise notice 'FALSE PASS'; end \$\$;"
+NOTICE:  FALSE PASS
+exit=0
+```
+
+So the runner's first act is a deliberately failing assertion of its own: if psql exits **zero** on
+`assert false`, the run stops there and says the mechanism is off. It tests the mechanism rather
+than the GUC's name, which is the version that survives a Postgres release renaming it.
+
+The second cheap guard is the notice itself. A file that exits 0 without printing
+`all assertions passed` returned early — so the runner requires the line, per file, rather than
+trusting the exit code alone.
+
+### Decision 3 — three holes worth closing, and one deliberately left
+
+Found by reading each assertion against the SQL it covers, and asking what could be deleted from
+the migration without the file noticing.
+
+1. **The `deleted_at` half of the restrict trigger has no assertion at all.**
+   `cancel_pending_on_restrict` fires on `restricted` *or* `deleted_at`, and the file asserts only
+   that a soft-deleted lead is not *claimed* — which the claim-time join produces on its own.
+   Delete the `deleted_at` branch of the trigger and everything still passes, while a soft-deleted
+   lead's pending rows sit in `pending` forever and the queue never drains clean. That terminal
+   state is the entire reason `cancelled` exists (§2.1).
+
+2. **`ingest_lead` on a funnel with no enabled target is unasserted in SQL.** A real lead id with
+   `queued = 0` is the state CLAUDE.md names as the `queueOwnsIt` bug class — the one that took the
+   operator's webhook and lead alert silently dark. Today only a stubbed `fetch` in
+   `ingest-queue.test.js` pins it, so the SQL side of that contract is assumed.
+
+3. **`skip locked` is never exercised.** The file's second claim returns 0 rows because the row is
+   now `delivering`, which `d.status = 'pending'` alone would produce — so deleting
+   `for update of d skip locked` from `claim_deliveries` passes every assertion in the tree. It
+   takes two sessions to see, and what it protects is not correctness but liveness: the cron tick,
+   the inline first attempt and an operator's re-send overlap by design, and a second drain that
+   *blocks* behind the first rather than skipping past it spends 25 × up to 10s inside an
+   invocation `pg_net` abandons at 55s. The result is a drain that worked being recorded as a
+   timeout — a failure that reads as an outage and is not one.
+
+   It cannot live in a `.sql` file, because one psql session is one connection. It lives in the
+   runner, which is the only place that has two.
+
+   **A timing check needs margin on both sides, and the first version had six milliseconds of
+   it.** Session A held its lock for 3s, session B started at 1s and was judged against a 2000ms
+   ceiling — so a *blocked* B came back at 2006ms and only just failed. A `sleep 1` overshooting
+   by that much on a loaded runner would have let a `claim_deliveries` with no `SKIP LOCKED` pass
+   as healthy, which is the single outcome the check exists to prevent. A now holds for 5s and B
+   is judged against 1000ms: ~36ms observed on the pass side, ~4008ms on the fail side, both
+   measured.
+
+**Left out: `rate_hit` under concurrency.** It is a single `insert … on conflict do update …
+returning`, so the row lock is the statement's own and concurrent callers serialise by
+construction. The only regression a concurrency test would catch is somebody rewriting it as a
+select-then-update — which is the exact mistake the OTP migration already carries a comment
+against. A second two-session dance to defend against a rewrite that has a written warning on it
+is a test earning less than it costs.
+
+**Also left out: `db-integration.mjs` in CI.** It needs the `postgrest` binary, which means
+downloading a release tarball into a repo whose whole invariant is that it installs nothing. It
+stays the manual check the README documents, and it was run green on 2026-08-12 against the
+current migrations.
+
+### Decision 4 — every new assertion is red-checked by breaking the SQL, not by reading it
+
+Per file, and named here so the executor cannot substitute "it passes" for "it fails when it
+should": comment out the trigger's `deleted_at` branch (hole 1), make `ingest_lead` return a
+hard-coded `queued = 1` (hole 2), remove `skip locked` from `claim_deliveries` (hole 3). Each must
+turn its own assertion red and be reverted. The runner gets the same treatment: an assertion
+flipped false must exit non-zero and name its file, and `plpgsql.check_asserts=off` must trip the
+tripwire.
+
+### What this does not fix, and is worth knowing before the next live test
+
+Only `lead-gen` has a row in the `funnel` table; `fitness`, `agency-landing` and `real-estate`
+answer `PT404` from `ingest_lead`. `POST /api/admin/targets/sync` does **not** close that:
+`syncAllFunnelTargets()` selects from the `funnel` table, so a funnel that exists only as
+`examples/*.json` is invisible to it. The row has to be created first — `saveFunnel` does it, and
+syncs that funnel's targets in the same call. And a row alone is still not a target: `deriveTargets`
+returns nothing for a funnel with no webhook URL and no notification address, so with `NOTIFY_EMAIL`
+unset those three would land a lead in Postgres with `queued = 0` and fall through to the fan-out.
+
+None of it blocks this work order — every SQL assertion builds its own client, funnel and targets
+inside the transaction it rolls back.
+
+### The two work orders
+
+| # | Work order | Tier | Files |
+| --- | --- | --- | --- |
+| 14a | `scripts/db-test.sh` + the CI job + the `skip locked` two-session check + README | Sonnet | `scripts/db-test.sh`, `.github/workflows/ci.yml`, `supabase/README.md` |
+| 14b | The three missing assertions | Sonnet | `supabase/tests/state-machine.sql` |
+
+Disjoint file lists, so they run in parallel.
+
+**Acceptance, both:** `bun test` unchanged at 236 pass / 1 known fail · `bun run typecheck` ·
+all three check scripts · `./scripts/db-test.sh` green from a cold database · every new assertion
+red-checked by the break named in Decision 4 and then reverted.
 
 ## 5. Open — needs Enno's answer
 

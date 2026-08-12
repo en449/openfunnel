@@ -72,3 +72,45 @@ jobs:
 
       - name: Assert the serverless path uses no Bun-only API
         run: bun run scripts/check-portable-runtime.mjs
+
+  # PHASE-1-PLAN.md §4.8: the assertions in supabase/tests/ shipped with WO1,
+  # were always correct, and nothing ran them for a day — the local dev
+  # cluster drifted two migrations behind with nobody noticing, because the
+  # only way to run these files was a five-command README recipe against a
+  # cluster someone had to remember to start by hand. scripts/db-test.sh is
+  # that recipe made runnable from a cold start; this job is what makes it
+  # run on every push instead of when someone remembers.
+  db-assertions:
+    name: SQL assertions (state machine, OTP, targets)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        # scripts/db-test.sh applies migrations and then runs the assertion
+        # files against a database it creates itself; both would race a
+        # container that answers on the port before Postgres is actually
+        # ready to accept connections. This blocks the job's steps until
+        # `pg_isready` says otherwise.
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v5
+
+      # No apt step: the runner image ships a psql client, so installing one
+      # would be a second package for a script whose whole point is that it
+      # needs nothing but psql and a server. That is an assumption about an
+      # image we do not control — if it ever stops being true this job fails
+      # on its first psql call, loudly and on the first push, which is when
+      # you want to find out.
+      - name: Run the assertion suite
+        env:
+          OF_TEST_PG_URL: postgres://postgres@localhost:5432/postgres
+        run: ./scripts/db-test.sh
