@@ -2728,6 +2728,21 @@ function truncateText(value, max) {
   return s.length > max ? `${s.slice(0, max)}…` : s;
 }
 
+/**
+ * When the next attempt is due. `relativeTime` is past-tense by design and every
+ * other view wants it that way — but a scheduled retry is in the FUTURE, so it
+ * rendered a delivery 90 seconds out as "Next just now", which is the log
+ * quietly lying about the one column an operator reads while waiting.
+ */
+function untilTime(iso) {
+  const ms = iso ? new Date(iso).getTime() - Date.now() : NaN;
+  if (Number.isNaN(ms)) return "soon";
+  if (ms <= 0) return "due now";
+  if (ms < 60000) return `in ${Math.round(ms / 1000)}s`;
+  if (ms < 3600000) return `in ${Math.round(ms / 60000)}m`;
+  return `in ${Math.round(ms / 3600000)}h`;
+}
+
 /** An id shortened for a table cell; the untruncated value still lives in `title`. */
 function shortDeliveryId(id) {
   const s = String(id ?? "");
@@ -2821,7 +2836,7 @@ function renderDeliveries() {
       const timing = d.deliveredAt
         ? `Delivered ${esc(relativeTime(d.deliveredAt))}`
         : d.status === "pending" || d.status === "delivering"
-          ? `Next ${esc(relativeTime(d.nextAttemptAt))}`
+          ? `Next ${esc(untilTime(d.nextAttemptAt))}`
           : "—";
       const hasResult = d.lastStatus != null || d.lastError;
       const result = hasResult
