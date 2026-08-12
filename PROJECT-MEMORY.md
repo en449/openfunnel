@@ -402,6 +402,59 @@ must not be inside this repo).
 
 ## Session Log
 
+### 2026-08-12 (session 8) — the DSGVO font gate, and the reason it does not reach everyone yet
+
+The phase-exit gate from PLAN.md §8.2: self-host the preset fonts, delete the Google Fonts path,
+strip both hosts from `funnelCsp`. Design written to [PHASE-1-PLAN.md](PHASE-1-PLAN.md) §4.9 first,
+two work orders — G1 (Sonnet: fetch the fonts, write the generator) and G2 (Opus: the consent gate,
+the CSP, the deletions).
+
+**The gate as written was one leak short.** It named the engine's `theme.font` loader. It did not
+name `apps/app/index.html`, which loaded Inter and JetBrains Mono from Google for the operator
+console with two `preconnect`s in front of them. Same transfer, different file. Closed in the same
+change and the widening flagged rather than done quietly.
+
+**Deleted rather than repointed.** `loadThemeFont`, `ensureGoogleFontLoaded`, `remoteFontFamily`,
+`LOCAL_FAMILIES` and the `allowRemote` option are gone, along with the `loadThemeFont()` call in
+`_grantConsent()`. Keeping the consent gate around a now-same-origin request would have left a
+comment in the code claiming to protect something it no longer protects. `theme.font` naming a
+family the page does not have now falls down the CSS stack to a system font — no request, no 404.
+
+The four consent tests changed shape, not just content: they used to assert "a Google link appears
+only after accept" and now assert **no external stylesheet is created on any consent path**, matched
+by shape (`^(https?:)?//`) rather than by hostname. A loader re-introduced against a different CDN
+fails them too. Red-checked: re-inserting a `<link>` in `applyTheme` fails all four.
+
+`scripts/check-engine-imports.mjs` grew a second half — it now resolves `url()` targets in engine
+CSS and fails on both off-origin and missing files. A wrong `url()` in an `@font-face` does not
+throw, it silently renders a system font, which is precisely the invisible-404 class that script
+already existed for. Red-checked both directions, and `stripComments` runs first so a comment
+documenting the old URL cannot fail CI.
+
+Reviewer round 1 came back **FAIL** on one Major: `packages/engine/types/index.d.ts` still told
+consumers the consent decision gated the webfont. That file was named in §4.9's own work-order
+table and I had not touched it. Fixed, plus two of its three Minors (the comment-stripping above,
+and a `funnelCsp` assertion that no font host is pre-authorised — red-checked by restoring the old
+policy string). The third is recorded in `packages/engine/src/fonts/README.md`: `styles.css` asks
+for weights up to 850, past the top of Space Grotesk's axis (700), so a variable font clamps. Same
+result the old Google request produced; written down so it does not read as a bug later.
+
+**What the live self-test found — [PHASE-1-PLAN.md](PHASE-1-PLAN.md) §4.9.1.** A cold load is
+clean: zero third-party requests bar Vercel's own preview toolbar, the WOFF2 comes from our origin,
+`document.fonts` reports the family loaded. A **warm** load on the same alias still fired the exact
+Google URL the change deleted — from the browser's cache, because `serveEngine` sends
+`immutable, max-age=31536000` on URLs that carry no version. The deployed bytes are correct (a
+`cache: "reload"` fetch of `/_of/theme.js` has neither `googleapis` nor `loadThemeFont`); the
+visitor's copy is not. Pre-existing, not font-specific, and it means **no** engine change reaches a
+returning visitor. Logged as a PLAN.md task with the design (a versioned path segment, not a query
+string — relative sibling imports do not inherit a query) rather than fixed inside a font commit,
+because the fix interpolates into `FUNNEL_BOOT_SCRIPT`, whose bytes the CSP hashes.
+
+Verified: 237 pass / 1 fail (the known Bun 413-vs-400), typecheck, all three check scripts, CI, and
+a live self-test on the branch alias with screenshots in `screenshots/`. One toast on the console
+screenshot — "Could not open agency-landing" — is a 401 from `/api/builder/funnel/*` on an origin
+that holds no admin token, not a regression.
+
 ### 2026-08-12 (session 7) — WO14: the tests were already there, and nothing ran them
 
 The work order read "tests: state machine (claim/lease/sweep/dead), dedupe, rate window,

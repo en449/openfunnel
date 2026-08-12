@@ -1328,6 +1328,37 @@ a cold `/f/:slug` load makes **zero** third-party requests, verified with browse
 live preview and screenshotted · `bun test` · `bun run typecheck` · all three check scripts ·
 `./scripts/db-test.sh` · CI green.
 
+### 4.9.1 What the live self-test found: the fix does not reach a returning visitor
+
+The cold-cache load is clean — zero Google requests, `plus-jakarta-sans-latin.woff2` fetched from
+our own origin, `Plus Jakarta Sans` reported `loaded` by `document.fonts`. The **warm** load on the
+same alias was not. It still fired
+`https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap`
+— the exact URL shape of the loader this change deleted.
+
+The deployed bytes are correct: fetching `/_of/theme.js` with `cache: "reload"` returns 5,894 bytes
+containing neither `googleapis` nor `loadThemeFont`. The old code was running from the **browser's**
+cache. `serveEngine()` in `apps/runtime/lib/static.js` answers every `/_of/*` request with
+`public, max-age=31536000, immutable` in production, and the URLs carry no version — so a browser
+that has ever loaded a funnel page keeps last deploy's engine for up to a year and never revalidates.
+`immutable` means exactly that: not even a reload requests it again.
+
+This is pre-existing and it is not specific to fonts — it means no engine change reaches a returning
+visitor. It matters here because it is the difference between "the leak is fixed" and "the leak is
+fixed for people who have never visited": the CSP still blocks the request on a warm load, so the
+font silently falls back rather than leaking, but the browser has still been told to ask Google. It
+is not urgent today — nothing serves production traffic, the domain is `noindex`, and the leads are
+synthetic — which is why it is written down rather than bolted onto this commit.
+
+The fix is a **versioned path prefix**, not a query string: `/_of/<deployId>/index.js`. The engine's
+modules import their siblings relatively (`./theme.js`), so a `?v=` on the entry point does not reach
+them and they stay pinned to the cached copy — a path segment does, for free, because relative
+resolution carries it. `serveEngine` strips the segment; `FUNNEL_BOOT_SCRIPT` interpolates it. That
+last part needs care and its own review: CLAUDE.md's rule is that the boot script stays free of
+interpolation because its SHA-256 is in the CSP. A per-deploy constant resolved once at module load
+keeps the hash and the bytes in sync — a *funnel* value would not — but that argument is exactly the
+kind that deserves a reviewer, not a footnote in a font commit.
+
 ## 5. Open — needs Enno's answer
 
 1. **Down migrations.** PLAN.md §10 asks for up *and* down. The Supabase CLI is up-only by
