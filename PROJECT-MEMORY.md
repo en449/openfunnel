@@ -444,9 +444,38 @@ have kept hitting whatever the alias pointed at. Push is the deploy; verify with
 its two fields on select (`screenshots/wo12b-brevo-settings-preview.png`), and `/delivery` renders
 and says "This browser has no admin token for this hostname" — correct, the token is per-ORIGIN.
 
-Still Enno's: the Brevo account, the verified sending domain (SPF/DKIM), the signed AVV, and
-`BREVO_API_KEY` in the Vercel Preview environment. Until that variable exists the deployed runtime
-still answers `no_transport` — the code path is there, the credential is not.
+**Then the key went in and the transport answered.** `BREVO_API_KEY` was first uploaded as
+`Brevo_API_KEY`, which on Linux is a different variable and resolved to `undefined` — worth knowing
+because nothing about it looks wrong in the Vercel UI. Re-added correctly,
+`npx vercel redeploy <alias-holder>` applied it (a redeploy keeps the branch alias; a fresh
+`npx vercel` does not), and a synthetic lead through `/api/lead` on the alias answered 202 and
+produced, in the runtime log, the first real provider response this project has ever had:
+
+```
+[email] brevo error: 401 {"code":"unauthorized","message":"We have detected you are using an
+unrecognised IP address 54.197.4.33 …"}
+```
+
+`no_transport` is gone. The seam, the key, the headers and the body shape are all correct — Brevo
+is refusing on its **authorised IPs** setting, which cannot be satisfied by allowlisting because a
+serverless function's egress address changes per invocation. It has to be turned OFF at
+app.brevo.com/security/authorised_ips. Generalised in [[feedback_brevo_authorised_ips]].
+
+**That log line also dated the DSGVO question.** 54.197.4.33 is AWS `us-east-1` — the function
+region is `iad1`, so the runtime that receives and hashes lead PII currently executes in Virginia
+before anything reaches Supabase in Ireland or Brevo in France. PLAN.md §8.0's argument was about
+the vendors being US *companies*; this is the processing *location*, which is a separate and
+weaker position. Setting `regions: ["dub1"]` was filed as a latency choice and is now also the
+DSGVO one.
+
+Also visible and expected: `cannot create /var/task/.data (ENOENT) — the JSONL sinks are off`. The
+read-only filesystem, named in §4.2 as known and deliberately not fixed. Leads are in Postgres;
+the console's JSONL lead inbox reads empty on Vercel.
+
+Still Enno's: the Brevo authorised-IP setting, `BREVO_FROM` (unset, so the sender falls back to
+`leads@openfunnel.dev` — not a verified domain, which is the next 400 after the IP one),
+`NOTIFY_EMAIL` (unset, so WO13's dead-letter alert has nobody to mail), the signed AVV, and the
+`dub1` region.
 
 ### 2026-08-10 (session 3) — Gate confirmed, spike run, two research tracks landed
 
