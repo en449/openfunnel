@@ -23,6 +23,7 @@ bun run demo           # zero-build static demo on :4321 (scripts/serve.mjs)
 
 bun run scripts/check-no-deps.mjs         # no runtime deps in any workspace pkg
 bun run scripts/check-engine-imports.mjs  # every engine import browser-resolvable
+bun run scripts/check-portable-runtime.mjs # no Bun-only API on the Vercel path
 ```
 
 Run a single test file: `bun test packages/engine/test/logic.test.js`.

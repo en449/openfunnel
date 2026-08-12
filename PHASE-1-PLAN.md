@@ -668,6 +668,22 @@ reset. Vercel has no equivalent, so `handleRequest` wraps its own body: an unhan
 logged through `errSummary` and answered `500 {"error":"internal"}` — the same body Bun's
 handler returns today. Bun's `error()` stays as the second net for throws outside the handler.
 
+### What the first deploy actually found (2026-08-12)
+
+Every route answered **500**, funnel pages included, and the reason was one line: `lib/config.js`
+computed `REPO_ROOT` from `import.meta.dir`, which is Bun's — on Node it is `undefined`, so
+`resolve(undefined, …)` threw while the module graph was still loading. Directly behind it,
+`lib/static.js` called `Bun.file`, which would have taken the console and the entire `/_of/*`
+engine mirror down the moment the first crash was fixed.
+
+Neither was visible to 219 passing tests, because the tests run on Bun and so does every local
+check. `scripts/check-portable-runtime.mjs` now fails CI on `Bun.*` or `import.meta.dir` anywhere
+`api/index.js` can reach; `server.js` is exempt, since `Bun.serve` is its whole job. The guard was
+red-checked against the two files that shipped broken.
+
+The general form is worth keeping: **the two entry points do not share a runtime, so "the tests
+pass" says nothing about the one that is not Bun.**
+
 ### Unverified until the first deploy, and named so nobody assumes otherwise
 
 `vercel.json` rewrites every path to the one function and declares

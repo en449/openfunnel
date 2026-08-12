@@ -69,3 +69,6 @@ jobs:
 
       - name: Assert every engine import is relative
         run: bun run scripts/check-engine-imports.mjs
+
+      - name: Assert the serverless path uses no Bun-only API
+        run: bun run scripts/check-portable-runtime.mjs

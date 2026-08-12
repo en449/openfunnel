@@ -10,8 +10,29 @@
  * for why the difference matters.
  */
 
+import { readFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { DEV, ENGINE_SRC, isInside } from "./config.js";
+
+/**
+ * Read a file, or answer 404.
+ *
+ * `Bun.file()` used to do this, and it does not exist on the Vercel entry
+ * point's Node runtime — the console and the whole engine mirror were 500s
+ * there. `readFile` buffers instead of streaming, which is the right trade for
+ * what this serves: console assets and engine modules, none of them large, all
+ * of them behind the same deploy.
+ *
+ * @param {string} target
+ * @returns {Promise<Buffer|null>} null when it is missing or is a directory.
+ */
+async function readOrNull(target) {
+  try {
+    return await readFile(target);
+  } catch {
+    return null;
+  }
+}
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -49,10 +70,10 @@ export async function serveStaticFile(rootDir, prefix, pathname) {
   const target = normalize(join(rootDir, rel));
   if (!isInside(target, rootDir)) return new Response("Forbidden", { status: 403 });
 
-  const file = Bun.file(target);
-  if (!(await file.exists())) return new Response("Not found", { status: 404 });
+  const body = await readOrNull(target);
+  if (!body) return new Response("Not found", { status: 404 });
 
-  return new Response(file, {
+  return new Response(body, {
     headers: {
       ...CONSOLE_HEADERS,
       "content-type": MIME[extname(target)] || "application/octet-stream",
@@ -73,10 +94,10 @@ export async function serveEngine(pathname) {
   const target = normalize(join(ENGINE_SRC, rel));
   if (!isInside(target, ENGINE_SRC)) return new Response("Forbidden", { status: 403 });
 
-  const file = Bun.file(target);
-  if (!(await file.exists())) return new Response("Not found", { status: 404 });
+  const body = await readOrNull(target);
+  if (!body) return new Response("Not found", { status: 404 });
 
-  return new Response(file, {
+  return new Response(body, {
     headers: {
       "content-type": MIME[extname(target)] || "application/octet-stream",
       // Engine source is versioned with the deploy; cache hard in production.

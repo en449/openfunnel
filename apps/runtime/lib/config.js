@@ -14,13 +14,18 @@
  * appearing as the server grows.
  */
 
-import { join, resolve, sep } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 
 /* ========================================================================== *
  *  Paths
  * ========================================================================== */
 
-export const REPO_ROOT = resolve(import.meta.dir, "../../..");
+// `import.meta.dir` is Bun's, and it is `undefined` on Node — which is what the
+// Vercel entry point runs on. That made `resolve(undefined, …)` throw at import
+// time, so the very first deployment answered 500 to every route including the
+// funnel pages. Derived from `import.meta.url` instead, which both runtimes have.
+export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 export const ENGINE_SRC = join(REPO_ROOT, "packages/engine/src");
 export const APP_DIR = join(REPO_ROOT, "apps/app");
 
