@@ -184,11 +184,11 @@ switch. Set `branding.sourceLabel` to translate it ("Quellcode"); put it in the
 same footer as your Impressum and Datenschutz links, which a German deployment
 needs regardless.
 
-> **Preset themes hotlink Google Fonts.** Every built-in preset names a
-> non-system font family, so a funnel using one asks `fonts.googleapis.com` for
-> it — handing Google the visitor's IP. The default theme requests nothing, and
-> the consent bar gates the request when enabled. See
-> [Third-party data sharing](#third-party-data-sharing).
+> **Preset fonts are self-hosted.** Every built-in preset names a non-system
+> font family, and those files ship with OpenFunnel and are served from your own
+> domain — a funnel page makes no request to Google, with or without a consent
+> bar. A `theme.font` naming some other family falls back to a system font
+> rather than fetching it; add it to `packages/engine/src/fonts/` if you want it.
 
 ### Step 6: Configure Email Alerts & Webhooks
 In **Settings**, set your admin notification email (`NOTIFY_EMAIL`) and a Resend API key to receive instant HTML lead alerts and trigger personalized autoresponders. In **Pixels & Tracking**, paste your Webhook URL (Zapier/Make/GoHighLevel), an optional webhook secret, and your Meta/GTM Pixel IDs.
@@ -585,11 +585,11 @@ only reachable through the proxy.
 - **Outbound destinations are filtered**: webhook targets are refused for loopback, private, link-local, CGNAT and cloud-metadata addresses, including IPv4-mapped IPv6 and the decimal/hex IP spellings.
 - **No third-party sharing until you configure it**: pixels fire only for the ids
   you put in a funnel's `integrations`, and the Meta Conversions API forward is
-  inert unless you set `META_PIXEL_ID` and `META_CAPI_TOKEN`. A funnel on the
-  default theme makes no external request at all; one on a built-in preset theme
-  fetches that preset's webfont from Google unless the consent bar gates it.
+  inert unless you set `META_PIXEL_ID` and `META_CAPI_TOKEN`. A funnel page with
+  no pixels configured makes **no** external request at all — including for
+  fonts, which are self-hosted, on any theme.
 - **Consent is enforced, not decorative**: turn on the consent bar for a funnel
-  and pixels stay uninstalled, the webfont stays unrequested, and the CAPI forward
+  and pixels stay uninstalled and the CAPI forward
   is skipped until the visitor accepts. The server reads `consent.enabled` from
   your funnel document, so stripping the field out of a request does not turn the
   gate off. See [Third-party data sharing](#third-party-data-sharing).
@@ -617,27 +617,28 @@ reason `ADMIN_TOKEN` matters — see above.
 
 ### Third-party data sharing
 
-Three things send visitor data off your server. All three are opt-in, and all
-three are worth understanding before you enable them:
+Two things send visitor data off your server. Both are opt-in, and both are
+worth understanding before you enable them:
 
 | Feature | What leaves | Turned on by |
 | --- | --- | --- |
 | Browser pixels (Meta, GA4/GTM, TikTok) | Whatever the platform's script collects in the visitor's browser, including cookies it sets | Pixel ids in a funnel's `integrations`, via the console's Pixels modal |
 | Meta Conversions API | Visitor **IP address** and **user-agent**, server-side, per lead and per event | `META_PIXEL_ID` + `META_CAPI_TOKEN` in the environment |
-| Google Fonts webfont | Visitor **IP address**, **user-agent** and **Referer** (the funnel URL) sent to `fonts.googleapis.com` by the browser | A `theme.font` naming a non-system family — which every built-in preset theme does. The default theme requests nothing |
 
-An IP address is personal data under GDPR, so the CAPI forward and the webfont
-request are both third-party transfers you need a lawful basis to make — neither
-is covered by "we set no cookies."
+Fonts are **not** in this table: the preset families are self-hosted and served
+from your own domain, so a funnel page loads no third-party asset of any kind.
 
-To gate all three on consent, enable the consent bar on the funnel (Settings →
+An IP address is personal data under GDPR, so the CAPI forward is a third-party
+transfer you need a lawful basis to make — it is not covered by "we set no
+cookies."
+
+To gate both on consent, enable the consent bar on the funnel (Settings →
 GDPR & Privacy Consent Bar, saved onto the funnel document as `consent.enabled`).
 Then:
 
 - **Gated** — browser pixels are not installed at all until the visitor accepts,
-  the webfont is not requested until then either (colours and layout apply
-  immediately; the font swaps in on accept), and the server skips the CAPI
-  forward for any record that is not an explicit grant.
+  and the server skips the CAPI forward for any record that is not an explicit
+  grant.
 - **Not gated** — lead capture (`/api/lead`) and your own drop-off analytics
   (`/api/events`). The visitor filled the form in and pressed submit; dropping
   that would be a broken funnel, not a private one, and those records stay on

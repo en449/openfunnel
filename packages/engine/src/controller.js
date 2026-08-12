@@ -12,7 +12,7 @@
 import { el, clear, uid, prefersReducedMotion, isNavigableUrl, isSameOriginUrl, hasPreviewFlag } from "./dom.js";
 import { resolveNext } from "./branching.js";
 import { renderStep } from "./render/index.js";
-import { applyTheme, loadThemeFont } from "./theme.js";
+import { applyTheme } from "./theme.js";
 import { installPixels, firePixel } from "./analytics.js";
 import { buildConsentBar, consentSignal, marketingAllowed } from "./consent.js";
 import { submitLead as sendLead, trackEvent } from "./leads.js";
@@ -99,12 +99,9 @@ export class Controller {
 
   /** Build the chrome once and render the first (or resumed) step. */
   mount() {
-    // A non-system `theme.font` is fetched from Google, which hands the visitor's
-    // IP, user-agent and Referer to a third party — so it waits for the same
-    // decision the pixels wait for. Colours and spacing apply either way.
-    applyTheme(this.container, this.funnel.theme, {
-      allowRemote: marketingAllowed(this.funnel, this.key),
-    });
+    // The theme makes no third-party request any more — the preset families are
+    // self-hosted (PHASE-1-PLAN.md §4.9), so there is nothing here to gate.
+    applyTheme(this.container, this.funnel.theme);
     // Third-party pixels wait for a decision when the funnel uses a consent bar.
     // `_grantConsent` installs them the moment the visitor accepts.
     if (marketingAllowed(this.funnel, this.key)) installPixels(this.funnel.integrations);
@@ -309,9 +306,7 @@ export class Controller {
     } else if (this.state.index >= this.steps.length) {
       this.state.index = Math.max(0, this.steps.length - 1);
     }
-    applyTheme(this.container, this.funnel.theme, {
-      allowRemote: marketingAllowed(this.funnel, this.key),
-    });
+    applyTheme(this.container, this.funnel.theme);
     this.refresh();
   }
 
@@ -348,13 +343,15 @@ export class Controller {
   }
 
   /**
-   * Visitor accepted: install the pixels that were held back at mount, load the
-   * webfont that was held back with them, and fire the view for the step they are
-   * on so the session is not lost entirely.
+   * Visitor accepted: install the pixels that were held back at mount, and fire
+   * the view for the step they are on so the session is not lost entirely.
+   *
+   * The webfont used to be loaded here too — it was the one non-pixel third
+   * party on the page. The preset families are self-hosted now, so there is
+   * nothing left to release on acceptance except the pixels.
    */
   _grantConsent() {
     installPixels(this.funnel.integrations);
-    loadThemeFont(this.funnel.theme);
     const step = this.steps[this.state.index];
     if (step) this._pixel("step_view", { stepId: step.id, stepIndex: this.state.index });
   }

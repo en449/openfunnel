@@ -108,6 +108,21 @@ test("funnelCsp no longer widens connect-src for a funnel-supplied endpoint", as
   expect(csp).toContain("connect-src 'self'");
 });
 
+test("funnelCsp pre-authorises no font host — the preset faces are self-hosted", async () => {
+  const { funnelCsp } = await import("../lib/csp.js");
+  // A preset funnel: the case that used to hotlink Google on page view.
+  const csp = funnelCsp({ slug: "x", theme: { preset: "midnight-glass", font: "'Plus Jakarta Sans', sans-serif" } });
+
+  // The policy is the second half of the gate (PHASE-1-PLAN.md §4.9): the
+  // engine no longer asks for a remote font, and the CSP no longer permits one.
+  // Asserted on the whole policy rather than on style-src alone, because a
+  // revert would most likely put both hosts back at once.
+  expect(csp).not.toContain("googleapis.com");
+  expect(csp).not.toContain("gstatic.com");
+  expect(csp).toContain("style-src 'self' 'unsafe-inline'");
+  expect(csp).toContain("font-src 'self' data:");
+});
+
 /* ========================================================================== *
  *  M3 — unbounded sink growth and unbounded reads
  * ========================================================================== */

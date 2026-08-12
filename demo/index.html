@@ -14,6 +14,11 @@
       Run it with:  npm run demo   (serves this folder at http://localhost:4321)
     -->
     <link rel="stylesheet" href="../packages/engine/src/styles.css" />
+    <!-- The same self-hosted faces the served funnel page links (PHASE-1-PLAN.md
+         §4.9). Without this the demo silently renders every preset theme in a
+         system font, which reads as "the presets look wrong" rather than "the
+         demo is missing a stylesheet". -->
+    <link rel="stylesheet" href="../packages/engine/src/fonts/fonts.css" />
     <style>
       body { margin: 0; }
       /* Little dev toolbar to switch example funnels + watch events. */

@@ -81,15 +81,25 @@ test("pressing accept records the decision and reports it once", async () => {
 });
 
 /* ===== webfonts ========================================================== *
- *  A Google font is a third-party request (IP, user-agent, Referer), so it is
- *  gated exactly like a pixel — and a theme the device can satisfy locally must
- *  make no request at all, consent or not.
+ *  These used to assert that a Google font was requested only after consent.
+ *  The families the presets name are now self-hosted (PHASE-1-PLAN.md §4.9), so
+ *  what is asserted is stronger and simpler: mounting a funnel adds no third-
+ *  party stylesheet at all, on any consent path. There is no longer a decision
+ *  that changes the answer, which is the whole point of the change.
+ *
+ *  The assertion is deliberately "no external stylesheet", not "no Google
+ *  stylesheet". Re-introducing the loader against a different CDN would be the
+ *  same leak, and a test naming Google would pass through it.
  * ========================================================================== */
 
-/** @returns {number} `<link>` tags pointing at Google Fonts, in document order. */
-const fontLinkCount = () => document.head.querySelectorAll('link[href*="fonts.googleapis.com"]').length;
+/** @returns {number} `<link>` tags in the head pointing at another origin. */
+const externalLinkCount = () =>
+  [...document.head.querySelectorAll("link[href]")].filter((l) => {
+    const href = l.getAttribute("href") || "";
+    return /^(https?:)?\/\//.test(href);
+  }).length;
 
-/** The loader de-dupes by element id, so tests must not inherit each other's links. */
+/** The head is shared across tests in this file; start each check from empty. */
 const clearFontLinks = () => {
   document.head.innerHTML = "";
 };
@@ -111,16 +121,14 @@ test("a funnel with no theme requests no webfont", async () => {
   const container = document.createElement("div");
   document.body.appendChild(container);
 
-  // No consent bar either, so nothing is holding the request back — the default
-  // font stack is simply local, and the extraction must not invent a family.
   const ctrl = new Controller(container, themedFunnel(false), { trackEvents: false });
   ctrl.mount();
 
-  expect(fontLinkCount()).toBe(0);
+  expect(externalLinkCount()).toBe(0);
   ctrl.destroy();
 });
 
-test("a preset webfont waits for the consent decision, then loads", async () => {
+test("a preset webfont makes no third-party request, before or after consent", async () => {
   const { Controller } = await import("../src/controller.js");
   clearFontLinks();
   const container = document.createElement("div");
@@ -129,31 +137,32 @@ test("a preset webfont waits for the consent decision, then loads", async () => 
   const ctrl = new Controller(container, themedFunnel(true, PRESET_FONT), { trackEvents: false });
   ctrl.mount();
 
-  // Consent required and undecided: Google has not been told this visitor exists.
-  expect(fontLinkCount()).toBe(0);
+  expect(externalLinkCount()).toBe(0);
 
+  // Accepting is what used to trigger the font request. It must now change
+  // nothing about the page's outbound requests.
   /** @type {any} */ (container.querySelector(".of-consent-accept")).click();
 
-  expect(fontLinkCount()).toBe(1);
+  expect(externalLinkCount()).toBe(0);
   ctrl.destroy();
 });
 
-test("a preset webfont loads at once when the funnel has no consent bar", async () => {
+test("a preset webfont makes no third-party request when there is no consent bar", async () => {
   const { Controller } = await import("../src/controller.js");
   clearFontLinks();
   const container = document.createElement("div");
   document.body.appendChild(container);
 
+  // The path that leaked: no bar means nothing was ever holding the request
+  // back, so a preset funnel hotlinked Google on page view.
   const ctrl = new Controller(container, themedFunnel(false, PRESET_FONT), { trackEvents: false });
   ctrl.mount();
 
-  const link = document.head.querySelector('link[href*="fonts.googleapis.com"]');
-  expect(link).not.toBeNull();
-  expect(link?.getAttribute("href")).toContain("family=Plus+Jakarta+Sans");
+  expect(externalLinkCount()).toBe(0);
   ctrl.destroy();
 });
 
-test("declining leaves the webfont unrequested", async () => {
+test("declining leaves the page just as free of third-party requests", async () => {
   const { Controller } = await import("../src/controller.js");
   clearFontLinks();
   const container = document.createElement("div");
@@ -163,7 +172,7 @@ test("declining leaves the webfont unrequested", async () => {
   ctrl.mount();
   /** @type {any} */ (container.querySelector(".of-consent-decline")).click();
 
-  expect(fontLinkCount()).toBe(0);
+  expect(externalLinkCount()).toBe(0);
   ctrl.destroy();
 });
 

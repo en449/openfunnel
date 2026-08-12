@@ -223,8 +223,10 @@ export type Step =
 /**
  * Visitor consent for third-party data sharing. On the funnel document rather
  * than a console setting, because the funnel page is rendered for visitors from
- * this JSON. Enabling it gates the browser pixels, the server's Meta CAPI
- * forward, and the theme webfont; lead capture is deliberately not gated.
+ * this JSON. Enabling it gates the browser pixels and the server's Meta CAPI
+ * forward; lead capture is deliberately not gated. The theme webfont used to be
+ * gated too — the preset families are self-hosted now, so a funnel page makes no
+ * third-party font request on any consent path.
  */
 export interface FunnelConsent {
   enabled?: boolean;

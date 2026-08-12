@@ -276,8 +276,14 @@ export function funnelCsp(funnel) {
   return [
     "default-src 'none'",
     `script-src ${[...script].join(" ")}`,
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-    "font-src 'self' https://fonts.gstatic.com data:",
+    // No Google hosts. The preset webfonts are served from this origin
+    // (PHASE-1-PLAN.md §4.9), so `'self'` is the whole permission a funnel page
+    // needs for type — and leaving the two hosts here would keep PRE-AUTHORISING
+    // a third party on every funnel, including the ones that never ask for it.
+    // The CSP is the second half of that gate: even a funnel document that
+    // somehow got a Google URL into a style could not fetch it.
+    "style-src 'self' 'unsafe-inline'",
+    "font-src 'self' data:",
     `img-src ${[...img].join(" ")}`,
     `connect-src ${[...connect].join(" ")}`,
     "media-src 'self' https: data:",

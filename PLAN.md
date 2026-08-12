@@ -1049,8 +1049,8 @@ in-memory stores to Postgres are real work the VPS design did not need.
 - [ ] Uptime monitor on a real funnel URL, off-platform
 
 *DSGVO gates*
-- [ ] **GATE — self-host the preset fonts, remove the Google Fonts path entirely** (§8.2)
-- [ ] **GATE — strip `fonts.googleapis.com` / `fonts.gstatic.com` from the default `funnelCsp`** (§8.2, found in the spike)
+- [x] **GATE — self-host the preset fonts, remove the Google Fonts path entirely** (§8.2) — done 2026-08-12, PHASE-1-PLAN.md §4.9. The console's own Inter/JetBrains Mono hotlink was found in the same pass and went with it
+- [x] **GATE — strip `fonts.googleapis.com` / `fonts.gstatic.com` from the default `funnelCsp`** (§8.2, found in the spike) — done 2026-08-12, same change
 - [ ] **GATE — Brevo wired, Resend removed from the default path** (§8.3). Needs an adapter; `SMTP_RELAY_URL` posts a fixed `{to, subject, html, text}` body no provider accepts as-is
 - [ ] **GATE — Vercel + Supabase DPAs in force, SCCs in place, TIA written** (§8.0, §8.3). Neither is signed in the classic sense: Supabase's is auto-incorporated on acceptance of the terms on every tier, Vercel's binds on entering the agreement **but covers Pro and Enterprise only** — so this gate is not passable while the build sits on Hobby (§2.1). Action is: upgrade, archive both PDFs with their acceptance dates, then write the TIA and name both processors in every client AVV
 - [ ] IP hashing with a salt; no raw IP written anywhere ([REALITY-CHECK.md](REALITY-CHECK.md) §3)

@@ -1226,6 +1226,108 @@ Disjoint file lists, so they run in parallel.
 all three check scripts · `./scripts/db-test.sh` green from a cold database · every new assertion
 red-checked by the break named in Decision 4 and then reverted.
 
+## 4.9 The phase-exit gate — self-hosted fonts, and one less consent decision
+
+Written 2026-08-12 before any code. This is the gate PLAN.md §10 and §4's work-order table have
+carried since 2026-08-10: every theme preset hotlinks Google Fonts, and the consent gate only
+protects a funnel that *enables* consent — which none of the shipped examples do — so
+`fonts.googleapis.com` and `fonts.gstatic.com` fire on page view with no bar shown
+(REALITY-CHECK.md, reproduced live). LG München I 3 O 17493/20 is why this is a gate and not a
+nice-to-have.
+
+### What the inventory changed about the size of it
+
+**Four families, not eight.** The eight presets share them: Plus Jakarta Sans (×4), Inter (×2),
+Space Grotesk, Playfair Display.
+
+**And a fifth the gate never named.** `apps/app/index.html` loads Inter + JetBrains Mono from
+Google directly — the console, not a funnel page. That is the operator's own browser rather than a
+visitor's, so the exposure is much lower and it is deliberately *outside* the gate as written. It
+is in scope anyway: Inter is already being self-hosted for the funnel, so the marginal cost is one
+family, and a repo that says "no Google Fonts" while one page still hotlinks them is the kind of
+half-fix that reads as finished. **Total: five families.**
+
+### Decision 1 — `@font-face` in a stylesheet, so the runtime font path is deleted rather than repointed
+
+The obvious version rewrites `ensureGoogleFontLoaded` to point at local files. That keeps a
+function that injects a `<link>` at runtime, keeps `loadThemeFont` as an export, keeps
+`applyTheme(..., { allowRemote })`, and keeps the consent gate around a request that is now
+same-origin — a gate protecting nothing, which is worse than no gate because the next reader
+believes it.
+
+So: one `packages/engine/src/fonts/fonts.css` holding every `@font-face`, linked from the funnel
+shell and the console. The browser fetches a WOFF2 only for a family something actually renders,
+which is the same laziness the runtime injection was buying, done by the part of the stack that is
+already good at it. Then `ensureGoogleFontLoaded`, `loadThemeFont`, `REMOTE_FONT_BLOCKLIST` and the
+`allowRemote` option all **go away**, along with `loadThemeFont()`'s call site in
+`_grantConsent()`.
+
+A second `<link>` rather than `@import` in `styles.css`: `@import` costs a serial round trip
+before the browser learns the font file exists, and this is a page whose whole argument is being
+fast on 4G.
+
+### Decision 2 — latin + latin-ext, and the reason is the lead form
+
+German needs only `latin` — ä, ö, ü and ß are Latin-1. `latin-ext` is for the *visitor's* name:
+Turkish and Polish surnames are ordinary in Germany and live there, and a lead notification that
+renders Şahin or Łukasz as tofu is a data-quality bug in the product's only output. The other
+subsets Google slices (vietnamese, cyrillic, greek) are dropped — they are unicode-range-gated, so
+keeping them would cost nothing at runtime and everything in repo weight for a case nobody has.
+
+### Decision 3 — variable fonts, and the axis is per family
+
+One variable WOFF2 per family per subset instead of five static weights. It is smaller and it is
+also the bug fix: the current code requests `wght@400;500;600;700;800` for **every** family, and
+Space Grotesk's axis stops at 700. Each family gets the range it actually has — Space Grotesk
+300–700, Plus Jakarta Sans 200–800, Inter 100–900, Playfair Display 400–900, JetBrains Mono
+100–800.
+
+### Decision 4 — the behaviour change, stated rather than discovered
+
+Today an operator can name any Google-hosted family in `theme.font` and get it. After this, an
+unknown family falls through the stack to a system font and nothing is requested. **That is the
+gate, not a regression** — "the operator can summon an arbitrary third-party request onto a
+visitor's page" is precisely what is being removed. A funnel wanting a different face self-hosts
+it the same way these five are.
+
+### Decision 5 — the generated CSS and the files are committed, with the script that made them
+
+`scripts/fetch-fonts.mjs` asks the css2 API for each family, keeps the `latin` and `latin-ext`
+`@font-face` blocks, downloads the WOFF2 each one names, and rewrites the `src:` to a local path.
+Committed and run once — not part of any build, and not a runtime dependency. It exists so the
+next person can answer "which version is this and where did it come from", which is also the
+licence question: all five are OFL-1.1, so `OFL.txt` ships beside them.
+
+### Decision 6 — the two things that will silently 404 if forgotten
+
+- `lib/static.js`'s `MIME` table has no `.woff2`, so the files would be served as
+  `application/octet-stream`.
+- `vercel.json`'s `includeFiles` already covers `packages/engine/src/**`, which is why the fonts
+  live under the engine rather than in a new top-level directory. Putting them anywhere else means
+  a 404 that only appears in production.
+
+`scripts/check-engine-imports.mjs` scans `.js` only, so a wrong `url()` in the generated CSS is
+exactly the invisible-404 class that check exists for. It gets extended to resolve `url()` targets
+in the engine's CSS.
+
+### The work orders
+
+| # | Work order | Tier | Files |
+| --- | --- | --- | --- |
+| G1 | `scripts/fetch-fonts.mjs`, the five families downloaded, `fonts/fonts.css` + `OFL.txt` | Sonnet | `scripts/fetch-fonts.mjs`, `packages/engine/src/fonts/**` |
+| G2 | Delete the remote-font path; link the stylesheet; CSP; MIME; console; tests | **Opus** | `theme.js`, `consent.js`, `csp.js`, `html.js`, `static.js`, `apps/app/index.html`, `types/index.d.ts`, `consent.test.js`, `check-engine-imports.mjs` |
+
+G2 is Opus because it is the consent gate and the CSP, and because deleting an exported function
+means deciding what the published surface in `packages/engine/types/index.d.ts` promises.
+
+**Acceptance:** no `fonts.googleapis.com` or `fonts.gstatic.com` anywhere outside documentation and
+`scripts/fetch-fonts.mjs` — that one is the generator, and it runs on a developer's machine when the
+files are refreshed, never in a visitor's browser; it is the reason the fonts can be regenerated at
+all rather than being ten binaries of unknown provenance ·
+a cold `/f/:slug` load makes **zero** third-party requests, verified with browser-harness on the
+live preview and screenshotted · `bun test` · `bun run typecheck` · all three check scripts ·
+`./scripts/db-test.sh` · CI green.
+
 ## 5. Open — needs Enno's answer
 
 1. **Down migrations.** PLAN.md §10 asks for up *and* down. The Supabase CLI is up-only by

@@ -14,9 +14,11 @@
       } catch (e) {}
     </script>
 
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+    <!-- Inter + JetBrains Mono, self-hosted (PHASE-1-PLAN.md §4.9). Served from
+         /_of/*, which mirrors packages/engine/src, so the console and the funnel
+         pages share one copy of the faces and one cache entry. The preconnects
+         went with the <link>: there is nothing left to connect to. -->
+    <link rel="stylesheet" href="/_of/fonts/fonts.css" />
     <link rel="stylesheet" href="/_app/app.css" />
   </head>
   <body>

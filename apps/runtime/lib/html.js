@@ -92,6 +92,12 @@ export function funnelPage(funnel) {
     ${description ? `<meta property="og:description" content="${esc(description)}" />` : ""}
     <link rel="preload" as="script" href="/_of/index.js" crossorigin />
     <link rel="stylesheet" href="/_of/styles.css" />
+    <!-- Self-hosted webfaces for the theme presets (PHASE-1-PLAN.md §4.9). A
+         separate <link> rather than an @import inside styles.css, which would
+         cost a serial round trip before the browser learns the font file exists.
+         Each @font-face carries a unicode-range, so a page only downloads the
+         faces it actually renders. -->
+    <link rel="stylesheet" href="/_of/fonts/fonts.css" />
     <style>body{margin:0;background:var(--of-bg,#eef1f6)}</style>
     ${customCss ? `<style id="of-custom-css">${customCss}</style>` : ""}
     ${customHead ? customHead : ""}

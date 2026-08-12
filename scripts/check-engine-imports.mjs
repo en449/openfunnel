@@ -11,8 +11,8 @@
  * if you only ever run `bun test`, because Bun resolves all three happily.
  */
 
-import { readdirSync, readFileSync } from "node:fs";
-import { join, resolve, relative } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { dirname, join, resolve, relative } from "node:path";
 
 const ENGINE_SRC = resolve(import.meta.dirname, "../packages/engine/src");
 const REPO_ROOT = resolve(import.meta.dirname, "..");
@@ -54,20 +54,31 @@ function stripComments(source) {
     .replace(/(^|[^:])\/\/[^\n]*/g, (_, prefix) => prefix);
 }
 
-/** @returns {string[]} every .js file under the engine source tree. */
-function jsFiles(dir) {
+/**
+ * @param {string} dir
+ * @param {string} ext
+ * @returns {string[]} every file with that extension under the engine source tree.
+ */
+function filesWithExt(dir, ext) {
   const out = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...jsFiles(full));
-    else if (entry.name.endsWith(".js")) out.push(full);
+    if (entry.isDirectory()) out.push(...filesWithExt(full, ext));
+    else if (entry.name.endsWith(ext)) out.push(full);
   }
   return out;
 }
 
+/**
+ * `url()` targets in a stylesheet, the same way `@import` and `src:` spell them.
+ * The optional quotes are captured out; a `url(` with no closing paren does not
+ * match, which is a syntax error the browser would reject anyway.
+ */
+const CSS_URL_RE = /\burl\(\s*(?:"([^"]*)"|'([^']*)'|([^)'"\s]*))\s*\)/g;
+
 const violations = [];
 
-for (const file of jsFiles(ENGINE_SRC)) {
+for (const file of filesWithExt(ENGINE_SRC, ".js")) {
   const source = stripComments(readFileSync(file, "utf8"));
   const where = relative(REPO_ROOT, file);
   for (const match of source.matchAll(SPECIFIER_RE)) {
@@ -89,6 +100,44 @@ for (const file of jsFiles(ENGINE_SRC)) {
   }
 }
 
+/**
+ * The same check for the CSS the engine serves, for the same reason and one
+ * more. A `url()` the browser cannot resolve is the identical invisible 404 —
+ * an @font-face just falls back to a system face, so a typo in a filename looks
+ * like a design decision rather than a bug. And an *absolute* one is worse than
+ * unresolvable: the fonts were self-hosted precisely to stop the funnel page
+ * calling a third party (PHASE-1-PLAN.md §4.9), so a `url()` pointing off-origin
+ * silently reinstates the leak the gate closed.
+ */
+for (const file of filesWithExt(ENGINE_SRC, ".css")) {
+  // Comments go first, exactly as for JS. A CSS file explaining what a `url()`
+  // used to point at — which is the sort of comment this very change invites —
+  // would otherwise fail CI for a string the browser never reads. `/* … */` is
+  // CSS's only comment form, so the JS stripper's line-comment half is a no-op
+  // here rather than a hazard.
+  const source = stripComments(readFileSync(file, "utf8"));
+  const where = relative(REPO_ROOT, file);
+  for (const match of source.matchAll(CSS_URL_RE)) {
+    const target = match[1] ?? match[2] ?? match[3] ?? "";
+    const line = source.slice(0, match.index).split("\n").length;
+
+    // Inlined bytes go nowhere and resolve to nothing — there is nothing to check.
+    if (target.startsWith("data:")) continue;
+
+    if (!target.startsWith("./") && !target.startsWith("../")) {
+      violations.push(
+        `${where}:${line}: url("${target}") is not a relative path — engine CSS must never reach off-origin`,
+      );
+      continue;
+    }
+    // Relative, so it has to actually be there: strip any ?v= / #frag first.
+    const asset = resolve(dirname(file), target.replace(/[?#].*$/, ""));
+    if (!existsSync(asset)) {
+      violations.push(`${where}:${line}: url("${target}") does not exist on disk — a 404 for every visitor`);
+    }
+  }
+}
+
 if (violations.length) {
   console.error("Engine imports must be browser-resolvable:\n");
   for (const v of violations) console.error(`  - ${v}`);
@@ -96,4 +145,4 @@ if (violations.length) {
   process.exit(1);
 }
 
-console.log("OK: every engine import is relative and extension-qualified.");
+console.log("OK: every engine import is relative and extension-qualified, and every CSS url() resolves.");

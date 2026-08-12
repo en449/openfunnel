@@ -40,6 +40,10 @@ const MIME = {
   ".css": "text/css; charset=utf-8",
   ".json": "application/json; charset=utf-8",
   ".map": "application/json; charset=utf-8",
+  // The self-hosted theme faces (PHASE-1-PLAN.md §4.9). Without this entry they
+  // fall through to application/octet-stream — which most browsers still render,
+  // so the omission would not look like a bug until one did not.
+  ".woff2": "font/woff2",
 };
 
 /**

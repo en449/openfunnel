@@ -3,11 +3,19 @@
  * element. Every colour/spacing token in styles.css reads from an `--of-*`
  * variable, so a funnel is fully re-skinnable from data alone.
  *
- * The one thing here that reaches outside the page is the webfont `<link>` for a
- * non-system `theme.font`. That is a third-party request, so the caller decides
- * whether it may happen (`applyTheme(..., { allowRemote })`) and can make it
- * later with `loadThemeFont`. This module stays independent of consent.js — the
- * decision is passed in as a boolean, never imported.
+ * **Nothing here reaches outside the page.** It used to: a non-system
+ * `theme.font` was fetched from Google with a `<link>` injected at runtime, and
+ * the request was consent-gated because it hands the visitor's IP, user-agent
+ * and Referer to a third party. The families the presets use are now self-hosted
+ * (`fonts/fonts.css`, PHASE-1-PLAN.md §4.9), so the request, the gate around it
+ * and the `allowRemote` option are all gone rather than repointed — a gate
+ * around a same-origin request protects nothing and tells the next reader it
+ * does.
+ *
+ * The consequence is deliberate: `theme.font` naming a family the page does not
+ * already have resolves through the stack to a system font instead of summoning
+ * a third party onto a visitor's page. A funnel that wants a different face
+ * self-hosts it the way these do.
  */
 
 /** @type {Omit<Required<import('./types.js').FunnelTheme>, 'preset'>} */
@@ -140,86 +148,10 @@ export const THEME_PRESETS = {
   }
 };
 
-/* ========================================================================== *
- *  Webfonts
- *
- *  Loading a Google font is a third-party request: it sends the visitor's IP,
- *  user-agent and Referer to fonts.googleapis.com. So it is consent-gated like a
- *  pixel (the caller passes the decision in — theme.js deliberately knows nothing
- *  about consent.js), and the family extraction has to be conservative: a stack
- *  the browser can satisfy locally must produce no request at all.
- * ========================================================================== */
-
-/**
- * Families we must never ask Google for, compared lower-case. CSS generic
- * families and the system-UI stack are already on the device, and the CSS-wide
- * keywords are not families at all. Requesting any of them leaks the visitor to
- * Google in exchange for a 404.
- */
-const LOCAL_FAMILIES = new Set([
-  // generic families
-  "serif", "sans-serif", "monospace", "cursive", "fantasy", "math", "emoji", "fangsong",
-  // system stacks
-  "system-ui", "ui-sans-serif", "ui-serif", "ui-monospace", "ui-rounded", "blinkmacsystemfont",
-  // faces that ship with the OS, not with Google Fonts
-  "segoe ui", "arial", "helvetica", "helvetica neue", "times new roman", "times",
-  "courier new", "courier", "georgia", "verdana", "tahoma",
-  // CSS-wide keywords
-  "inherit", "initial", "unset", "revert", "revert-layer",
-]);
-
-/**
- * The webfont family a font stack asks for, or `""` when nothing should be
- * fetched.
- *
- * Only the FIRST comma-separated segment counts — everything after it is a
- * fallback the browser already has. The segment is taken whole (the old regex
- * stopped at the first `-`, which turned the default `ui-sans-serif, …` stack
- * into a request for a font literally named "ui"), quotes are optional because
- * the console lets an operator type a bare `Playfair Display`, and anything that
- * is not a plain alphanumeric family name is refused rather than pasted into a
- * URL.
- *
- * @param {string} [fontStr]
- * @returns {string}
- */
-function remoteFontFamily(fontStr) {
-  const first = String(fontStr ?? "").split(",")[0] ?? "";
-  const name = first.trim().replace(/^['"]/, "").replace(/['"]$/, "").trim();
-  if (!name) return "";
-  const lower = name.toLowerCase();
-  if (lower.startsWith("-") || lower.startsWith("ui-")) return ""; // -apple-system, ui-*
-  if (LOCAL_FAMILIES.has(lower)) return "";
-  if (!/^[A-Za-z0-9][A-Za-z0-9 ]*$/.test(name)) return ""; // var(), escapes, junk
-  return name;
-}
-
-/**
- * Inject the `<link>` for a Google-hosted family. De-duped by element id, so
- * calling it again for the same family is free.
- *
- * @param {string} fontStr  A CSS font-family stack.
- */
-function ensureGoogleFontLoaded(fontStr) {
-  if (typeof document === "undefined") return;
-  const fontName = remoteFontFamily(fontStr);
-  if (!fontName) return;
-
-  const fontId = `of-font-${fontName.toLowerCase().replace(/[^a-z0-9]/g, "-")}`;
-  if (document.getElementById(fontId)) return;
-
-  const link = document.createElement("link");
-  link.id = fontId;
-  link.rel = "stylesheet";
-  const fontParam = encodeURIComponent(fontName).replace(/%20/g, "+");
-  link.href = `https://fonts.googleapis.com/css2?family=${fontParam}:wght@400;500;600;700;800&display=swap`;
-  document.head.appendChild(link);
-}
-
 /**
  * Resolve a funnel's `theme` against its preset and the light/dark defaults.
- * Shared by `applyTheme` and `loadThemeFont` so both agree on which font a
- * theme actually asks for.
+ * The one place preset + explicit theme + light/dark defaults are merged, so
+ * every caller sees the same resolved values.
  *
  * @param {import('./types.js').FunnelTheme & { preset?: string, btnStyle?: string }} [theme]
  * @returns {Record<string, any>}
@@ -232,18 +164,6 @@ function resolveTheme(theme = {}) {
   return { ...base, ...mergedTheme };
 }
 
-/**
- * Fetch the webfont this theme asks for, if any. Exported so a caller that held
- * the request back can make it later — the Controller calls this when a visitor
- * accepts the consent bar. A theme whose stack is satisfied locally (including
- * the default) makes no request.
- *
- * @param {import('./types.js').FunnelTheme & { preset?: string }} [theme]
- */
-export function loadThemeFont(theme = {}) {
-  ensureGoogleFontLoaded(resolveTheme(theme).font);
-}
-
 /* ========================================================================== *
  *  Theme application
  * ========================================================================== */
@@ -251,16 +171,9 @@ export function loadThemeFont(theme = {}) {
 /**
  * @param {HTMLElement} root
  * @param {import('./types.js').FunnelTheme & { preset?: string, btnStyle?: string }} [theme]
- * @param {{ allowRemote?: boolean }} [opts]  `allowRemote: false` applies the CSS
- *   variables but makes no webfont request — pass the visitor's consent decision
- *   here. Defaults to true so a direct embedder's behaviour is unchanged.
  */
-export function applyTheme(root, theme = {}, { allowRemote = true } = {}) {
+export function applyTheme(root, theme = {}) {
   const merged = resolveTheme(theme);
-
-  if (allowRemote) {
-    ensureGoogleFontLoaded(merged.font);
-  }
 
   const btnStyle = merged.btnStyle || "glow";
   root.setAttribute("data-btn-style", btnStyle);
