@@ -24,6 +24,38 @@ let funnelsDir = "";
 /** Every scratch dir this file creates, removed in afterAll. */
 const scratchDirs = [];
 
+/**
+ * Credentials blanked for every server this file spawns.
+ *
+ * Bun loads the repo's own `.env`, and `{ ...process.env }` copies whatever is
+ * in it into the child — so the assertions here quietly describe the developer's
+ * machine rather than the code. It has bitten twice now. First with Supabase:
+ * this file would have read funnels from a real project and written test funnels
+ * and a client row into it. Then, the day `ADMIN_TOKEN` and `INTERNAL_SECRET`
+ * were generated for the first deployment, nine tests went red at once — the
+ * ones asserting what an UNCONFIGURED server does, which is exactly the
+ * configuration a fresh self-hoster has and nobody runs locally any more.
+ *
+ * Blanked rather than omitted, because spreading `process.env` puts them back.
+ * Add a variable here the moment the runtime learns to read it.
+ */
+const BLANK_CREDENTIALS = {
+  SUPABASE_URL: "",
+  NEXT_PUBLIC_SUPABASE_URL: "",
+  SUPABASE_SERVICE_ROLE_KEY: "",
+  ADMIN_TOKEN: "",
+  INTERNAL_SECRET: "",
+  IP_HASH_SALT: "",
+  OTP_HASH_SALT: "",
+  WEBHOOK_URL: "",
+  ZAPIER_WEBHOOK_URL: "",
+  WEBHOOK_SECRET: "",
+  RESEND_API_KEY: "",
+  SMTP_RELAY_URL: "",
+  META_CAPI_ACCESS_TOKEN: "",
+  TRUST_PROXY: "",
+};
+
 beforeAll(async () => {
   const tmpParent = resolve(import.meta.dir, "../../../.tmp");
   await mkdir(tmpParent, { recursive: true });
@@ -43,20 +75,13 @@ beforeAll(async () => {
   const port = 4000 + Math.floor(Math.random() * 1000);
   base = `http://localhost:${port}`;
 
-  // Bun loads `.env` from the repo root, so a developer with a real Supabase
-  // project configured would otherwise run this whole file against it — reading
-  // funnels that are not there, and writing test funnels and a client row that
-  // are. Blanked rather than omitted, because `{ ...process.env }` copies them.
-  // The Postgres store has its own end-to-end check in
-  // `supabase/tests/db-integration.mjs`, pointed at a scratch database.
+  // See BLANK_CREDENTIALS.
   const env = {
     ...process.env,
     PORT: String(port),
     DATA_DIR: dataDir,
     FUNNELS_DIR: funnelsDir,
-    SUPABASE_URL: "",
-    NEXT_PUBLIC_SUPABASE_URL: "",
-    SUPABASE_SERVICE_ROLE_KEY: "",
+    ...BLANK_CREDENTIALS,
   };
 
   proc = Bun.spawn(["bun", SERVER], { env, stdout: "pipe", stderr: "pipe" });
@@ -655,16 +680,15 @@ describe("custom script injection", () => {
     await Bun.write(join(dir, "custom-code.json"), JSON.stringify(funnelDoc));
     const port = 5000 + Math.floor(Math.random() * 900);
     const child = Bun.spawn(["bun", SERVER], {
-      // Same reason as the main spawn above: Bun loads `.env`, and these servers
-      // would otherwise read funnels from a developer's real Supabase project.
+      // Same reason as the main spawn above — see BLANK_CREDENTIALS. The
+      // caller's own `env` is spread last, so a test that WANTS a credential
+      // (the drain's INTERNAL_SECRET, say) still sets one deliberately.
       env: {
         ...process.env,
         PORT: String(port),
         DATA_DIR: dir,
         FUNNELS_DIR: dir,
-        SUPABASE_URL: "",
-        NEXT_PUBLIC_SUPABASE_URL: "",
-        SUPABASE_SERVICE_ROLE_KEY: "",
+        ...BLANK_CREDENTIALS,
         ...env,
       },
       stdout: "pipe",
