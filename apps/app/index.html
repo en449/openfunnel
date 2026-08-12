@@ -665,7 +665,8 @@
                   <label for="setEmailProvider">Email Delivery Provider</label>
                   <span class="select-wrap">
                     <select id="setEmailProvider" class="select">
-                      <option value="resend">Resend API (Recommended)</option>
+                      <option value="resend">Resend API</option>
+                      <option value="brevo">Brevo API (EU, recommended)</option>
                       <option value="smtp">SMTP Relay Server</option>
                       <option value="logged">Console Log Only</option>
                     </select>
@@ -682,6 +683,18 @@
                   <div class="field">
                     <label for="setResendFrom">From Address</label>
                     <input id="setResendFrom" class="input" type="text" placeholder="Leads <leads@yourdomain.com>" />
+                  </div>
+                </div>
+
+                <!-- Brevo fields -->
+                <div id="brevoFields" style="display:none">
+                  <div class="field">
+                    <label for="setBrevoApiKey">Brevo API Key</label>
+                    <input id="setBrevoApiKey" class="input input-mono" type="password" placeholder="xkeysib-…" />
+                  </div>
+                  <div class="field">
+                    <label for="setBrevoFrom">From Address</label>
+                    <input id="setBrevoFrom" class="input" type="text" placeholder="Leads <leads@yourdomain.com>" />
                   </div>
                 </div>
 

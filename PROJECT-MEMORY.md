@@ -402,6 +402,42 @@ must not be inside this repo).
 
 ## Session Log
 
+### 2026-08-12 (session 6) — The transport lands: Brevo behind a seam, and dead letters reach a person
+
+WO12b and WO13, both on `phase-1-delivery-queue`. Design written into
+[PHASE-1-PLAN.md](PHASE-1-PLAN.md) §4.6 and §4.7 before any code, per the Build Workflow.
+
+**WO12b — Brevo.** Filed as a DSGVO gate (Resend is a US processor), but since the deployment it
+was also the reason nothing arrived: every attempt ended `no_transport`, so the queue retried
+perfectly and delivered nothing. `sendEmail()` no longer knows who the provider is — an
+`API_TRANSPORTS` table holds one entry per JSON-API provider (`resend`, `brevo`), each supplying
+the key it reads and the request for one message, and `sendEmail` owns the deadline, the abort,
+the success test, the error mapping and the logging rule. An addition, not a migration: the Resend
+and `SMTP_RELAY_URL` paths are byte-identical in behaviour, and Resend is declared first so an
+install carrying only `RESEND_API_KEY` resolves exactly as before. `brevoApiKey` joined
+`SECRET_ENV` / `WRITABLE_EMAIL_KEYS` / `SERVER_ONLY_INTEGRATIONS`; the two-way ternary in
+`saveEmailSettings` that decided which env var a secret came from became a table, because a third
+secret would have made it silently wrong for one of them.
+
+**WO13 — dead-letter alerting.** `drainOnce` collects what died in a pass and sends ONE message
+after the loop rather than one per row — alerting inside `settle` would have put an awaited mail
+send on the delivery path inside a drain `pg_net` abandons at 55s. Global `notifyEmail` only,
+never `notifyEmailFor` (which can resolve a *client's* address, and a dead delivery is the
+operator's infrastructure failing), deliberately not gated on `notifyEnabled`, own hourly bucket
+(`DEAD_LETTER_MAX_PER_HOUR`, default 10), never throws, and carries no target URL and no secret.
+
+Three test files that drive the drain now blank the mail environment and point `DATA_DIR` at a
+path that does not exist — a machine whose environment names a notification address would
+otherwise record an extra outbound call in every stub and fail there and nowhere else.
+
+Verified: 235 pass / 1 fail (the known Bun 1.3.13 413-vs-400), typecheck and all three check
+scripts green. Both new behaviours red-checked by reverting them and watching the tests fail — the
+provider precedence (3 red), the alert itself (2 red), the alert's ceiling (1 red).
+
+Still Enno's: the Brevo account, the verified sending domain (SPF/DKIM), the signed AVV, and
+`BREVO_API_KEY` in the Vercel Preview environment. Until that variable exists the deployed runtime
+still answers `no_transport` — the code path is there, the credential is not.
+
 ### 2026-08-10 (session 3) — Gate confirmed, spike run, two research tracks landed
 
 Enno confirmed the pre-mortem. **Gate satisfied, building unblocked.** First action was

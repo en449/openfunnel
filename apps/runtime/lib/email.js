@@ -17,9 +17,16 @@
  *    mail an address taken from a public request body, so both need a ceiling
  *    keyed on something the caller cannot rotate.
  *
- * Direct SMTP is NOT implemented. `RESEND_API_KEY` and `SMTP_RELAY_URL` are the
- * two working transports; `sendEmail` reports `ok: false` when only `SMTP_*` is
- * configured rather than claiming a success that did not happen.
+ * Direct SMTP is NOT implemented. The working transports are the JSON-API
+ * providers in `API_TRANSPORTS` (Resend, Brevo) and `SMTP_RELAY_URL`;
+ * `sendEmail` reports `ok: false` when only `SMTP_*` is configured rather than
+ * claiming a success that did not happen.
+ *
+ * `sendEmail` does not know who the provider is. Each entry in `API_TRANSPORTS`
+ * supplies the key it needs and the request for one message; everything after
+ * that — the timeout, the abort, the `res.ok` check, the error mapping, the rule
+ * that a failure is logged through `errSummary` and never as the error object —
+ * is written once, here. See PHASE-1-PLAN.md §4.6.
  */
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -55,6 +62,8 @@ const WRITABLE_EMAIL_KEYS = new Set([
   "provider",
   "resendApiKey",
   "resendFrom",
+  "brevoApiKey",
+  "brevoFrom",
   "smtpHost",
   "smtpPort",
   "smtpUser",
@@ -67,8 +76,25 @@ const WRITABLE_EMAIL_KEYS = new Set([
   "autoresponderBody",
 ]);
 
+/**
+ * Every secret setting, and the environment variable it falls back to.
+ *
+ * One table rather than a list plus a ternary in `saveEmailSettings`: that
+ * ternary was two-way, so the third secret would silently have been compared
+ * against the wrong variable and copied out of the environment into `DATA_DIR`
+ * — the exact failure the comment there exists to prevent.
+ */
+const SECRET_ENV = {
+  resendApiKey: "RESEND_API_KEY",
+  brevoApiKey: "BREVO_API_KEY",
+  smtpPass: "SMTP_PASS",
+};
+
 /** Secrets are never echoed back; the console sees only whether they are set. */
-const SECRET_EMAIL_KEYS = ["resendApiKey", "smtpPass"];
+const SECRET_EMAIL_KEYS = Object.keys(SECRET_ENV);
+
+/** Sender used when the operator has configured none. Not a deliverable address. */
+const DEFAULT_FROM = "OpenFunnel Leads <leads@openfunnel.dev>";
 
 export async function getEmailSettings() {
   const settingsFile = join(dataDir(), "email_settings.json");
@@ -78,10 +104,22 @@ export async function getEmailSettings() {
     if (parsed && typeof parsed === "object") stored = parsed;
   } catch {}
 
-  return {
-    provider: stored.provider || process.env.EMAIL_PROVIDER || (process.env.RESEND_API_KEY ? "resend" : process.env.SMTP_HOST ? "smtp" : "none"),
+  // What actually NAMED a provider, as opposed to what was inferred from a key
+  // being present. `pickTransport` cannot tell the two apart afterwards — the
+  // inference below hands it a provider name that looks explicit — which is why
+  // the ambiguity warning is raised here rather than there.
+  const explicit = stored.provider || process.env.EMAIL_PROVIDER || "";
+
+  const cfg = {
+    // Resend is checked before Brevo so an install that has only RESEND_API_KEY
+    // and no EMAIL_PROVIDER resolves exactly as it did before Brevo existed.
+    provider:
+      explicit ||
+      (process.env.RESEND_API_KEY ? "resend" : process.env.BREVO_API_KEY ? "brevo" : process.env.SMTP_HOST ? "smtp" : "none"),
     resendApiKey: stored.resendApiKey || process.env.RESEND_API_KEY || "",
-    resendFrom: stored.resendFrom || process.env.RESEND_FROM || "OpenFunnel Leads <leads@openfunnel.dev>",
+    resendFrom: stored.resendFrom || process.env.RESEND_FROM || DEFAULT_FROM,
+    brevoApiKey: stored.brevoApiKey || process.env.BREVO_API_KEY || "",
+    brevoFrom: stored.brevoFrom || process.env.BREVO_FROM || DEFAULT_FROM,
     smtpHost: stored.smtpHost || process.env.SMTP_HOST || "",
     smtpPort: Number(stored.smtpPort || process.env.SMTP_PORT || 587),
     smtpUser: stored.smtpUser || process.env.SMTP_USER || "",
@@ -97,6 +135,9 @@ export async function getEmailSettings() {
     // front, a stored relay URL would be a one-request exfiltration channel.
     relayUrl: process.env.SMTP_RELAY_URL || "",
   };
+
+  warnAmbiguousProvider(explicit, cfg);
+  return cfg;
 }
 
 /** Strip secrets before the settings ever leave the process. */
@@ -128,8 +169,8 @@ export async function saveEmailSettings(patch) {
   // and the stored copy then shadows the env var, so rotating the real secret
   // silently stops taking effect. Drop any secret that came from the env; only a
   // value the operator actually typed into this request gets persisted below.
-  for (const key of SECRET_EMAIL_KEYS) {
-    const fromEnv = key === "resendApiKey" ? process.env.RESEND_API_KEY : process.env.SMTP_PASS;
+  for (const [key, envVar] of Object.entries(SECRET_ENV)) {
+    const fromEnv = process.env[envVar];
     if (fromEnv && next[key] === fromEnv) delete next[key];
   }
 
@@ -142,7 +183,7 @@ export async function saveEmailSettings(patch) {
       continue;
     }
     if (key === "provider") {
-      if (["resend", "smtp", "none"].includes(value)) next[key] = value;
+      if ([...Object.keys(API_TRANSPORTS), "smtp", "none"].includes(value)) next[key] = value;
       continue;
     }
     if (key === "smtpPort") {
@@ -182,6 +223,145 @@ export async function saveEmailSettings(patch) {
 /** Ceiling on one outbound send. Mirrors DELIVERY_TIMEOUT_MS, and read per call for the same reason. */
 const sendTimeoutMs = () => Math.max(1000, Number(process.env.EMAIL_TIMEOUT_MS) || 10_000);
 
+/**
+ * `"Name <addr@example.com>"` → `{ name, email }`, a bare address → `{ email }`.
+ *
+ * Resend takes the combined string; Brevo takes the two halves, for the sender
+ * AND for every recipient — and rejects the whole request if one entry is the
+ * wrong shape, which would read as an outage rather than as one bad address.
+ * The settings keep the combined form because that is what the console asks for.
+ *
+ * @param {string} value
+ * @returns {{ name?: string, email: string }}
+ */
+function splitAddress(value) {
+  const raw = String(value || "").trim();
+  const match = raw.match(/^(.*?)\s*<([^<>]+)>$/);
+  if (!match) return { email: raw };
+  const name = match[1].trim().replace(/^"(.*)"$/, "$1").trim();
+  const email = match[2].trim();
+  return name ? { name, email } : { email };
+}
+
+/**
+ * @typedef {object} ApiTransport
+ * @property {string} keyField  Which settings field holds this provider's key.
+ * @property {(cfg: any, msg: { recipients: string[], subject: string, html: string, text: string })
+ *   => { url: string, headers: Record<string, string>, body: any }} request
+ */
+
+/**
+ * The JSON-API mail providers. A provider is a data entry: the key it reads and
+ * the request for one message. Everything else — the deadline, the abort, the
+ * success test, the error mapping, the logging rule — belongs to `sendEmail`
+ * below and is therefore written exactly once.
+ *
+ * ORDER IS BEHAVIOUR. With no explicit `provider`, the first entry whose key is
+ * configured wins, which is why Resend is declared first: an install carrying
+ * `RESEND_API_KEY` and nothing else must resolve the way it did before this
+ * table existed. Brevo is the DSGVO-preferred one (PLAN.md §8.3) and is selected
+ * by naming it in `EMAIL_PROVIDER`, not by shuffling this object.
+ *
+ * @type {Record<string, ApiTransport>}
+ */
+const API_TRANSPORTS = {
+  resend: {
+    keyField: "resendApiKey",
+    request: (cfg, msg) => ({
+      url: "https://api.resend.com/emails",
+      headers: {
+        authorization: `Bearer ${cfg.resendApiKey}`,
+        "content-type": "application/json",
+      },
+      body: {
+        from: cfg.resendFrom || DEFAULT_FROM,
+        to: msg.recipients,
+        subject: msg.subject,
+        html: msg.html,
+        text: msg.text,
+      },
+    }),
+  },
+  // Brevo SAS, Paris — the EU processor this project moves to, researched in
+  // reference/eu-mail-providers-2026-08-10.md. The key travels in its own
+  // header, never in the URL: a URL carrying a credential is what forces the
+  // errSummary rule on every fetch rejection in this repo.
+  brevo: {
+    keyField: "brevoApiKey",
+    request: (cfg, msg) => ({
+      url: "https://api.brevo.com/v3/smtp/email",
+      headers: {
+        "api-key": cfg.brevoApiKey,
+        "content-type": "application/json",
+        accept: "application/json",
+      },
+      body: {
+        sender: splitAddress(cfg.brevoFrom || DEFAULT_FROM),
+        to: msg.recipients.map(splitAddress),
+        subject: msg.subject,
+        htmlContent: msg.html,
+        textContent: msg.text,
+      },
+    }),
+  },
+};
+
+/** Which transports have a key, in table order. The first is what wins. */
+function configuredTransports(cfg) {
+  return Object.keys(API_TRANSPORTS).filter((name) => cfg[API_TRANSPORTS[name].keyField]);
+}
+
+let warnedAmbiguousProvider = false;
+
+/**
+ * The one silent failure this seam could introduce: an operator adds a second
+ * key to migrate off the first, keeps sending through the first, and has no way
+ * to see it. Once per process, naming the variable that decides.
+ *
+ * Raised from `getEmailSettings` rather than from `pickTransport`, and review
+ * caught why that matters: `getEmailSettings` INFERS `provider` from whichever
+ * key is present, so by the time `pickTransport` sees it, "two keys and nobody
+ * chose" is indistinguishable from `EMAIL_PROVIDER=resend`. The warning placed
+ * there never fired in the exact case it was written for.
+ *
+ * @param {string} explicit  What actually named a provider — "" when nothing did.
+ * @param {any} cfg
+ */
+function warnAmbiguousProvider(explicit, cfg) {
+  if (warnedAmbiguousProvider) return;
+  // Somebody chose. `smtp` counts as a choice: it means the relay path, so a
+  // stale API key lying around is not an ambiguity.
+  if (API_TRANSPORTS[explicit] || explicit === "smtp") return;
+
+  const configured = configuredTransports(cfg);
+  if (configured.length < 2) return;
+
+  warnedAmbiguousProvider = true;
+  console.warn(
+    `[email] more than one provider key is configured (${configured.join(", ")}) and EMAIL_PROVIDER ` +
+      `is not set — sending through "${configured[0]}". Set EMAIL_PROVIDER to choose.`,
+  );
+}
+
+/**
+ * Which API transport handles this send, if any.
+ *
+ * A named provider wins even with no key configured — a deployment that says
+ * `EMAIL_PROVIDER=brevo` and forgot the key has to fail loudly as Brevo rather
+ * than quietly succeed as something else. Otherwise the first configured key
+ * wins, which is the old `cfg.resendApiKey && cfg.provider !== "smtp"` fallback
+ * generalised, `provider: "smtp"` included: that value means the operator chose
+ * the relay path below, so a stale API key must not override it.
+ *
+ * @param {any} cfg
+ * @returns {string|null}
+ */
+function pickTransport(cfg) {
+  if (API_TRANSPORTS[cfg.provider]) return cfg.provider;
+  if (cfg.provider === "smtp") return null;
+  return configuredTransports(cfg)[0] || null;
+}
+
 export async function sendEmail({ to, subject, html, text, signal }) {
   if (!to) return { ok: false, error: "missing_recipient" };
   const cfg = await getEmailSettings();
@@ -194,30 +374,27 @@ export async function sendEmail({ to, subject, html, text, signal }) {
   const deadline = AbortSignal.timeout(sendTimeoutMs());
   const abort = signal ? AbortSignal.any([deadline, signal]) : deadline;
 
-  if (cfg.provider === "resend" || (cfg.resendApiKey && cfg.provider !== "smtp")) {
+  const name = pickTransport(cfg);
+  if (name) {
+    const recipients = (Array.isArray(to) ? to : [to]).map((one) => String(one || "").trim()).filter(Boolean);
+    if (!recipients.length) return { ok: false, error: "missing_recipient" };
+
+    const { url, headers, body } = API_TRANSPORTS[name].request(cfg, {
+      recipients,
+      subject,
+      html,
+      text: text || String(html || "").replace(/<[^>]+>/g, " "),
+    });
     try {
-      const res = await fetch("https://api.resend.com/emails", {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${cfg.resendApiKey}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          from: cfg.resendFrom || "OpenFunnel Leads <leads@openfunnel.dev>",
-          to: Array.isArray(to) ? to : [to],
-          subject,
-          html,
-          text: text || String(html || "").replace(/<[^>]+>/g, " "),
-        }),
-        signal: abort,
-      });
-      if (res.ok) return { ok: true, provider: "resend" };
-      const errText = await res.text();
-      console.warn("[email] Resend error:", res.status, errText);
-      return { ok: false, error: `resend_${res.status}` };
+      const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal: abort });
+      if (res.ok) return { ok: true, provider: name };
+      // Truncated: a provider error body is unbounded and this line is the one
+      // an operator reads at 2am. The status is what actually classifies it.
+      console.warn(`[email] ${name} error:`, res.status, oneLine(await res.text(), 300));
+      return { ok: false, error: `${name}_${res.status}` };
     } catch (err) {
-      console.warn(`[email] Resend exception: ${errSummary(err)}`);
-      return { ok: false, error: "resend_failed" };
+      console.warn(`[email] ${name} exception: ${errSummary(err)}`);
+      return { ok: false, error: `${name}_failed` };
     }
   }
 
@@ -245,7 +422,7 @@ export async function sendEmail({ to, subject, html, text, signal }) {
   if (cfg.smtpHost) {
     console.warn(
       `[email] SMTP host ${cfg.smtpHost} is configured but direct SMTP is not implemented. ` +
-        `Set RESEND_API_KEY, or SMTP_RELAY_URL pointing at an HTTP-to-SMTP relay.`,
+        `Set BREVO_API_KEY or RESEND_API_KEY, or SMTP_RELAY_URL pointing at an HTTP-to-SMTP relay.`,
     );
     return { ok: false, error: "smtp_not_implemented" };
   }
@@ -654,6 +831,168 @@ export async function notifyOperatorOfLead(record, funnel = null) {
     await sendEmail({ to, subject, html });
   } catch (err) {
     console.warn(`[runtime] Lead notification error: ${errSummary(err)}`);
+  }
+}
+
+/* ========================================================================== *
+ *  Dead-letter alerts
+ * ========================================================================== */
+
+/**
+ * How many dead-letter alerts may leave per hour. An outage that dead-letters
+ * continuously would otherwise mail on every cron tick, forever.
+ *
+ * Read per call, like every other operational knob in this file.
+ */
+const deadLetterMaxPerHour = () => Math.max(1, Number(process.env.DEAD_LETTER_MAX_PER_HOUR) || 10);
+
+/**
+ * Ceiling on the alert's own send — deliberately tighter than `EMAIL_TIMEOUT_MS`.
+ *
+ * This runs after a drain pass, inside an invocation `pg_net` abandons at 55s,
+ * and `routes/internal.js` documents the worst case as a SUM of the timeouts on
+ * that path. Review caught that the first version quietly added
+ * `EMAIL_TIMEOUT_MS` (10s) plus a `rate_hit` round trip (`DB_TIMEOUT_MS`, 5s) to
+ * a total already accounted at 43s — 58s, past the window, so a drain that had
+ * in fact delivered would be recorded as a timeout. Five seconds keeps the sum
+ * at 53s. A provider slower than that costs one alert, never a delivery, and the
+ * `console.error` per dead row is still there.
+ */
+const alertTimeoutMs = () => Math.max(1000, Number(process.env.ALERT_TIMEOUT_MS) || 5000);
+
+/**
+ * Shortest gap between two alerts from THIS process.
+ *
+ * `routes/internal.js` can call `drainOnce` several times in one request, and
+ * during the outage this feature exists for every pass produces dead rows — so
+ * without this, one invocation pays the alert's cost once per pass. The hourly
+ * `rate_hit` ceiling is the real bound and binds across instances; this one is
+ * the cheap in-process guard that stops the expensive round trip from being made
+ * at all. Per process by design: it is a cost bound, not a correctness one.
+ *
+ * Read per call like every other knob here, which is also what lets a test file
+ * set it to 0 rather than have its second assertion silently suppressed by its
+ * first.
+ */
+const alertMinGapMs = () => {
+  const raw = Number(process.env.ALERT_MIN_GAP_MS);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 60_000;
+};
+let lastDeadLetterAlertAt = 0;
+
+/**
+ * @typedef {object} DeadDelivery
+ * @property {number|string} id
+ * @property {string} kind
+ * @property {string} funnelSlug
+ * @property {number} attempts
+ * @property {string} error
+ */
+
+/**
+ * Render the alert. Every value is escaped: the funnel slug and the error text
+ * both originate outside this process, and `last_error` in particular is
+ * `errSummary()` output derived from a remote server's response.
+ *
+ * What is deliberately NOT in here: the target's `config`, which holds the
+ * webhook secret, and the target URL, which routinely carries a token in its
+ * path. An alert mail is a copy of whatever it names leaving the server
+ * permanently — the id is enough to find the row in the console.
+ *
+ * @param {DeadDelivery[]} dead
+ */
+function deadLetterEmail(dead) {
+  const rows = dead
+    .map(
+      (d) =>
+        `<tr><td style="padding:8px;border-bottom:1px solid #eee;">#${esc(d.id)}</td>` +
+        `<td style="padding:8px;border-bottom:1px solid #eee;">${esc(d.kind)}</td>` +
+        `<td style="padding:8px;border-bottom:1px solid #eee;">${esc(d.funnelSlug)}</td>` +
+        `<td style="padding:8px;border-bottom:1px solid #eee;">${esc(d.attempts)}</td>` +
+        `<td style="padding:8px;border-bottom:1px solid #eee;color:#b91c1c;">${esc(d.error)}</td></tr>`,
+    )
+    .join("");
+
+  const html = `
+        <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:640px;margin:0 auto;padding:24px;border:1px solid #e5e7eb;border-radius:16px;background:#ffffff;">
+          <h2 style="margin:0 0 8px 0;color:#b91c1c;font-size:22px;">⚠️ Lead delivery gave up</h2>
+          <p style="margin:0 0 20px 0;color:#374151;font-size:14px;">
+            ${dead.length === 1 ? "One delivery has" : `${esc(dead.length)} deliveries have`} exhausted every retry.
+            The lead is stored — it was not delivered. Re-send from the Delivery view in the console once the cause is fixed.
+          </p>
+          <table style="width:100%;border-collapse:collapse;font-size:13px;">
+            <tr style="text-align:left;color:#6b7280;">
+              <th style="padding:8px;">Delivery</th><th style="padding:8px;">Kind</th>
+              <th style="padding:8px;">Funnel</th><th style="padding:8px;">Attempts</th><th style="padding:8px;">Last error</th>
+            </tr>
+            ${rows}
+          </table>
+        </div>
+      `;
+
+  return {
+    subject: oneLine(
+      dead.length === 1
+        ? `⚠️ Lead delivery failed permanently (${dead[0].funnelSlug})`
+        : `⚠️ ${dead.length} lead deliveries failed permanently`,
+    ),
+    html,
+  };
+}
+
+/**
+ * Tell the operator that deliveries have died.
+ *
+ * ONE MESSAGE PER DRAIN PASS, not one per row — `drainOnce` collects them and
+ * calls this once after its loop. Alerting inside `settle` would put an awaited
+ * mail send on the delivery path, so a batch of dead rows would cost
+ * `EMAIL_TIMEOUT_MS` each inside a drain that `pg_net` abandons at 55s, and
+ * would tell the operator about one outage twenty-five times.
+ *
+ * Two deliberate departures from `notifyOperatorOfLead`:
+ *
+ *  - **The global address only, never `notifyEmailFor`.** That resolver can
+ *    answer with a CLIENT's address from `integrations.notifyEmail`, and a dead
+ *    delivery is the operator's infrastructure failing rather than a lead. It
+ *    must not be mailed to the client whose leads are the thing being lost.
+ *  - **Not gated on `notifyEnabled`.** That switch means "I do not want an email
+ *    for every lead". An operator who delivers by webhook and turned lead alerts
+ *    off is exactly the one who would otherwise never learn the webhook has been
+ *    dead since Tuesday.
+ *
+ * Never throws: the caller is a drain pass whose counts must still be returned.
+ *
+ * @param {DeadDelivery[]} dead
+ */
+export async function alertDeadLetters(dead) {
+  try {
+    if (!dead?.length) return;
+    const cfg = await getEmailSettings();
+    const to = String(cfg.notifyEmail || "").trim();
+    if (!to) return; // Nobody to tell. The `console.error` per row is what is left.
+
+    // Checked before the rate limiter, because the point of it is to skip the
+    // round trip the rate limiter costs. See `alertMinGapMs`.
+    if (Date.now() - lastDeadLetterAlertAt < alertMinGapMs()) return;
+    lastDeadLetterAlertAt = Date.now();
+
+    // Its own bucket, so a burst of alerts cannot exhaust the lead-alert budget:
+    // the alert is not more important than the leads still getting through. This
+    // path only ever runs with a database configured (there is no queue without
+    // one), so the ceiling is the Postgres-backed `rate_hit` and binds across
+    // instances rather than per invocation.
+    if (!(await rateLimit("dead-letter-alert", deadLetterMaxPerHour(), 60 * 60 * 1000))) {
+      console.warn(
+        `[email] dead-letter alert suppressed by its hourly ceiling (${dead.length} dead) — see DEAD_LETTER_MAX_PER_HOUR`,
+      );
+      return;
+    }
+
+    const { subject, html } = deadLetterEmail(dead);
+    const res = await sendEmail({ to, subject, html, signal: AbortSignal.timeout(alertTimeoutMs()) });
+    if (!res.ok) console.warn(`[email] dead-letter alert could not be sent: ${res.error}`);
+  } catch (err) {
+    console.warn(`[email] dead-letter alert error: ${errSummary(err)}`);
   }
 }
 

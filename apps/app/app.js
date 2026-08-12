@@ -3327,6 +3327,8 @@ async function loadEmailSettings() {
     if ($("setEmailProvider")) $("setEmailProvider").value = cfg.provider || "resend";
     if ($("setResendApiKey")) $("setResendApiKey").value = cfg.resendApiKey || "";
     if ($("setResendFrom")) $("setResendFrom").value = cfg.resendFrom || "";
+    if ($("setBrevoApiKey")) $("setBrevoApiKey").value = cfg.brevoApiKey || "";
+    if ($("setBrevoFrom")) $("setBrevoFrom").value = cfg.brevoFrom || "";
     if ($("setSmtpHost")) $("setSmtpHost").value = cfg.smtpHost || "";
     if ($("setSmtpPort")) $("setSmtpPort").value = cfg.smtpPort || 587;
     if ($("setSmtpUser")) $("setSmtpUser").value = cfg.smtpUser || "";
@@ -3345,6 +3347,7 @@ async function loadEmailSettings() {
 
 function toggleEmailProviderFields(provider) {
   if ($("resendFields")) $("resendFields").style.display = provider === "resend" ? "block" : "none";
+  if ($("brevoFields")) $("brevoFields").style.display = provider === "brevo" ? "block" : "none";
   if ($("smtpFields")) $("smtpFields").style.display = provider === "smtp" ? "block" : "none";
 }
 
@@ -3358,6 +3361,8 @@ async function saveEmailSettingsFromUI() {
     provider: $("setEmailProvider")?.value || "resend",
     resendApiKey: $("setResendApiKey")?.value || "",
     resendFrom: $("setResendFrom")?.value || "",
+    brevoApiKey: $("setBrevoApiKey")?.value || "",
+    brevoFrom: $("setBrevoFrom")?.value || "",
     smtpHost: $("setSmtpHost")?.value || "",
     smtpPort: Number($("setSmtpPort")?.value || 587),
     smtpUser: $("setSmtpUser")?.value || "",

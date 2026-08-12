@@ -23,6 +23,13 @@ import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
 process.env.SUPABASE_URL = "https://db.test.invalid";
 process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role-key-not-real";
 
+/* Re-send drains inline, and a delivery that dies there mails the operator
+ * (WO13). Same rule as delivery.test.js: unset, never restored. */
+for (const key of ["NOTIFY_EMAIL", "EMAIL_PROVIDER", "RESEND_API_KEY", "BREVO_API_KEY", "SMTP_RELAY_URL", "SMTP_HOST"]) {
+  delete process.env[key];
+}
+process.env.DATA_DIR = ".tmp/no-mail-settings-here";
+
 const { handleAdmin } = await import("../routes/admin.js");
 
 const realFetch = globalThis.fetch;

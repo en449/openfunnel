@@ -40,8 +40,18 @@ import { errSummary } from "../lib/log.js";
  *                           no signal and so is bounded only by its own race
  *   DELIVERY_TIMEOUT_MS 10s the attempt itself
  *   DB_TIMEOUT_MS       5s  the `complete_delivery`/`fail_delivery` that follows
+ *   DB_TIMEOUT_MS       5s  the `rate_hit` behind the dead-letter alert (WO13),
+ *                           which runs after the pass when something died
+ *   ALERT_TIMEOUT_MS    5s  that alert's own send, deliberately tighter than
+ *                           EMAIL_TIMEOUT_MS so this sum still fits
  *                       ---
- *                       43s
+ *                       53s
+ *
+ * The last two are paid at most ONCE per invocation, not once per pass — see
+ * `ALERT_MIN_GAP_MS` in `lib/email.js`. Without that guard an outage, which is
+ * exactly when every pass produces a dead row, would re-pay them per pass and
+ * push a drain that succeeded past `pg_net`'s window, so it would be recorded as
+ * a timeout: a blind spot in the observability WO13 exists to close.
  *
  * Inside `pg_net`'s 55s timeout in `supabase/cron.sql`, inside Vercel's 60s
  * Hobby limit, and far inside the 5-minute Fluid ceiling and the claim lease.

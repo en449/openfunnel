@@ -20,6 +20,24 @@ import { afterAll, afterEach, expect, test } from "bun:test";
 process.env.SUPABASE_URL = "https://db.test.invalid";
 process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role-key-not-real";
 
+/* A dead delivery now mails the operator (WO13), so this file's mail settings
+ * have to come from nowhere. Unset, never restored — the standing rule. Without
+ * it, a machine whose environment names a notification address and a provider
+ * key records an extra outbound call in every stub below, and the assertions
+ * that count them fail there and nowhere else. `DATA_DIR` points at a path that
+ * does not exist for the same reason: `.data/email_settings.json` is per-machine
+ * and would otherwise supply the address. */
+for (const key of ["NOTIFY_EMAIL", "EMAIL_PROVIDER", "RESEND_API_KEY", "BREVO_API_KEY", "SMTP_RELAY_URL", "SMTP_HOST"]) {
+  delete process.env[key];
+}
+process.env.DATA_DIR = ".tmp/no-mail-settings-here";
+
+/* The alert keeps a per-process minimum gap so one drain invocation cannot pay
+ * for it once per pass. Off by default here, or the first test to alert would
+ * silently suppress every later one; the test that asserts the gap turns it back
+ * on for itself. */
+process.env.ALERT_MIN_GAP_MS = "0";
+
 const realFetch = globalThis.fetch;
 afterEach(() => {
   globalThis.fetch = realFetch;
@@ -232,4 +250,191 @@ test("an empty claim is not an outbound request", async () => {
 
   expect(await drainOnce()).toEqual({ claimed: 0, done: 0, failed: 0, dead: 0 });
   expect(targetCalls).toHaveLength(0);
+});
+
+/* ========================================================================== *
+ *  WO13 — a dead delivery reaches a person
+ * ========================================================================== */
+
+/**
+ * Two rows that both die on their first attempt, with the mail path configured.
+ * `127.0.0.1` is refused by the egress guard textually, so it is permanent and
+ * no socket is ever opened — and the config carries a secret precisely so the
+ * alert can be asserted not to contain it.
+ *
+ * @param {(fn: string) => Response} [rpcReply]
+ */
+function twoDeadDeliveries(rpcReply) {
+  return stub(
+    rpcReply ||
+      ((fn) => {
+        if (fn === "claim_deliveries") {
+          return jsonResponse([
+            claim({ delivery_id: 41, config: { url: "http://127.0.0.1/hook", secret: "whsec_topsecret" } }),
+            claim({ delivery_id: 42, config: { url: "http://127.0.0.1/hook", secret: "whsec_topsecret" } }),
+          ]);
+        }
+        if (fn === "rate_hit") return jsonResponse(true);
+        return jsonResponse("dead");
+      }),
+  );
+}
+
+test("a whole pass of dead deliveries is ONE alert, and it names every row", async () => {
+  process.env.NOTIFY_EMAIL = "ops@example.invalid";
+  process.env.EMAIL_PROVIDER = "brevo";
+  process.env.BREVO_API_KEY = "xkeysib-not-a-real-key";
+  try {
+    const { drainOnce } = await import("../lib/delivery.js");
+    const { targetCalls } = twoDeadDeliveries();
+
+    const counts = await drainOnce();
+    expect(counts.dead).toBe(2);
+
+    // One message for the pass, not one per row: alerting per row would put an
+    // awaited send on the delivery path and tell the operator about one outage
+    // twice.
+    const mails = targetCalls.filter((c) => c.url.includes("api.brevo.com"));
+    expect(mails).toHaveLength(1);
+
+    const body = JSON.parse(mails[0].init.body);
+    expect(body.to).toEqual([{ email: "ops@example.invalid" }]);
+    expect(body.htmlContent).toContain("41");
+    expect(body.htmlContent).toContain("42");
+    expect(body.htmlContent).toContain("lead-gen");
+    expect(body.htmlContent).toContain("blocked egress target");
+  } finally {
+    delete process.env.NOTIFY_EMAIL;
+    delete process.env.EMAIL_PROVIDER;
+    delete process.env.BREVO_API_KEY;
+  }
+});
+
+// The alert is a copy of whatever it names leaving the server permanently, and
+// a webhook URL routinely carries a token in its path.
+test("the alert carries no target URL and no webhook secret", async () => {
+  process.env.NOTIFY_EMAIL = "ops@example.invalid";
+  process.env.EMAIL_PROVIDER = "brevo";
+  process.env.BREVO_API_KEY = "xkeysib-not-a-real-key";
+  try {
+    const { drainOnce } = await import("../lib/delivery.js");
+    const { targetCalls } = twoDeadDeliveries();
+
+    await drainOnce();
+
+    const mail = targetCalls.find((c) => c.url.includes("api.brevo.com"));
+    expect(mail.init.body).not.toContain("whsec_topsecret");
+    expect(mail.init.body).not.toContain("127.0.0.1");
+  } finally {
+    delete process.env.NOTIFY_EMAIL;
+    delete process.env.EMAIL_PROVIDER;
+    delete process.env.BREVO_API_KEY;
+  }
+});
+
+// An outage that dead-letters continuously would otherwise mail on every cron
+// tick, forever. The row still dies and the console still shows it.
+test("the hourly ceiling suppresses the alert without changing the outcome", async () => {
+  process.env.NOTIFY_EMAIL = "ops@example.invalid";
+  process.env.EMAIL_PROVIDER = "brevo";
+  process.env.BREVO_API_KEY = "xkeysib-not-a-real-key";
+  try {
+    const { drainOnce } = await import("../lib/delivery.js");
+    const { targetCalls } = twoDeadDeliveries((fn) => {
+      if (fn === "claim_deliveries") {
+        return jsonResponse([claim({ delivery_id: 41, config: { url: "http://127.0.0.1/hook" } })]);
+      }
+      if (fn === "rate_hit") return jsonResponse(false); // ceiling reached
+      return jsonResponse("dead");
+    });
+
+    const counts = await drainOnce();
+
+    expect(counts.dead).toBe(1);
+    expect(targetCalls.filter((c) => c.url.includes("api.brevo.com"))).toHaveLength(0);
+  } finally {
+    delete process.env.NOTIFY_EMAIL;
+    delete process.env.EMAIL_PROVIDER;
+    delete process.env.BREVO_API_KEY;
+  }
+});
+
+// A self-hoster with no notification address configured has nobody to tell. It
+// must not throw, and it must not hold the drain open trying.
+test("with no notification address, a dead delivery mails nobody", async () => {
+  process.env.EMAIL_PROVIDER = "brevo";
+  process.env.BREVO_API_KEY = "xkeysib-not-a-real-key";
+  try {
+    const { drainOnce } = await import("../lib/delivery.js");
+    const { targetCalls } = twoDeadDeliveries();
+
+    const counts = await drainOnce();
+
+    expect(counts.dead).toBe(2);
+    expect(targetCalls).toHaveLength(0);
+  } finally {
+    delete process.env.EMAIL_PROVIDER;
+    delete process.env.BREVO_API_KEY;
+  }
+});
+
+// A mail transport that is itself broken is the most likely state at the moment
+// a delivery dies. The alert failing must not lose the drain's counts.
+test("a failing alert never breaks the drain that produced it", async () => {
+  process.env.NOTIFY_EMAIL = "ops@example.invalid";
+  process.env.EMAIL_PROVIDER = "brevo";
+  process.env.BREVO_API_KEY = "xkeysib-not-a-real-key";
+  try {
+    const { drainOnce } = await import("../lib/delivery.js");
+    stub(
+      (fn) => {
+        if (fn === "claim_deliveries") {
+          return jsonResponse([claim({ delivery_id: 41, config: { url: "http://127.0.0.1/hook" } })]);
+        }
+        if (fn === "rate_hit") return jsonResponse(true);
+        return jsonResponse("dead");
+      },
+      () => {
+        throw new TypeError("fetch failed"); // the mail POST itself
+      },
+    );
+
+    expect(await drainOnce()).toEqual({ claimed: 1, done: 0, failed: 0, dead: 1 });
+  } finally {
+    delete process.env.NOTIFY_EMAIL;
+    delete process.env.EMAIL_PROVIDER;
+    delete process.env.BREVO_API_KEY;
+  }
+});
+
+// `routes/internal.js` calls `drainOnce` repeatedly inside one HTTP request, and
+// during the outage this feature exists for, every pass produces a dead row.
+// Without the gap the invocation re-pays the alert's rate-limit round trip and
+// send per pass and can overrun `pg_net`'s 55s window — recording a drain that
+// succeeded as a timeout. Review round 1's second Major.
+test("one invocation pays for the alert once, not once per pass", async () => {
+  process.env.NOTIFY_EMAIL = "ops@example.invalid";
+  process.env.EMAIL_PROVIDER = "brevo";
+  process.env.BREVO_API_KEY = "xkeysib-not-a-real-key";
+  try {
+    const { drainOnce } = await import("../lib/delivery.js");
+    const { targetCalls, rpcCalls } = twoDeadDeliveries();
+
+    // Staged rather than run twice under the same gap, because the guard is a
+    // module-level timestamp this file's earlier tests have already moved: the
+    // first pass sends and stamps it, the second runs with the real gap in
+    // force. What is being asserted is that the stamp suppresses the second.
+    await drainOnce();
+    process.env.ALERT_MIN_GAP_MS = "60000";
+    await drainOnce();
+
+    expect(targetCalls.filter((c) => c.url.includes("api.brevo.com"))).toHaveLength(1);
+    // The rate-limit round trip is skipped too — it is the expensive half.
+    expect(rpcCalls.filter((c) => c.fn === "rate_hit")).toHaveLength(1);
+  } finally {
+    process.env.ALERT_MIN_GAP_MS = "0";
+    delete process.env.NOTIFY_EMAIL;
+    delete process.env.EMAIL_PROVIDER;
+    delete process.env.BREVO_API_KEY;
+  }
 });

@@ -499,7 +499,8 @@ run after every non-trivial one; the parent applies all fixes. Baseline after ea
 | 11 | `Bun.serve` → `handleRequest(req)`, two entry points (§4.2) | **Opus** | 3–10 | ✅
 | 12a | Something creates `delivery_target` rows (§4.3) — pulled out of 12 | **Opus** | 3, 5 | ✅ (migration NOT pushed to the live project yet)
 | 12 | Delivery-log view in the console + manual re-send (§4.4) | **Opus** (routes) + Sonnet (console) | 5, 12a | ✅
-| 13 | Dead-letter alerting to Enno | Sonnet | 5 |
+| 12b | Brevo behind a provider seam in `lib/email.js` (§4.6) — pulled ahead of 13 | **Opus** | 12 |
+| 13 | Dead-letter alerting to Enno (§4.7) | **Opus** (delivery/mail) + Sonnet (docs) | 5, 12b |
 | 14 | Tests: state machine (claim/lease/sweep/dead), dedupe, rate window, cancelled-on-restrict | Sonnet | 5–10 |
 
 Opus keeps 4, 6, 7 and 11 — each one is either the ingest invariant, the privileged-gate
@@ -938,6 +939,148 @@ nothing can actually be delivered until the Brevo adapter lands.
 Splitting into a public `funnel` project and a private `console` project (PLAN.md §2) is what
 finally removes the bypass header. It belongs with the Pro upgrade that has to happen before a
 client funnel goes live, not before it.
+
+---
+
+## 4.6 WO12b — Brevo, and why it is the last mile rather than a compliance chore
+
+It was filed as a DSGVO gate: Resend is a US processor, so it cannot be the default path for a
+German client's leads (PLAN.md §8.3, provider research in
+[reference/eu-mail-providers-2026-08-10.md](reference/eu-mail-providers-2026-08-10.md) — Brevo
+SAS, Paris, primary hosting OVHcloud FR/DE, self-serve DPA, `POST /v3/smtp/email`, free tier
+covers the volume).
+
+Since the deployment it is also the reason nothing arrives. Every delivery attempt on the live
+preview ends `no_transport` because no mail provider key exists there, so the queue claims,
+fails, backs off and retries perfectly — an unattended machine doing exactly what it was built to
+do, delivering nothing. The queue is proven; the transport is missing.
+
+### Decision 1 — a seam, not a migration
+
+`sendEmail()` currently *is* the Resend client: the branch, the URL, the header shape and the
+error mapping are one block, and the HTTP relay is a second block below it. Adding Brevo as a
+third block would triple a decision that already reads as a chain of accidents (`cfg.provider ===
+"resend" || (cfg.resendApiKey && cfg.provider !== "smtp")`).
+
+So an `API_TRANSPORTS` table: one entry per JSON-API provider, each supplying the key it needs and
+the `{ url, headers, body }` for one message. `sendEmail` selects an entry and owns everything
+after it — the timeout, the abort, the `res.ok` check, the error mapping, the logging rule. A
+provider is then a data entry, and the parts that are security controls are written once.
+
+**This is an addition, not a migration.** Resend and `SMTP_RELAY_URL` keep working, unchanged, in
+that order. The selection is:
+
+1. `cfg.provider` names a transport in the table → that one, even with no key configured (a
+   deployment that says `EMAIL_PROVIDER=brevo` and forgot the key must fail loudly as Brevo, not
+   silently succeed as something else).
+2. Otherwise, unless `cfg.provider === "smtp"`, the first table entry whose key is configured —
+   which is exactly today's `resendApiKey &&` fallback, generalised. Resend is declared first, so
+   an existing install with `RESEND_API_KEY` and no `EMAIL_PROVIDER` behaves identically.
+3. Otherwise the relay, then the `smtpHost`-is-configured warning, then `no_transport` — all
+   untouched.
+
+Two keys and no `EMAIL_PROVIDER` warns once, naming the variable and the one it picked. That is
+the only new failure mode the seam introduces and it is silent otherwise: an operator who adds
+`BREVO_API_KEY` to migrate off Resend would keep sending through Resend and have no way to see it.
+
+### Decision 2 — the secret joins the rules that already exist, rather than getting its own
+
+`BREVO_API_KEY` / `brevoApiKey` is a secret in the same sense `resendApiKey` is, so it joins
+`SECRET_EMAIL_KEYS` (redacted out of every `GET`, echoed only as `brevoApiKeySet`),
+`WRITABLE_EMAIL_KEYS` (a blank value means *keep the existing one*, never wipe it) and
+`SERVER_ONLY_INTEGRATIONS` in `lib/funnels.js` (nothing puts a provider key on a funnel document,
+and the day something does, the whole document is inlined into a page an ad click can read).
+
+One thing has to change shape rather than grow an entry. `saveEmailSettings` drops a secret that
+came from the environment before persisting, so a save cannot copy `RESEND_API_KEY` into
+`DATA_DIR` in plaintext and then shadow it forever — and it decides which variable to compare
+against with a two-way ternary. A third secret makes that ternary silently wrong for one of them,
+so it becomes a `{ settingsKey: ENV_VAR }` map that `SECRET_EMAIL_KEYS` is derived from. One
+table, no third place to forget.
+
+### Decision 3 — the sender address is parsed, because Brevo does not take the Resend shape
+
+Resend takes `from: "Name <a@b>"`. Brevo takes `sender: { name, email }`, `to: [{ email }]`, and
+`htmlContent` / `textContent`. So `brevoFrom` (env `BREVO_FROM`) is stored in the familiar
+`"Name <addr>"` form that the console already asks for and split at the transport boundary — one
+`splitAddress()` helper, used for the sender and every recipient. A bare address parses to
+`{ email }` with no name, which is what the API wants.
+
+The recipient list is where this could go wrong quietly: `to` reaches `sendEmail` as a string or an
+array of strings, and Brevo rejects the whole request if any entry is malformed. Parsing each one
+the same way keeps a single bad address from being a 400 that reads like an outage.
+
+### Decision 4 — zero runtime dependencies, and the tests never send a message
+
+`fetch` and `JSON.stringify`, like every other outbound call in this repo — CI (`check-no-deps`)
+enforces it and `check-portable-runtime` means no `Bun.*` on the path `api/index.js` can reach.
+The tests stub `globalThis.fetch` and assert the request that *would* have gone out: the URL, the
+`api-key` header, the parsed sender, that the hourly cap still binds, and that no test ever holds a
+real key. `BREVO_API_KEY` joins `BLANK_CREDENTIALS` in `apps/runtime/test/server.test.js` in the
+same change — Bun auto-loads `.env` into every spawned server, and forgetting that turned nine
+tests red on 2026-08-12 with no source change behind it.
+
+### Not in scope, deliberately
+
+The Brevo account, the verified sending domain (SPF/DKIM) and the signed AVV are Enno's, as is
+putting `BREVO_API_KEY` into the Vercel Preview environment. The code being merged with no key
+configured changes nothing: `no_transport`, exactly as today.
+
+One adjacent bug is named and left: the console's provider `<select>` offers `logged`, which
+`saveEmailSettings` does not accept, so choosing it silently keeps whatever was stored. Fixing it
+means deciding what `logged` should mean, which is not this work order.
+
+---
+
+## 4.7 WO13 — a dead delivery has to reach a person
+
+Today `settle()` writes `console.error` when `fail_delivery` returns `dead`, and that line is the
+entire alerting story: a lead that exhausted eight attempts over ~21 hours is visible only to
+somebody who opens the console or reads a log. The phase promises "nothing about a failure is
+discoverable only in a log" (§0), and this is the sentence that is still false.
+
+### Decision 1 — one digest per drain pass, not one mail per dead row
+
+The obvious version alerts inside `settle`, which is wrong in two ways at once. It puts an awaited
+mail send on the delivery path, so a dead row costs up to `EMAIL_TIMEOUT_MS` *inside* a drain that
+`pg_net` abandons at 55s — and a batch of 25 dead rows is 25 separate mails about one outage.
+
+So `drainOnce` collects the rows that died in this pass and sends **one** message after the loop,
+awaited exactly once. Bounded by one `EMAIL_TIMEOUT_MS`, and the operator gets the shape of the
+failure (five webhook deliveries for one funnel) instead of five identical fragments of it. It
+runs after the loop rather than as fire-and-forget because on Vercel the invocation can be frozen
+the moment the response is written, and an alert nobody sent is the failure this work order exists
+to remove.
+
+### Decision 2 — the alert is capped, on its own bucket
+
+An outage that dead-letters continuously would otherwise mail on every cron tick, forever. Its own
+`rateLimit` bucket (`DEAD_LETTER_MAX_PER_HOUR`, default 10/hour), for the reason
+`notifyOperatorOfLead` has one: a burst of alerts must not exhaust the lead-alert budget, and the
+alert is not more important than the leads still getting through. A suppressed alert still leaves
+the `console.error` line, which stays.
+
+### Decision 3 — it goes to the operator, and not through `notifyEmailFor`
+
+`notifyEmailFor(funnel, cfg)` answers "where does this funnel's lead alert go", including a
+client's own address from `integrations.notifyEmail`. A dead delivery is not a lead — it is the
+operator's infrastructure failing, and it must not be mailed to the client whose leads are the
+thing being lost. The global `notifyEmail` from the mail settings only, and the claim carries a
+slug rather than a funnel document anyway.
+
+It is deliberately **not** gated on `notifyEnabled`. That switch means "I do not want an email for
+every lead"; an operator who delivers by webhook and turns lead alerts off is precisely the one who
+would otherwise never learn their webhook has been dead since Tuesday. With no `notifyEmail`
+configured at all there is nobody to tell, and the console line is what is left.
+
+### Decision 4 — the alert carries no secret, by construction
+
+It names the delivery id, the kind, the funnel slug, the attempt count and `last_error` — which is
+already `errSummary()` output truncated to 500 chars, because the console displays that same field
+(§3.1 rule 6). It never reads `delivery_target.config`, which holds the webhook secret, and never
+prints a target URL: a webhook URL routinely carries a token in its path, and an alert mail is a
+copy of that leaving the server permanently. Everything interpolated goes through `esc()`, since
+the funnel slug and the error text both originate outside this process.
 
 ---
 

@@ -21,7 +21,7 @@
 | **Proven Industry Templates** | ✅ Yes | ✅ **20 built-in** across 7 categories, editable as plain JSON |
 | **Theming** | ✅ Yes | ✅ 8 presets + custom colour, font, radius & button style |
 | **AI Funnel Copilot** | ✅ Yes | ✅ **Bring your own key** (OpenAI, Claude, Gemini, DeepSeek or any compatible API) |
-| **Email Alerts & Autoresponders** | ✅ Paid Addon | ✅ **Built-in** (HTML alerts via Resend or an HTTP relay) |
+| **Email Alerts & Autoresponders** | ✅ Paid Addon | ✅ **Built-in** (HTML alerts via Brevo, Resend or an HTTP relay) |
 | **Email Verification (OTP)** | ✅ Yes | ✅ **Built-in** (6-digit code, verified server-side) |
 | **Smart Branching & Logic** | ✅ Yes | ✅ Yes (Target steps by answer ID) |
 | **Dynamic Answer Piping** | ✅ Yes | ✅ Yes (Inject `{{name}}`, `{{goal}}` into any headline) |
@@ -51,7 +51,7 @@ Every visitor who enters your funnel brings their ad parameters with them. OpenF
 
 ### 2. Multi-Channel Lead Integrations
 Send your leads anywhere automatically:
-- **Instant Email Alerts & Autoresponders**: Send formatted HTML email alerts to the business owner (`NOTIFY_EMAIL`) with full lead answers & UTM parameters, plus personalized welcome emails to leads. Delivery goes through the **Resend API** or an **HTTP relay** (`SMTP_RELAY_URL`) — direct SMTP is not implemented yet.
+- **Instant Email Alerts & Autoresponders**: Send formatted HTML email alerts to the business owner (`NOTIFY_EMAIL`) with full lead answers & UTM parameters, plus personalized welcome emails to leads. Delivery goes through the **Brevo API** (EU), the **Resend API** or an **HTTP relay** (`SMTP_RELAY_URL`), chosen with `EMAIL_PROVIDER` — direct SMTP is not implemented yet.
 - **Webhooks (Zapier, Make.com, GoHighLevel, HubSpot, n8n)**: Every lead is forwarded server-side, optionally signed with an `X-Webhook-Secret` header. Your endpoint is never exposed to visitors.
 - **CSV Export with Attribution**: Export leads in one click with full UTM columns for direct import into Google Sheets or CRMs.
 - **Supabase Cloud Sync**: Sync lead records and analytics directly into your PostgreSQL database.
@@ -298,6 +298,12 @@ ADMIN_TOKEN=
 # the caller sets. This cap is the one a caller cannot rotate past. Default 500.
 MAIL_MAX_PER_HOUR=
 
+# Dead-letter alerts: how many mails per hour may leave when deliveries give up
+# permanently (default 10). Its own bucket, so an outage cannot exhaust the
+# lead-alert budget. ALERT_TIMEOUT_MS (default 5000) bounds that send — it is
+# tighter than EMAIL_TIMEOUT_MS on purpose, because it runs inside the drain.
+DEAD_LETTER_MAX_PER_HOUR=
+
 # Set to 1 ONLY if this server really sits behind a proxy/CDN that rewrites the
 # client address (Render, Railway, Fly, nginx, Cloudflare). x-forwarded-for is a
 # request header anyone can send, so it is ignored unless you opt in — otherwise
@@ -314,9 +320,16 @@ ALLOWED_HOSTS=
 
 # Email Notifications & Autoresponders
 NOTIFY_EMAIL=owner@yourdomain.com
+
+# EMAIL_PROVIDER picks the transport. Brevo (Brevo SAS, Paris) is the EU
+# provider this project prefers, for a German client's leads; Resend and
+# SMTP_RELAY_URL below still work unchanged. With two provider keys configured
+# and no EMAIL_PROVIDER set, the runtime warns once and keeps using Resend.
 EMAIL_PROVIDER=resend
 RESEND_API_KEY=re_123456789...
 RESEND_FROM="OpenFunnel Leads <leads@yourdomain.com>"
+BREVO_API_KEY=xkeysib-...
+BREVO_FROM="Leads <leads@yourdomain.com>"
 
 # Optional HTTP-to-SMTP relay. Every message is POSTed here as JSON.
 # Env-only by design: a relay URL settable through the API would let an
@@ -554,7 +567,7 @@ only reachable through the proxy.
 ### What the runtime does for you
 
 - **Local data ownership**: leads and events stay in `.data/leads.jsonl` unless you route them outward.
-- **Credentials are never echoed back**: the settings API reports *whether* a Resend or SMTP secret is set, never its value.
+- **Credentials are never echoed back**: the settings API reports *whether* a Brevo, Resend or SMTP secret is set, never its value.
 - **Outbound destinations are operator-owned**: webhook targets come from your environment or your funnel document, never from a visitor's request, and loopback / private / cloud-metadata addresses are refused.
 - **Signed webhooks**: set a webhook secret and every delivery carries an `X-Webhook-Secret` header your automation can check.
 - **Email verification that actually verifies**: six-digit codes from a CSPRNG, five attempts, ten-minute expiry, never returned to the browser — and the server re-derives `email_verified` rather than believing the client.
@@ -637,8 +650,8 @@ enabling it is the only thing that changes behaviour.
 > **Scope note.** Rate limits and OTP state live in memory, so they are
 > per-process — run more than one instance and you want an edge rate limit and a
 > shared store. The console has no multi-user accounts or audit log; the admin
-> token is all-or-nothing access. Direct SMTP is not implemented — use Resend or
-> an HTTP relay via `SMTP_RELAY_URL`.
+> token is all-or-nothing access. Direct SMTP is not implemented — use Brevo,
+> Resend or an HTTP relay via `SMTP_RELAY_URL`.
 
 ### Known gaps — settings that exist in the UI but nothing reads yet
 

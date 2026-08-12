@@ -27,7 +27,7 @@
  */
 
 import { dbErrorKind, rpc } from "./db.js";
-import { leadNotificationEmail, sendEmail } from "./email.js";
+import { alertDeadLetters, leadNotificationEmail, sendEmail } from "./email.js";
 import { errSummary, oneLine } from "./log.js";
 import { MAIL_HOURLY_CAP, rateLimit } from "./ratelimit.js";
 import { isSafeWebhookTarget, resolveSafeTarget } from "./webhook.js";
@@ -241,8 +241,9 @@ async function settle(claim, out) {
       ...(out.permanent ? { p_max_attempts: 0 } : {}),
     });
     if (status === "dead") {
-      // WO13 turns this into a real alert. Until then the loud line is the only
-      // thing standing between a dead delivery and nobody ever noticing it.
+      // Kept alongside WO13's alert rather than replaced by it: the alert needs
+      // a configured `notifyEmail` and a working transport, and the case where
+      // neither exists is exactly when a dead delivery is most likely.
       console.error(
         `[delivery] DEAD ${claim.kind} delivery ${claim.delivery_id} for funnel ` +
           `${oneLine(claim.funnel_slug, 80)}: ${oneLine(out.error || "", 200)}`,
@@ -294,6 +295,9 @@ export async function drainOnce({ limit = 25, leadId = null, signal, deadline } 
 
   const counts = { claimed: claims.length, done: 0, failed: 0, dead: 0 };
 
+  /** What died in this pass — one alert for all of it, after the loop. */
+  const dead = [];
+
   const parallel = maxParallel();
   for (let i = 0; i < claims.length; i += parallel) {
     // Rows claimed but never touched simply stay leased and expire back to
@@ -301,14 +305,40 @@ export async function drainOnce({ limit = 25, leadId = null, signal, deadline } 
     if (signal?.aborted) break;
     if (deadline && Date.now() >= deadline) break;
     const results = await Promise.all(
-      claims.slice(i, i + parallel).map(async (claim) => settle(claim, await dispatch(claim, signal))),
+      claims.slice(i, i + parallel).map(async (claim) => {
+        const out = await dispatch(claim, signal);
+        return { status: await settle(claim, out), claim, out };
+      }),
     );
-    for (const r of results) {
-      if (r === "done") counts.done++;
-      else if (r === "dead") counts.dead++;
-      else if (r === "pending") counts.failed++;
+    for (const { status, claim, out } of results) {
+      if (status === "done") counts.done++;
+      else if (status === "pending") counts.failed++;
+      else if (status === "dead") {
+        counts.dead++;
+        dead.push({
+          id: claim.delivery_id,
+          kind: claim.kind,
+          funnelSlug: claim.funnel_slug,
+          attempts: claim.attempts,
+          // Already `errSummary()` output — never an error object, and never the
+          // target URL, which routinely carries a token in its path.
+          error: oneLine(out.error || "delivery failed", 200),
+        });
+      }
     }
   }
+
+  // Awaited, not fired and forgotten. On Vercel the invocation can be frozen the
+  // moment the response is written, and an alert nobody sent is the failure WO13
+  // exists to remove. `alertDeadLetters` never throws and applies its own hourly
+  // ceiling, so one message is the whole cost. See PHASE-1-PLAN.md §4.7.
+  //
+  // Deliberately OUTSIDE the deadline: skipping it there would lose the alert
+  // permanently, because the row is already terminal and no later pass claims it
+  // again. What keeps that honest is on the other side — `alertDeadLetters` runs
+  // under `ALERT_TIMEOUT_MS` and at most once per process per minute, and
+  // `routes/internal.js` accounts for both in its worst-case sum.
+  if (dead.length) await alertDeadLetters(dead);
 
   return counts;
 }

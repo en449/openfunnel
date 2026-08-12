@@ -368,6 +368,7 @@ const SERVER_ONLY_INTEGRATIONS = [
   "aiKey",
   "openaiKey",
   "resendApiKey",
+  "brevoApiKey",
   "smtpPass",
   "smtpUser",
   "smtpHost",

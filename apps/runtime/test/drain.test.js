@@ -17,6 +17,14 @@ import { afterAll, afterEach, expect, test } from "bun:test";
 process.env.SUPABASE_URL = "https://db.test.invalid";
 process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role-key-not-real";
 
+/* The drain mails the operator when a delivery dies (WO13). Same rule as
+ * delivery.test.js: no address, no key, no settings file — unset, never
+ * restored, or the stubbed call counts here describe the developer's machine. */
+for (const key of ["NOTIFY_EMAIL", "EMAIL_PROVIDER", "RESEND_API_KEY", "BREVO_API_KEY", "SMTP_RELAY_URL", "SMTP_HOST"]) {
+  delete process.env[key];
+}
+process.env.DATA_DIR = ".tmp/no-mail-settings-here";
+
 const realFetch = globalThis.fetch;
 afterEach(() => {
   globalThis.fetch = realFetch;

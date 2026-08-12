@@ -507,8 +507,8 @@ from the request body, because `/api/lead` is public. Outbound URLs go through
 metadata address.
 
 **Secrets never travel outward.** `GET /api/admin/email-settings` runs
-`redactEmailSettings`, which strips `resendApiKey` / `smtpPass` and replaces
-them with `…Set` booleans; writes go through an allowlist (`WRITABLE_EMAIL_KEYS`)
+`redactEmailSettings`, which strips `resendApiKey` / `brevoApiKey` / `smtpPass`
+and replaces them with `…Set` booleans; writes go through an allowlist (`WRITABLE_EMAIL_KEYS`)
 so an unexpected key cannot be persisted, and a blank secret means "keep the
 existing value" rather than wiping it. The HTTP relay URL is env-only and never
 settable through the API. The same rule shapes the delivery log: it names its
@@ -709,10 +709,13 @@ once per accumulated listener.
 - `/api/ai/generate` only calls OpenAI, and only when the key starts with `sk-`;
   anything else falls through to a hardcoded built-in generator that always
   returns the same 5-step funnel. A "success" response does not mean a model ran.
-- Direct SMTP is **not implemented**. `RESEND_API_KEY` or `SMTP_RELAY_URL` are
-  the two working transports; setting only `SMTP_*` logs a warning and sends
-  nothing. `sendEmail` reports `ok: false` in that case rather than claiming
-  success, so don't "fix" a failing send by making it return true.
+- Direct SMTP is **not implemented**. The working transports are the JSON-API
+  providers in `API_TRANSPORTS` (`RESEND_API_KEY`, `BREVO_API_KEY`) plus
+  `SMTP_RELAY_URL`, selected by `EMAIL_PROVIDER`; a named provider is used even
+  with no key configured, so a missing key fails loudly as that provider rather
+  than silently sending through another one. Setting only `SMTP_*` logs a
+  warning and sends nothing. `sendEmail` reports `ok: false` in that case rather
+  than claiming success, so don't "fix" a failing send by making it return true.
 - Rate limits and OTP verification are Postgres-backed (`rate_hit`, `issue_otp`,
   `verify_otp`, `is_email_verified` — see PHASE-1-PLAN.md §4.1) when a database
   is configured. `rateLimit` falls back to the old in-process bucket when no
