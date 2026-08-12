@@ -8,11 +8,13 @@ migrations/
   20260811120000_phase1_schema.sql     tables, indexes, RLS
   20260811120100_phase1_functions.sql  the state machine, ingest, rate limiter
   20260811130000_otp_functions.sql     issue/verify/is-verified for the challenge
+  20260812093000_delivery_target_sync.sql  target.source + sync_delivery_targets
 seed.sql                               synthetic client + funnel + targets (dev only)
 cron.sql                               pg_cron jobs — run by hand, see the header
 postgrest.local.conf                   standalone PostgREST for local dev
 tests/state-machine.sql                the queue's behaviour, as assertions
 tests/otp.sql                          the challenge's behaviour, as assertions
+tests/targets.sql                      the target sync's behaviour, as assertions
 tests/db-integration.mjs               lib/db.js → PostgREST → those functions
 ```
 
@@ -42,6 +44,8 @@ psql -h 127.0.0.1 -p 54399 -U postgres -d of_dev -v ON_ERROR_STOP=1 \
      -f supabase/tests/state-machine.sql
 psql -h 127.0.0.1 -p 54399 -U postgres -d of_dev -v ON_ERROR_STOP=1 \
      -f supabase/tests/otp.sql
+psql -h 127.0.0.1 -p 54399 -U postgres -d of_dev -v ON_ERROR_STOP=1 \
+     -f supabase/tests/targets.sql
 ```
 
 The test ends in `ROLLBACK`, so it leaves nothing behind and can be run against any database
@@ -51,6 +55,7 @@ Expected last line:
 ```
 NOTICE:  state-machine check: all assertions passed
 NOTICE:  otp check: all assertions passed
+NOTICE:  targets check: all assertions passed
 ```
 
 Do NOT paste a migration into the Supabase SQL editor instead. It applies the SQL but writes
@@ -87,6 +92,7 @@ supabase link --project-ref <ref>
 supabase db push
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/tests/state-machine.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/tests/otp.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/tests/targets.sql
 # then cron.sql by hand, once /api/internal/drain is deployed
 ```
 

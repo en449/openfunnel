@@ -19,7 +19,8 @@ import { mkdir, appendFile, open, rename, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { forwardMetaCapi } from "./capi.js";
 import { DATA_DIR } from "./config.js";
-import { processLeadEmailNotifications } from "./email.js";
+import { notifyOperatorOfLead, sendLeadAutoresponder } from "./email.js";
+import { loadFunnel } from "./funnels.js";
 import { errSummary } from "./log.js";
 import { forwardWebhook } from "./webhook.js";
 
@@ -54,6 +55,9 @@ const maxReadBytes = () => Math.max(1_000_000, Number(process.env.MAX_READ_BYTES
 /** Where the sinks live. Mirrors `config.js`, resolved per call for the same reason. */
 const dataDir = () => resolve(process.env.DATA_DIR || DATA_DIR);
 
+/** The sink directory cannot be created — a platform fact, warned about once. */
+let warnedNoDataDir = false;
+
 /**
  * Append one record to a JSONL file. Local-first storage: readable with `tail`,
  * importable anywhere, and impossible to lose to a bad migration.
@@ -75,7 +79,26 @@ const dataDir = () => resolve(process.env.DATA_DIR || DATA_DIR);
  */
 async function appendJsonl(kind, record) {
   const dir = dataDir();
-  await mkdir(dir, { recursive: true });
+  try {
+    await mkdir(dir, { recursive: true });
+  } catch (err) {
+    // A read-only filesystem — which is every serverless deployment — threw
+    // here, BEFORE the append's own try/catch, so `persist`'s `allSettled`
+    // swallowed it and the sink failed with nothing logged anywhere at all. The
+    // lead is not lost (Postgres holds it, or the fan-out delivered it), but the
+    // operator's own copy silently is not being written.
+    //
+    // Once per process, because this is a property of the deployment rather than
+    // of this record: repeating it would print a line per lead forever.
+    if (!warnedNoDataDir) {
+      warnedNoDataDir = true;
+      console.warn(
+        `[runtime] cannot create ${dir} (${errSummary(err)}) — the JSONL sinks are off, so the ` +
+          "console's lead inbox will read empty. Set DATA_DIR to a writable path, or rely on Postgres.",
+      );
+    }
+    return;
+  }
   const file = join(dir, `${kind}.jsonl`);
 
   try {
@@ -167,9 +190,31 @@ export async function readJsonlRecords(filename) {
 export async function persist(kind, record, opts = {}) {
   const { fanOut = true } = opts;
   const tasks = [appendJsonl(kind, record), forwardMetaCapi(record)];
-  if (kind === "leads" && fanOut) {
-    tasks.push(forwardWebhook(record));
-    tasks.push(processLeadEmailNotifications(record));
+  if (kind === "leads") {
+    // The autoresponder is outside the `fanOut` decision on purpose. It is a
+    // courtesy mail to the VISITOR, not a delivery of the lead to the operator,
+    // so the queue has no target for it — and leaving it in the branch below
+    // meant it went silently dark the moment a funnel got its first delivery
+    // target. Its own rate limits are inside it and are the ones that matter,
+    // since the recipient comes from a public request body.
+    tasks.push(sendLeadAutoresponder(record));
+    if (fanOut) {
+      // Resolved once, here, and handed to both channels. The webhook
+      // destination and the lead-alert address both live in this document, and
+      // two independent lookups are two chances to disagree — plus `CACHE_MS` is
+      // 0 in dev, so it was also two round trips per lead.
+      //
+      // `.catch` because this is the only `await` before `Promise.allSettled`,
+      // so it is the only thing that can make `persist()` itself reject. That
+      // would skip both `tasks.push` lines below — losing the fan-out for the
+      // lead — and on the Vercel entry point the rejection lands in the
+      // platform's `waitUntil` with nothing to catch it. `loadFunnel` swallows
+      // its own errors today; the guarantee above should not depend on that
+      // staying true.
+      const funnel = record.funnelId ? await loadFunnel(String(record.funnelId)).catch(() => null) : null;
+      tasks.push(forwardWebhook(record, funnel));
+      tasks.push(notifyOperatorOfLead(record, funnel));
+    }
   }
   await Promise.allSettled(tasks);
 }

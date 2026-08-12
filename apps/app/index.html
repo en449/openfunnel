@@ -854,6 +854,11 @@
             <input id="pxWebhookSecret" class="input input-mono" type="text" placeholder="whsec_xxxxxxxxxxxx" />
             <p class="field-hint">Secures lead data posted to Zapier / Make / n8n.</p>
           </div>
+          <div class="field">
+            <label for="pxNotifyEmail">Lead notification email (this funnel)</label>
+            <input id="pxNotifyEmail" class="input input-mono" type="email" placeholder="kunde@example.com" />
+            <p class="field-hint">Overrides the global notification address for this funnel. Delivered by the retrying queue, not fire-and-forget.</p>
+          </div>
           <div class="field" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--line)">
             <label for="pxCustomCss">Custom CSS Rules</label>
             <textarea id="pxCustomCss" class="textarea input-mono" rows="3" placeholder=".of-root { --of-radius: 20px; }"></textarea>

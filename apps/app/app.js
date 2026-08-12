@@ -2782,6 +2782,7 @@ function renderPixelsModal() {
   if ($("pxPinterest")) $("pxPinterest").value = i.pinterestPixelId || "";
   if ($("pxWebhook")) $("pxWebhook").value = i.webhookUrl || "";
   if ($("pxWebhookSecret")) $("pxWebhookSecret").value = i.webhookSecret || "";
+  if ($("pxNotifyEmail")) $("pxNotifyEmail").value = i.notifyEmail || "";
   if ($("pxCustomCss")) $("pxCustomCss").value = state.funnel?.customCss || i.customCss || "";
   if ($("pxCustomHead")) $("pxCustomHead").value = state.funnel?.customHead || i.customHead || "";
   if ($("pxCustomBody")) $("pxCustomBody").value = state.funnel?.customBody || i.customBody || "";
@@ -3362,6 +3363,7 @@ function bindModals() {
     ["pxPinterest", "pinterestPixelId"],
     ["pxWebhook", "webhookUrl"],
     ["pxWebhookSecret", "webhookSecret"],
+    ["pxNotifyEmail", "notifyEmail"],
     ["pxCustomCss", "customCss"],
     ["pxCustomHead", "customHead"],
     ["pxCustomBody", "customBody"],

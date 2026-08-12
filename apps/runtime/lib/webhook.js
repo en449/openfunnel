@@ -220,26 +220,43 @@ export async function resolveSafeTarget(raw) {
  * ========================================================================== */
 
 /**
+ * Where a lead from this funnel is forwarded, and with what secret.
+ *
+ * Deliberately NOT read from the record. `/api/lead` is public, so honouring a
+ * `webhookUrl` from the request body let any caller aim the server at a host of
+ * their choosing — both an open redirector for lead data and an SSRF probe
+ * against whatever the server can reach. The destination is operator-owned: the
+ * environment, or the funnel document (written through the admin API).
+ *
+ * Exported because `lib/targets.js` derives the queue's `delivery_target` rows
+ * from exactly this answer. Two resolvers would eventually disagree, and the
+ * day they disagree is the day a database outage — which is when the fan-out
+ * takes over from the queue — starts delivering leads somewhere else.
+ *
+ * @param {any} funnel  The funnel document, or null/undefined.
+ * @returns {{ url: string, secret: string }} `url` empty when nothing is configured.
+ */
+export function webhookConfigFor(funnel) {
+  let url = process.env.WEBHOOK_URL || process.env.ZAPIER_WEBHOOK_URL || "";
+  let secret = process.env.WEBHOOK_SECRET || "";
+  if (!url) url = funnel?.integrations?.webhookUrl || funnel?.integrations?.webhook || "";
+  secret ||= funnel?.integrations?.webhookSecret || "";
+  return { url: String(url || ""), secret: String(secret || "") };
+}
+
+/**
  * Forward a captured lead to a Webhook URL (Zapier, Make, GoHighLevel, HubSpot, CRM).
  *
  * @param {Record<string, any>} record
+ * @param {any} [funnel]  The document, when the caller already resolved it —
+ *   `persist()` does, so the fan-out's two channels read the same one. Omitted,
+ *   it is loaded here, because a caller that forgets it must not silently lose
+ *   the funnel-level webhook. An explicit `null` means "resolved, and there is
+ *   no document": repeating the lookup would only find the same nothing.
  */
-export async function forwardWebhook(record) {
-  // Deliberately NOT read from the record. /api/lead is public, so honouring a
-  // webhookUrl from the request body let any caller aim the server at a host of
-  // their choosing — both an open redirector for lead data and an SSRF probe
-  // against whatever the server can reach. The destination is operator-owned:
-  // the environment, or the funnel document (written through the admin API).
-  let webhookUrl = process.env.WEBHOOK_URL || process.env.ZAPIER_WEBHOOK_URL || "";
-  let webhookSecret = process.env.WEBHOOK_SECRET || "";
-
-  if (record.funnelId) {
-    const funnel = await loadFunnel(record.funnelId);
-    if (!webhookUrl) {
-      webhookUrl = funnel?.integrations?.webhookUrl || funnel?.integrations?.webhook || "";
-    }
-    webhookSecret ||= funnel?.integrations?.webhookSecret || "";
-  }
+export async function forwardWebhook(record, funnel) {
+  const doc = funnel !== undefined ? funnel : record.funnelId ? await loadFunnel(record.funnelId) : null;
+  const { url: webhookUrl, secret: webhookSecret } = webhookConfigFor(doc);
   if (!webhookUrl) return;
 
   const target = await resolveSafeTarget(webhookUrl);

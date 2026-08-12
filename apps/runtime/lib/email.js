@@ -36,6 +36,20 @@ import { MAIL_HOURLY_CAP, rateLimit } from "./ratelimit.js";
  *  Settings
  * ========================================================================== */
 
+/**
+ * Where `email_settings.json` lives.
+ *
+ * Resolved per call, not captured at import — the same rule `lib/store.js` and
+ * `lib/db.js` follow, and it was the odd one out. Two consequences of the frozen
+ * version, one per environment: on serverless `DATA_DIR` is how an operator
+ * points the settings file at the only writable path there is, and a value read
+ * at module load ignores them. In-process, whichever module imported this chain
+ * FIRST decided the directory for everything after it — so a test that pointed
+ * `DATA_DIR` at its own scratch copy before importing got the real one anyway,
+ * silently, and read as "the operator has configured no mail at all".
+ */
+const dataDir = () => process.env.DATA_DIR || DATA_DIR;
+
 /** Keys the console may write. Anything else in the body is discarded. */
 const WRITABLE_EMAIL_KEYS = new Set([
   "provider",
@@ -57,7 +71,7 @@ const WRITABLE_EMAIL_KEYS = new Set([
 const SECRET_EMAIL_KEYS = ["resendApiKey", "smtpPass"];
 
 export async function getEmailSettings() {
-  const settingsFile = join(DATA_DIR, "email_settings.json");
+  const settingsFile = join(dataDir(), "email_settings.json");
   let stored = {};
   try {
     const parsed = JSON.parse(await readFile(settingsFile, "utf8"));
@@ -155,9 +169,9 @@ export async function saveEmailSettings(patch) {
     if (typeof value === "string") next[key] = value.slice(0, 5000);
   }
 
-  await mkdir(DATA_DIR, { recursive: true });
+  await mkdir(dataDir(), { recursive: true });
   const { relayUrl: _ignored, ...persistable } = next;
-  await writeFile(join(DATA_DIR, "email_settings.json"), JSON.stringify(persistable, null, 2), "utf8");
+  await writeFile(join(dataDir(), "email_settings.json"), JSON.stringify(persistable, null, 2), "utf8");
   return next;
 }
 
@@ -543,23 +557,125 @@ export function leadNotificationEmail(record) {
   return { subject: oneLine(`🚀 New Lead: ${leadName} (${funnelId})`), html };
 }
 
-export async function processLeadEmailNotifications(record) {
+/**
+ * Where this funnel's lead alert goes.
+ *
+ * ONE resolver, shared by both delivery paths: the fan-out calls it per lead and
+ * `lib/targets.js` calls it when deriving the queue's `email` target. They had
+ * come apart in the first version of WO12a — the funnel-level address was read
+ * only when deriving a target, so a self-hoster with no Supabase (where
+ * `fanOut` is unconditionally true) set the field in the console and kept
+ * mailing the global address forever, and a Postgres install did the same for
+ * every lead that degraded to the fan-out.
+ *
+ * `notifyEnabled` is the master switch and gates both: the funnel field
+ * overrides the ADDRESS, not the operator's decision to receive alerts at all.
+ * An override that is not a valid address resolves to nothing rather than
+ * falling back — falling back would send a client's leads to the operator's own
+ * inbox because of a typo, which is the failure that looks like it worked.
+ *
+ * @param {any} funnel  The unredacted funnel document, or null.
+ * @param {{ notifyEnabled?: boolean, notifyEmail?: string }} cfg
+ * @returns {string} empty when no alert should be sent.
+ */
+export function notifyEmailFor(funnel, cfg) {
+  if (cfg?.notifyEnabled === false) return "";
+  const own = String(funnel?.integrations?.notifyEmail || "").trim();
+  if (own) return EMAIL_RE.test(own) ? own : "";
+  return String(cfg?.notifyEmail || "").trim();
+}
+
+/**
+ * Did this funnel ask for its own alert address and not get one?
+ *
+ * Exported for the same reason `notifyEmailFor` is: `lib/targets.js` warns about
+ * the identical situation when it derives no `email` target, and two
+ * independently written copies of this condition would eventually warn about
+ * different funnels. The two log lines differ, the decision does not.
+ *
+ * @param {any} funnel
+ * @param {{ notifyEnabled?: boolean }} cfg
+ * @param {string} to  What `notifyEmailFor` resolved to.
+ */
+export function hasUnusableNotifyOverride(funnel, cfg, to) {
+  if (to || cfg?.notifyEnabled === false) return false;
+  return Boolean(String(funnel?.integrations?.notifyEmail || "").trim());
+}
+
+/**
+ * Warned once per funnel, and the set is capped because `funnelId` arrives on a
+ * public endpoint.
+ *
+ * @type {Set<string>}
+ */
+const badNotifyOverrideWarned = new Set();
+
+/** @param {any} funnel @param {{ notifyEnabled?: boolean }} cfg @param {string} to */
+function warnUnusableNotifyOverride(funnel, cfg, to) {
+  if (!hasUnusableNotifyOverride(funnel, cfg, to)) return;
+  const key = oneLine(funnel?.slug || funnel?.id || "?", 80);
+  if (badNotifyOverrideWarned.has(key)) return;
+  if (badNotifyOverrideWarned.size > 200) badNotifyOverrideWarned.clear();
+  badNotifyOverrideWarned.add(key);
+  console.warn(
+    `[email] funnel "${key}" sets an unusable integrations.notifyEmail — no lead alert is being sent ` +
+      "for it. Fix the address or clear the field to fall back to the global one.",
+  );
+}
+
+/**
+ * Mail the operator that a lead arrived.
+ *
+ * The fan-out's half of what the queue's `email` target does durably. It runs
+ * only when the queue did NOT take the lead — `persist({ fanOut })` decides —
+ * because both at once is the operator receiving every lead twice.
+ *
+ * @param {Record<string, any>} record
+ * @param {any} [funnel]  The funnel document, resolved once by `persist()`.
+ */
+export async function notifyOperatorOfLead(record, funnel = null) {
   try {
     const cfg = await getEmailSettings();
-    const lead = record.lead || {};
-    const leadName = lead.name || lead.first_name || "Lead";
-    const leadEmail = lead.email;
+    const to = notifyEmailFor(funnel, cfg);
+    if (!to) {
+      warnUnusableNotifyOverride(funnel, cfg, to);
+      return;
+    }
 
     // The notification goes to a fixed operator address, so it is not a relay —
     // but it is still outbound mail on the operator's quota, driven by a public
     // endpoint, and README claims the hourly ceiling covers all outbound mail.
     // Its own bucket, so a burst of alerts cannot exhaust the OTP budget.
-    if (cfg.notifyEnabled && cfg.notifyEmail && !(await rateLimit("notify-global", MAIL_HOURLY_CAP, 60 * 60 * 1000))) {
+    if (!(await rateLimit("notify-global", MAIL_HOURLY_CAP, 60 * 60 * 1000))) {
       console.warn("[email] lead-notification hourly ceiling reached — see MAIL_MAX_PER_HOUR");
-    } else if (cfg.notifyEnabled && cfg.notifyEmail) {
-      const { subject, html } = leadNotificationEmail(record);
-      await sendEmail({ to: cfg.notifyEmail, subject, html });
+      return;
     }
+    const { subject, html } = leadNotificationEmail(record);
+    await sendEmail({ to, subject, html });
+  } catch (err) {
+    console.warn(`[runtime] Lead notification error: ${errSummary(err)}`);
+  }
+}
+
+/**
+ * Thank the visitor for submitting.
+ *
+ * Deliberately NOT tied to `fanOut`, and deliberately not a delivery target.
+ * This is a courtesy mail to the person who filled the form in — it is
+ * configured once per install rather than per destination, it has never been
+ * retried, and losing it loses nobody's lead. Making it a third target kind
+ * would mean the queue owning a mail whose recipient comes from the request
+ * body; leaving it in the `fanOut` branch would have taken it silently dark the
+ * moment the first delivery target existed.
+ *
+ * @param {Record<string, any>} record
+ */
+export async function sendLeadAutoresponder(record) {
+  try {
+    const cfg = await getEmailSettings();
+    const lead = record.lead || {};
+    const leadName = lead.name || lead.first_name || "Lead";
+    const leadEmail = lead.email;
 
     if (cfg.autoresponderEnabled && leadEmail && EMAIL_RE.test(String(leadEmail).trim())) {
       // The autoresponder mails whoever the lead payload names, and /api/lead is
@@ -594,6 +710,6 @@ export async function processLeadEmailNotifications(record) {
       });
     }
   } catch (err) {
-    console.warn(`[runtime] Lead email error: ${errSummary(err)}`);
+    console.warn(`[runtime] Lead autoresponder error: ${errSummary(err)}`);
   }
 }

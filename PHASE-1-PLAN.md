@@ -496,8 +496,9 @@ run after every non-trivial one; the parent applies all fixes. Baseline after ea
 | 8 | pg_cron + pg_net jobs (§3.3), secret in Vault | Sonnet | 7 |
 | 9 | Rate limits → `rate_hit` RPC; `lib/ratelimit.js` keeps its signature | Sonnet | 2 | ✅
 | 10 | OTP + verified-email → Postgres; `MAIL_HOURLY_CAP` via `rate_hit` | Sonnet | 2, 9 | ✅ (§4.1, delivered with 9)
-| 11 | `Bun.serve` → `handleRequest(req)`, two entry points | **Opus** | 3–10 |
-| 12 | Delivery-log view in the console + manual re-send | Sonnet | 5 |
+| 11 | `Bun.serve` → `handleRequest(req)`, two entry points (§4.2) | **Opus** | 3–10 | ✅
+| 12a | Something creates `delivery_target` rows (§4.3) — pulled out of 12 | **Opus** | 3, 5 | ✅ (migration NOT pushed to the live project yet)
+| 12 | Delivery-log view in the console + manual re-send | Sonnet | 5, 12a |
 | 13 | Dead-letter alerting to Enno | Sonnet | 5 |
 | 14 | Tests: state machine (claim/lease/sweep/dead), dedupe, rate window, cancelled-on-restrict | Sonnet | 5–10 |
 
@@ -576,6 +577,217 @@ short-circuit the next, which is the behaviour that keeps a refused caller from 
 path at all, and this route is a deliberate human speed bump rather than the hot path. If it ever
 needs bounding, the fix is one `rate_hit_many` RPC taking an array, not a shared deadline — a
 partial check is a ceiling that did not bind.
+
+---
+
+## 4.2 WO11 — one router, two entry points
+
+The router is currently the `fetch` callback of a `Bun.serve` call, and everything it needs
+that is not the `Request` comes from Bun's `server` object. Vercel hands a function a `Request`
+and nothing else. So the port is not "move the code into a function" — it is deciding what the
+runtime does when the two things Bun gives it for free are gone: **an identity for the caller's
+socket, and a process that is still alive after the response is written.**
+
+### The shape
+
+`apps/runtime/handler.js` exports `handleRequest(req, opts)`, holding the router exactly as it
+is today — same route order, same two structural gates, same dispatch-inside-the-branch rule.
+Two entry points call it:
+
+- `apps/runtime/server.js` — the Bun entry. Keeps `Bun.serve`, `HOST`/`PORT`, the boot banner
+  and `maxRequestBodySize` (a transport-level ceiling only Bun offers). Passes `server`.
+- `api/index.js` — the Vercel entry, `export default { fetch }`. That is the documented Web
+  Handler form that takes every method in one function, which is what a router needs; the
+  named `GET`/`POST` exports would need one per method and would still not cover the rest.
+
+`opts` is `{ server, waitUntil }` and both are optional. Nothing else in `lib/` or `routes/`
+learns which platform it is on — `ctx` keeps carrying `server`, it is simply `undefined` on
+Vercel, and the two helpers that read it are the two decisions below.
+
+### Decision 1 — no `server` means no loopback trust, and that is the whole removal
+
+`requireAdmin` falls back to `isLoopbackRequest(req, server)` when `ADMIN_TOKEN` is unset. On
+Vercel there is no socket to inspect, so the honest answer is "this caller is not local" and
+`isLoopbackRequest` returns false the moment `server` is absent. The consequence is deliberate
+and is what PLAN.md §7.1 means by *loopback trust is removed*: a Vercel deployment with no
+`ADMIN_TOKEN` refuses every privileged request, from everyone, including the operator.
+
+The alternative — inferring "local" from a header, or treating a missing `server` as
+permissive — would hand `/api/admin/*` to the internet on the first deploy where someone
+forgot an environment variable. A gate that fails open on a platform it has not met yet is not
+a gate. `server?.requestIP` optional chaining would produce exactly that failure quietly, so
+the check is explicit and reads as a refusal.
+
+### Decision 2 — `clientIp` without a socket collapses every per-IP ceiling into one
+
+`clientIp(req, server)` returns the socket address unless `TRUST_PROXY` is set. With no
+`server` and no `TRUST_PROXY` it can only return null, and every per-IP key then becomes
+`ingest:unknown` — one shared bucket for all traffic, which is a self-inflicted outage the
+first time two visitors submit in the same minute, not a security win.
+
+`TRUST_PROXY=1` is therefore **required** on Vercel (PLAN.md §7.1 already says so, for the
+narrower reason that Vercel is always in front). What is new here is that the runtime says so
+itself: the first request that arrives with no socket identity and no `TRUST_PROXY` logs it
+once, naming the variable. Silent is the failure mode that costs a day.
+
+### Decision 3 — `waitUntil` is a seam, and its fallback is slow rather than lossy
+
+`/api/lead` answers 202 and then does two things without awaiting them: `persist()` (the JSONL
+sink, the CAPI forward, and — when the queue did not take the lead — the direct fan-out) and
+the inline `drainOnce`. On Bun the process is still there. On Vercel the invocation can be
+frozen the moment the response is written, and the one of those that must not be lost is the
+**fan-out on the degraded path**: when `queueOwnsIt` is false, nothing else will ever deliver
+that lead, and on Vercel the JSONL sink it would otherwise sit in does not exist either.
+
+So deferred work goes through `opts.waitUntil`:
+
+- Bun entry: fire-and-forget with a `catch`, which is exactly today's behaviour.
+- Vercel entry: the platform's own `waitUntil`, read off the request-context global that
+  `@vercel/functions` itself reads. If it is not there, the entry **awaits** the deferred work
+  before returning the response.
+
+The fallback is the point. Taking the dependency would be one line, but the invariant is zero
+runtime dependencies and the cost of the internal symbol disappearing is then a slower
+`/api/lead`, never a lost lead — the failure direction that is allowed. A `ponytail:` comment
+names the upgrade path (`@vercel/functions`) at the call site.
+
+### Decision 4 — `supportsCancellation` stays off, and that is load-bearing
+
+Vercel only aborts `request.signal` on client disconnect when a function opts in
+with `"supportsCancellation": true`. `vercel.json` does not, deliberately: the
+inline first delivery attempt runs after the 202 and is handed `req.signal`, so
+turning cancellation on would abort it the moment the visitor's connection ends
+— every lead's first attempt lost to the cron drain instead, which is a delivery
+a minute late rather than a delivery now, and it would look like nothing at all
+was wrong. Turn it on only together with dropping `req.signal` from that call.
+
+### Decision 5 — the error net moves in, and the Bun one stays
+
+`Bun.serve`'s `error()` callback is the last thing between an unhandled throw and a socket
+reset. Vercel has no equivalent, so `handleRequest` wraps its own body: an unhandled throw is
+logged through `errSummary` and answered `500 {"error":"internal"}` — the same body Bun's
+handler returns today. Bun's `error()` stays as the second net for throws outside the handler.
+
+### Unverified until the first deploy, and named so nobody assumes otherwise
+
+`vercel.json` rewrites every path to the one function and declares
+`includeFiles: "{apps/app,packages/engine/src,examples}/**"`. That last part is
+load-bearing and untested: `lib/static.js` reads the console shell and the engine
+source off disk at request time with computed paths, which Vercel's file tracing
+cannot follow — without the glob, `/f/:slug` and `/_app/*` are 404s in production
+and pass every test locally. `regions` is deliberately absent; setting the
+function region to `dub1` is Enno's call (PLAN.md §2) and belongs with the
+project's own settings.
+
+### Known to be broken on Vercel, and deliberately not fixed here
+
+Two things write to the filesystem and will fail on a read-only one: the JSONL sinks in
+`lib/store.js` and `email_settings.json` in `lib/email.js`. Both already degrade — `persist`
+swallows through `allSettled`, `getEmailSettings` falls back to the environment — so neither
+loses a lead, and both are PLAN.md §2.2's job rather than this one. One change is in scope
+because it is one line: the `mkdir` in `appendJsonl` currently throws *before* the append's own
+`try`, so a read-only mount is the one sink failure that logs nothing at all. It gets logged.
+
+---
+
+## 4.3 WO12a — something has to create `delivery_target` rows
+
+Pulled out of WO12 and ahead of it. Nothing in the system creates a target, so `ingest_lead`
+returns `queued = 0` for every real deployment, the route falls through to the legacy fan-out,
+and the queue this phase was built for stays empty. "Never lose a lead" is currently true only
+for an operator who hand-writes SQL.
+
+### Decision 1 — targets are derived from the configuration the fan-out already reads
+
+Not authored separately. A webhook destination already lives in `WEBHOOK_URL` or the funnel
+document's `integrations.webhookUrl`, and `forwardWebhook` resolves it with a precedence chain.
+If targets were configured somewhere else, the two would drift — and the fan-out is the
+*fallback* the queue degrades to, so the day they disagree is the day a Supabase outage starts
+delivering leads to the wrong place. One resolver, exported from `lib/webhook.js`, used by both.
+
+The sync runs where the document is written (`saveFunnel`, inside the `dbConfigured()` branch)
+and is idempotent. It never deletes a row — `delivery.target_id` references it — it disables.
+
+### Decision 2 — a `source` column, so the sync cannot disable someone else's row
+
+`delivery_target` gains `source text not null default 'manual'`. The sync owns exactly the
+rows with `source = 'funnel'` and this `funnel_id`; anything hand-written is invisible to it.
+A partial unique index on `(funnel_id, kind) where source = 'funnel'` makes the upsert an
+`on conflict` rather than a select-then-write, which is what stops two concurrent saves
+creating two webhook targets for one funnel.
+
+One migration, `20260812…_delivery_target_sync.sql`: the column, the index, and
+`sync_delivery_targets(p_slug text, p_targets jsonb)` — resolve slug → funnel + client, upsert
+the given kinds, disable the managed rows whose kind is no longer in the list, return the count
+enabled. One round trip, atomic, and the disable/enable decision is made in one place.
+
+**It resolves the funnel `for update`, which is correctness rather than tidiness** — review
+round 1's second Major. The upsert and the disabling UPDATE take row locks on `delivery_target`
+in whatever order each caller's kinds happen to produce, so a save carrying `[webhook]` and a
+concurrent `syncAllFunnelTargets()` carrying `[email]` lock the two rows in opposite orders and
+Postgres resolves it by aborting one. The loser is swallowed into a warning, so the console
+would report a save whose delivery configuration silently did not apply. Locking the funnel row
+serialises every sync of one funnel; `saveFunnel`'s own UPDATE of that row runs in a separate
+PostgREST transaction holding no `delivery_target` locks, so it can wait but never deadlock.
+Measured on a local Postgres 17: a second session's sync waited 1604 ms behind a transaction
+holding the row, rather than racing it.
+
+### Decision 3 — every channel the fan-out delivers to gets a queue equivalent
+
+This is the trap in turning the queue on. `persist()` with `fanOut: true` does three outbound
+things: the webhook, the operator's "new lead" notification, and the visitor autoresponder. The
+moment one target exists, `queueOwnsIt` is true, `fanOut` is false, and any of those three
+without a queue equivalent goes **silently dark** — the same class of failure as the
+`queued === 0` bug that reached review in WO4.
+
+- **Webhook** → `kind: 'webhook'`, `config: { url, secret }`. Already dispatched.
+- **Operator notification** → `kind: 'email'`, `config: { to }`, resolved by `notifyEmailFor()`
+  in `lib/email.js` from `integrations.notifyEmail` on the funnel document, falling back to the
+  global notification address. Already dispatched (`deliverEmail` sends exactly
+  `leadNotificationEmail`).
+
+  **That resolver is shared with the fan-out, and the first version was not.** Review round 1
+  caught it: reading the funnel-level address only while deriving a target meant the console's
+  new field did nothing at all on a deployment with no database — where `fanOut` is
+  unconditionally true — and nothing on a Postgres install for any lead that degraded to the
+  fan-out. `persist()` now resolves the funnel document ONCE and hands it to both
+  `forwardWebhook` and `notifyOperatorOfLead`, so the queue and the path it degrades to cannot
+  mail two different addresses. `notifyEnabled` is the master switch and gates both; an override
+  that is not a valid address resolves to nothing rather than falling back, because falling back
+  would redirect a client's leads into the operator's own inbox over a typo.
+
+  That one lookup is the only `await` in `persist()` before its `Promise.allSettled`, which
+  review round 2 caught as a regression in a guarantee rather than a live bug: had it rejected,
+  the two `tasks.push` lines below it would never run — losing the fan-out for that lead — and
+  on the Vercel entry point the rejection goes to the platform's `waitUntil` with nothing to
+  catch it. It carries its own `.catch`, so "never throws" is a property of `persist()` again
+  and not an assumption about what `lib/funnels.js` happens to swallow today.
+- **Autoresponder** → not a delivery of the lead at all. It is a courtesy mail to the visitor,
+  per-install rather than per-target, and it has never been retried. It moves OUT of the
+  `fanOut` branch and runs on every lead, which is both simpler than a third target kind and
+  the only version that cannot double-send.
+
+The global notification address is mutable through `/api/admin/email-settings`, and a row
+holding a copy of it would keep mailing the old address after a change — so that route
+re-syncs. `syncAllFunnelTargets()` walks the non-archived funnels and re-derives; it is also
+the backfill for funnels that already exist, exposed as `POST /api/admin/targets/sync` inside
+the privileged branch (the only new route, and WO12's console view will call it).
+
+### Decision 4 — an operator-supplied URL is vetted before it becomes a target
+
+`isSafeWebhookTarget` refuses loopback, the private ranges and cloud metadata textually before
+a webhook target is written. The dispatcher checks again at send time and that check is the
+load-bearing one, but a row that can never deliver should not be created in the first place —
+it would sit in the dead-letter list looking like an outage. Refusing at sync time names the
+funnel in the log instead.
+
+### Not in scope
+
+The clients view, per-client target management and the delivery log are still WO12/Phase 2.
+The console gains exactly one field (`integrations.notifyEmail` in the Integrations modal),
+because the field is what makes per-funnel email delivery reachable without hand-editing JSON —
+and a server-side consumer with no console field is the mirror of the gap this repo already
+tracks.
 
 ---
 

@@ -32,8 +32,9 @@ invariant checks on every push and PR. The checks exist because both failures
 they catch are invisible locally — Bun resolves a bare specifier and an
 extensionless import happily, and the 404 only lands on a visitor's phone.
 
-`bun test` (128 tests) and `bun run typecheck` both pass on `main` — keep it that
-way. Several tests log expected warnings (`branch target "nope" not found`, an
+`bun test` and `bun run typecheck` both pass — keep it that way. The count moves
+with the branch (128 on `main`, 202 on `phase-1-delivery-queue`), so compare
+against the last recorded run rather than a number in this file. Several tests log expected warnings (`branch target "nope" not found`, an
 invalid-URL `submitLead` failure, a refused non-path `leadEndpoint`, a sink
 rotation); those are assertions about failure tolerance, not breakage.
 
@@ -99,12 +100,15 @@ The engine mounts into any container in any framework and mutates nothing else.
 
 ### apps/runtime
 
-`Bun.serve`, no framework. `server.js` is the router and nothing else (~175
-lines): it owns the order routes are tried in and the admin gate, and delegates
-to `lib/` and `routes/`.
+No framework. `handler.js` is the router and nothing else: it owns the order
+routes are tried in and both gates, and delegates to `lib/` and `routes/`. It is
+called by two entry points — `server.js` (Bun) and `api/index.js` (Vercel) — and
+knows which one it is on only through `opts`.
 
 ```
-server.js            Bun.serve + route order + the privileged gate
+handler.js           handleRequest(req, opts) — route order + both gates
+server.js            the Bun entry: Bun.serve, HOST/PORT, banner, body ceiling
+../../api/index.js   the Vercel entry: export default { fetch }
 lib/config.js        paths, env, SLUG_RE, isInside — imports nothing else
 lib/log.js           oneLine, errSummary
 lib/http.js          responses, CORS surface, readJson, clientIp
@@ -114,6 +118,7 @@ lib/funnels.js       load/list/cache + publicFunnel redaction
 lib/preview.js       hasPreviewFlag, isPreviewRecord
 lib/db.js            PostgREST client + the error classification callers branch on
 lib/delivery.js      dispatch a claimed delivery, report the outcome, drainOnce()
+lib/targets.js       derive delivery_target rows from the funnel doc + mail settings
 lib/webhook.js       egress guard (resolveSafeTarget) + the direct fan-out delivery
 lib/capi.js          Meta Conversions API forward
 lib/email.js         settings, transports, OTP, lead notifications
@@ -147,6 +152,7 @@ Routes:
 | `POST /api/builder/save\|delete\|duplicate` | **admin** | writes JSON into `FUNNELS_DIR` |
 | `GET /api/admin/leads`, `/api/admin/stats` | **admin** | console data, preview-filtered |
 | `GET\|POST /api/admin/email-settings` | **admin** | mail config; secrets never returned |
+| `POST /api/admin/targets/sync` | **admin** | re-derive every funnel's delivery targets |
 | `POST /api/admin/test-email` | **admin** | send a test message |
 | `POST /api/ai/generate`, `/api/ai/improve-copy` | **admin** | copilot (OpenAI optional) |
 
@@ -232,6 +238,57 @@ separately: `queueOwnsIt` decides the fan-out, `leadId` decides the drain.
 `apps/runtime/test/ingest-queue.test.js` pins both, and it is the only test that
 exercises this route with a database configured — which is why the first version
 of it shipped broken.
+
+**Delivery targets are DERIVED, and every channel the fan-out had needs one.**
+`lib/targets.js` builds `delivery_target` rows from the funnel document plus the
+mail settings, and `saveFunnel` writes them through the `sync_delivery_targets`
+RPC (PHASE-1-PLAN.md §4.3). Two rules hold this together:
+
+- **One resolver.** The webhook destination comes from `webhookConfigFor()` in
+  `lib/webhook.js`, shared with `forwardWebhook`. A second resolver would drift,
+  and the fan-out is what the queue *degrades to* — so the day they disagree is
+  the day an outage starts delivering leads somewhere else.
+- **Creating the first target switches the fan-out off**, so anything it used to
+  send that has no target goes silently dark. The webhook and the operator's
+  "new lead" alert are targets. The visitor autoresponder is not a delivery of
+  the lead at all, so it moved OUT of the `fanOut` branch in `persist()` and runs
+  on every lead — leaving it inside was exactly that failure. Adding a new
+  outbound channel to the fan-out means adding its target kind in the same
+  change, or it works until a funnel gets configured and then never again.
+- **The lead-alert address has one resolver too**, `notifyEmailFor()` in
+  `lib/email.js`, used by `deriveTargets` AND by the fan-out's own
+  `notifyOperatorOfLead`. Reading `integrations.notifyEmail` only in the first of
+  those meant the console field did nothing on a deployment with no database
+  (where `fanOut` is always true) and nothing for any lead that degraded to the
+  fan-out. `persist()` resolves the funnel document once and passes it to both
+  outbound channels — do not re-load it per channel, and do not read that field
+  anywhere else.
+
+`integrations.notifyEmail` (per-funnel alert address) is server-only and is in
+`SERVER_ONLY_INTEGRATIONS`: the whole document is inlined into the funnel page,
+so leaving it in publishes a client's address to everyone who clicks the ad.
+
+**The router runs on two entry points, and both of Bun's gifts are passed in
+rather than assumed.** `handleRequest(req, { server, waitUntil })` — see
+PHASE-1-PLAN.md §4.2. Bun supplies a `server` object and a process that is still
+alive after the response; Vercel supplies neither. Three rules follow:
+
+- **No `server` means no loopback trust.** `isLoopbackRequest` returns false the
+  moment `server` is absent, so a deployment with no `ADMIN_TOKEN` refuses every
+  privileged request from everyone. That is the intended posture (PLAN.md §7.1)
+  and it is why the check is explicit: `server?.requestIP?.(req)` would produce
+  the same value with none of the meaning, and a gate that reads an unfamiliar
+  platform as permission hands `/api/admin/*` to the internet on the first
+  deploy where a variable was forgotten.
+- **`clientIp` needs `TRUST_PROXY=1` there**, or it returns null and every
+  per-IP ceiling collapses into one bucket shared by all callers — an outage,
+  not a safe default. It warns once, naming the variable.
+- **Work that outlives the response goes through `waitUntil`.** On Bun that is
+  fire-and-forget. On Vercel it is the platform's own, read off the
+  request-context global (the same place `@vercel/functions` reads it) with an
+  **awaited fallback** if that is ever gone: the degraded-path fan-out is the
+  only delivery a lead the queue refused will get, so `/api/lead` may become
+  slower and must never become lossy.
 
 **Nothing stores a raw IP.** `routes/ingest.js` hashes it with `IP_HASH_SALT`
 into `lead.ip_hash`, and with no salt set it stores nothing at all rather than
@@ -592,6 +649,10 @@ TODOs, not working features:
   the funnel document as `consent.enabled` and is read by `src/consent.js`. That
   move is the pattern to copy for the rest: a visitor-facing setting has to be in
   the funnel JSON, because that is all the funnel page is rendered from.
+  `of.notifyEmail` is still dead, but the working version of it is now
+  `integrations.notifyEmail` on the funnel document (Integrations modal → "Lead
+  notification email"), read by `lib/targets.js`. Same move, server-side: a
+  per-browser value cannot reach the delivery queue either.
 - `of.ai.brandVoice` and `of.ai.provider` are saved but never sent;
   `generateFunnel()` still posts a stale `of.ai.tone` key that the settings UI
   no longer writes.

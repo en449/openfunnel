@@ -19,6 +19,8 @@ import { clientIp, json, readJson } from "../lib/http.js";
 import { isPreviewRecord } from "../lib/preview.js";
 import { rateLimit, tooMany } from "../lib/ratelimit.js";
 import { readJsonlRecords } from "../lib/store.js";
+import { syncAllFunnelTargets } from "../lib/targets.js";
+import { dbConfigured } from "../lib/db.js";
 
 /**
  * @param {Request} req
@@ -45,12 +47,25 @@ export async function handleAdmin(req, ctx) {
   if (path === "/api/admin/email-settings" && req.method === "POST") {
     const body = await readJson(req);
     await saveEmailSettings(body || {});
+    // The queue's `email` targets hold a copy of the notification address, so a
+    // change here has to reach them — otherwise leads keep arriving at the
+    // address the operator just replaced, durably and with no error anywhere.
+    await syncAllFunnelTargets();
     // Re-resolve rather than echoing what was written: the saved object has
     // env-provided secrets stripped out (so they are not persisted to disk),
     // which would otherwise make this reply say "no key is set" at the exact
     // moment the operator might type one in — and a typed key persists and
     // shadows the env var, the failure that stripping exists to prevent.
     return json({ ok: true, settings: redactEmailSettings(await getEmailSettings()) });
+  }
+
+  // Re-derive every funnel's delivery targets. The backfill for funnels that
+  // existed before targets did — without it, "never lose a lead" only becomes
+  // true for a funnel once somebody happens to save it again. WO12's console
+  // view calls this; until then it is the operator's one-request repair.
+  if (path === "/api/admin/targets/sync" && req.method === "POST") {
+    if (!dbConfigured()) return json({ error: "db_not_configured" }, 503);
+    return json({ ok: true, ...(await syncAllFunnelTargets()) });
   }
 
   if (path === "/api/admin/test-email" && req.method === "POST") {

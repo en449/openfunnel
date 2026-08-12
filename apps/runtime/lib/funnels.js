@@ -40,6 +40,10 @@ import { join } from "node:path";
 import { DEV, FUNNELS_DIR, SLUG_RE, isInside } from "./config.js";
 import { dbConfigured, insert, select, update } from "./db.js";
 import { errSummary } from "./log.js";
+// Cyclic on paper — targets.js → webhook.js → funnels.js — and safe in practice:
+// every binding in that ring is read inside a function, never while a module is
+// still evaluating. Keep it that way, or the cycle stops being harmless.
+import { syncFunnelTargets } from "./targets.js";
 
 /** @type {Map<string, { funnel: any, at: number }>} */
 const cache = new Map();
@@ -261,6 +265,13 @@ export async function saveFunnel(slug, doc, opts = {}) {
         { returning: false },
       );
     }
+
+    // The funnel document IS the delivery configuration (§4.3), so the queue's
+    // targets are re-derived here rather than anywhere a caller could forget.
+    // `syncFunnelTargets` swallows its own failures on purpose: a target that
+    // could not be written leaves the direct fan-out delivering, which is
+    // strictly better than refusing to save the funnel.
+    await syncFunnelTargets(slug, doc);
   } else {
     const targetPath = join(FUNNELS_DIR, `${slug}.json`);
     if (!isInside(targetPath, FUNNELS_DIR)) {
@@ -341,12 +352,18 @@ export function cacheFunnel(slug, funnel) {
  * server already forwards every lead in `persist()`, so nothing is lost by
  * keeping the endpoint private — and it stops the same lead being delivered
  * twice, once from the browser and once from here.
+ *
+ * `notifyEmail` goes for a different reason: it is a person's address — the
+ * operator's or the client's — and the whole document is inlined into a page
+ * that anyone who clicks the ad can read. It is consumed server-side, by
+ * `lib/targets.js`, and never by the browser.
  */
 // `leadEndpoint` stays, but only as a SAME-ORIGIN PATH — see `sameOriginPath`.
 const SERVER_ONLY_INTEGRATIONS = [
   "webhookUrl",
   "webhook",
   "webhookSecret",
+  "notifyEmail",
   "apiKey",
   "aiKey",
   "openaiKey",

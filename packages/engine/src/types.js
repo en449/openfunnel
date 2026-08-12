@@ -57,6 +57,10 @@
  * @property {string} [ga4Id]           GA4 measurement id for `gtag()`.
  * @property {string} [tiktokPixelId]  TikTok pixel id.
  * @property {string} [webhookUrl]      Zapier / Make / custom webhook endpoint.
+ *                                      SERVER-ONLY — stripped by `publicFunnel()`.
+ * @property {string} [notifyEmail]     Where this funnel's lead alerts go, instead
+ *                                      of the install-wide notification address.
+ *                                      SERVER-ONLY — stripped by `publicFunnel()`.
  * @property {string} [leadEndpoint]    URL that receives the lead payload (POST).
  *                                      Defaults to the platform's own edge function.
  */
