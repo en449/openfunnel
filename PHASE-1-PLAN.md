@@ -493,7 +493,7 @@ run after every non-trivial one; the parent applies all fixes. Baseline after ea
 | 5 | `lib/delivery.js` — dispatch by kind (webhook w/ `Idempotency-Key`, email, sheet) + claim/complete/fail loop | Sonnet | 2 | ✅
 | 6 | Inline first attempt after the 202, abort-polled | **Opus** | 4, 5 | ✅
 | 7 | `/api/internal/drain` + its own router gate (§1.4) | **Opus** | 5 | ✅
-| 8 | pg_cron + pg_net jobs (§3.3), secret in Vault | Sonnet | 7 |
+| 8 | pg_cron + pg_net jobs (§3.3, §4.5), secret in Vault | **Opus** | 7 | ◐ Part A ready to run; Part B blocked on a Vercel bypass secret
 | 9 | Rate limits → `rate_hit` RPC; `lib/ratelimit.js` keeps its signature | Sonnet | 2 | ✅
 | 10 | OTP + verified-email → Postgres; `MAIL_HOURLY_CAP` via `rate_hit` | Sonnet | 2, 9 | ✅ (§4.1, delivered with 9)
 | 11 | `Bun.serve` → `handleRequest(req)`, two entry points (§4.2) | **Opus** | 3–10 | ✅
@@ -888,6 +888,45 @@ target on a free tier holding synthetic data, so the select is asserted against 
 only: the tests pin the columns this code asks for and the shape it returns, not that PostgREST
 answers them. If the grammar is wrong the log answers `503 db_unavailable` and says so — the read
 path cannot lose a lead, which is why this is allowed to be verified late.
+
+---
+
+## 4.5 WO8 — the drain runs unattended, and what the deployment changed about it
+
+`supabase/cron.sql` was written in WO7 against an assumption that turned out to be wrong: that a
+deployed URL is a reachable URL. It is not, and the difference is the whole work order.
+
+### Decision 1 — the schedule splits in two, because half of it never needed a deployment
+
+**Part A** — the stuck-delivering sweeper and the three housekeeping jobs — is pure SQL and can run
+today. The sweeper especially: it is what returns rows stranded in `delivering` by a function that
+died mid-batch, so making it wait for the thing that strands them has the dependency backwards.
+
+**Part B** is the retry drain, the only job that leaves Postgres.
+
+### Decision 2 — a protected preview answers 302, and pg_net does not call that a failure
+
+Vercel Authentication guards preview deployments, which is exactly why the console is allowed to
+live there at all. It also answers `302` to every machine caller — verified against the branch
+alias — and `net.http_post` records that as a completed request. A drain scheduled today would look
+healthy in `cron.job_run_details` and deliver nothing, forever.
+
+So the drain job carries `x-vercel-protection-bypass`, read from Vault like the drain secret itself,
+and the header goes away when the drain is served by an unprotected project. The alternative —
+deploying to production so the machine can reach it — would put the console on an unprotected
+domain, which is the one thing the Free-tier rule forbids outright.
+
+### Decision 3 — the job targets the branch alias, not a deployment URL
+
+`openfunnel-git-<branch>-<team>.vercel.app` follows the newest deployment of the branch.
+A `openfunnel-<hash>-…` URL pins the drain to one build and its environment variables, so a rotated
+secret takes delivery down with nothing anywhere reporting it.
+
+### Not done here
+
+Splitting into a public `funnel` project and a private `console` project (PLAN.md §2) is what
+finally removes the bypass header. It belongs with the Pro upgrade that has to happen before a
+client funnel goes live, not before it.
 
 ---
 

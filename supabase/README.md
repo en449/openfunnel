@@ -19,7 +19,10 @@ tests/db-integration.mjs               lib/db.js → PostgREST → those functio
 ```
 
 `seed.sql` and `cron.sql` are **not** migrations and must never be applied as ones —
-`cron.sql` needs a deployed drain URL and the secret in Vault, `seed.sql` is dev fixtures.
+`seed.sql` is dev fixtures. `cron.sql` is now two parts: **Part A** (sweeper + housekeeping) is
+pure SQL and should be running already, while **Part B** (the retry drain) needs a URL `pg_net`
+can reach — a protected preview answers 302, and `net.http_post` does not treat that as a failure,
+so a drain scheduled too early looks healthy and delivers nothing.
 
 ## Running it locally
 
@@ -93,7 +96,7 @@ supabase db push
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/tests/state-machine.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/tests/otp.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/tests/targets.sql
-# then cron.sql by hand, once /api/internal/drain is deployed
+# then cron.sql Part A by hand; Part B once /api/internal/drain is REACHABLE (not just deployed)
 ```
 
 Seed data is **synthetic only**. While the build runs on Vercel Free + Supabase Free the
