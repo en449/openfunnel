@@ -5,20 +5,9 @@
  * existed, so turning the feature on is the only thing that changes anything.
  */
 import { test, expect, beforeAll, beforeEach } from "bun:test";
-import { Window } from "happy-dom";
+import { installDom } from "./dom-setup.js";
 
-beforeAll(() => {
-  if (globalThis.document) return;
-  const w = new Window({ url: "https://test.local/" });
-  const g = /** @type {any} */ (globalThis);
-  g.window = w;
-  g.document = w.document;
-  g.navigator = w.navigator;
-  g.location = w.location;
-  g.localStorage = w.localStorage;
-  g.HTMLElement = w.HTMLElement;
-  g.Event = w.Event;
-});
+beforeAll(installDom);
 
 const KEY = "quiz";
 

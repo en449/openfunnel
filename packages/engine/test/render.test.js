@@ -5,25 +5,9 @@
  * success screen, and the event stream.
  */
 import { test, expect, beforeAll } from "bun:test";
-import { Window } from "happy-dom";
+import { installDom } from "./dom-setup.js";
 
-beforeAll(() => {
-  if (globalThis.document) return;
-  const w = new Window({ url: "https://test.local/" });
-  const g = /** @type {any} */ (globalThis);
-  g.window = w;
-  g.document = w.document;
-  g.navigator = w.navigator;
-  g.location = w.location;
-  g.localStorage = w.localStorage;
-  g.HTMLElement = w.HTMLElement;
-  g.Event = w.Event;
-  g.Blob = w.Blob;
-  g.requestAnimationFrame = (/** @type {Function} */ cb) => w.setTimeout(cb, 0);
-  // Enable reduced motion so option taps advance synchronously (no highlight
-  // delay) and transitions are skipped — makes DOM assertions deterministic.
-  g.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
-});
+beforeAll(installDom);
 
 /** @returns {any} */
 function funnelFixture() {

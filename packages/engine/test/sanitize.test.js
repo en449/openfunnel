@@ -8,17 +8,9 @@
  * so both are attacker-reachable without the operator writing anything.
  */
 import { test, expect, beforeAll } from "bun:test";
-import { Window } from "happy-dom";
+import { installDom } from "./dom-setup.js";
 
-beforeAll(() => {
-  if (globalThis.document) return;
-  const w = new Window({ url: "https://test.local/" });
-  const g = /** @type {any} */ (globalThis);
-  g.window = w;
-  g.document = w.document;
-  g.location = w.location;
-  g.HTMLElement = w.HTMLElement;
-});
+beforeAll(installDom);
 
 /** Render a fragment into a detached div so the result can be queried. */
 async function render(html) {
