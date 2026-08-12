@@ -16,18 +16,25 @@
  */
 
 import { createHash } from "node:crypto";
+import { ENGINE_BASE } from "./config.js";
 
 /**
  * The funnel page's boot script, kept out of the template so its hash is stable.
  *
- * It is deliberately free of interpolation — the funnel document travels in a
- * separate `application/json` block that this reads — which is what makes a
- * strict `script-src` possible: the hash below is computed once and never
- * depends on which funnel is being served. Edit this and the CSP hash follows
- * automatically; interpolate a value into it and you break every funnel page.
+ * It carries no **funnel** value — the document travels in a separate
+ * `application/json` block that this reads — which is what makes a strict
+ * `script-src` possible: the hash below never depends on which funnel is being
+ * served. Interpolate a per-funnel value into it and every funnel page silently
+ * stops running its own JavaScript.
+ *
+ * `ENGINE_BASE` is the one interpolation, and it is safe for the reason the rule
+ * exists: it is a per-DEPLOY constant, resolved once at import time, so the hash
+ * below is computed from the exact bytes every page in this deploy will serve.
+ * The `bun test` suite recomputes the digest from a served page to hold that.
+ * The rule to keep is "nothing that varies within a deploy", not "no `${}`".
  */
 export const FUNNEL_BOOT_SCRIPT = `
-      import { createFunnel } from "/_of/index.js";
+      import { createFunnel } from "${ENGINE_BASE}/index.js";
       const mount = document.getElementById("app");
       const funnel = JSON.parse(document.getElementById("of-funnel").textContent);
       const isPreview = Boolean(

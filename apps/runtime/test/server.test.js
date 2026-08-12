@@ -56,6 +56,14 @@ const BLANK_CREDENTIALS = {
   SMTP_RELAY_URL: "",
   META_CAPI_ACCESS_TOKEN: "",
   TRUST_PROXY: "",
+  // Not credentials, but the same rule and the same reason: these four decide
+  // the engine's version segment, and `vercel env pull` writes VERCEL_* into a
+  // local .env. Left alone, a developer's file would choose the URLs these
+  // tests assert on.
+  ENGINE_VERSION: "",
+  VERCEL_DEPLOYMENT_ID: "",
+  VERCEL_GIT_COMMIT_SHA: "",
+  VERCEL_URL: "",
 };
 
 beforeAll(async () => {
@@ -117,7 +125,10 @@ describe("funnel pages", () => {
 
     const body = await res.text();
     expect(body).toContain('<div id="app" class="of-root">');
-    expect(body).toContain('import { createFunnel } from "/_of/index.js"');
+    // Versioned engine path (PHASE-1-PLAN.md §4.9.1): the version segment is what
+    // lets `/_of/*` be cached immutably without pinning a returning visitor to
+    // the deploy they first loaded, so an unversioned import here is the bug.
+    expect(body).toMatch(/import \{ createFunnel \} from "\/_of\/v-[0-9a-f]{12}\/index\.js"/);
     // The theme is inlined on <html> so the first paint is already branded.
     expect(body).toContain("--of-primary:#4f46e5");
   });
@@ -163,6 +174,62 @@ describe("engine assets", () => {
   test("refuses to escape the engine directory", async () => {
     const res = await fetch(`${base}/_of/..%2F..%2F..%2Fpackage.json`);
     expect([403, 404]).toContain(res.status);
+  });
+
+  test("a versioned path serves the same file as the unversioned one", async () => {
+    // The segment is decorative to the lookup: it exists so the URL changes
+    // between deploys, not so it selects anything. Every version resolves to
+    // what is on disk now — which is also what keeps an old cached page working
+    // after a deploy instead of 404ing on a version that no longer exists.
+    const plain = await fetch(`${base}/_of/theme.js`);
+    const versioned = await fetch(`${base}/_of/v-0123456789ab/theme.js`);
+    expect(versioned.status).toBe(200);
+    expect(await versioned.text()).toBe(await plain.text());
+
+    // And the containment check still runs after the segment is stripped.
+    const escape = await fetch(`${base}/_of/v-0123456789ab/..%2F..%2F..%2Fpackage.json`);
+    expect([403, 404]).toContain(escape.status);
+  });
+
+  test("only a versioned URL earns an immutable cache", async () => {
+    // The failure this pins: `immutable` on an UNVERSIONED url told every
+    // browser that had ever loaded a funnel page to keep that deploy's engine
+    // for a year, with no way to correct it — measured live, where a deleted
+    // Google Fonts request kept firing from cache after the fix had shipped
+    // (PHASE-1-PLAN.md §4.9.1).
+    //
+    // It has to be asserted in production mode, because DEV caches nothing and
+    // would pass either way — which is how the original bug survived: every
+    // local run exercised the branch that was fine.
+    const dir = await mkdtemp(join(resolve(import.meta.dir, "../../../.tmp"), "openfunnel-cache-"));
+    scratchDirs.push(dir);
+    const port = 6000 + Math.floor(Math.random() * 900);
+    const child = Bun.spawn(["bun", SERVER], {
+      env: { ...process.env, PORT: String(port), DATA_DIR: dir, FUNNELS_DIR: dir, ...BLANK_CREDENTIALS, NODE_ENV: "production" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const url = `http://localhost:${port}`;
+    try {
+      for (let i = 0; i < 50; i++) {
+        try {
+          if ((await fetch(`${url}/healthz`)).ok) break;
+        } catch {
+          /* not up yet */
+        }
+        await Bun.sleep(50);
+      }
+
+      const versioned = await fetch(`${url}/_of/v-0123456789ab/theme.js`);
+      expect(versioned.status).toBe(200);
+      expect(versioned.headers.get("cache-control")).toContain("immutable");
+
+      const plain = await fetch(`${url}/_of/theme.js`);
+      expect(plain.status).toBe(200);
+      expect(plain.headers.get("cache-control")).not.toContain("immutable");
+    } finally {
+      child.kill();
+    }
   });
 });
 

@@ -12,6 +12,7 @@
  * hashes in the policy stop matching the bytes on the page.
  */
 
+import { ENGINE_BASE } from "./config.js";
 import { FUNNEL_BOOT_SCRIPT, customCode } from "./csp.js";
 import { publicFunnel } from "./funnels.js";
 
@@ -90,14 +91,14 @@ export function funnelPage(funnel) {
     ${description ? `<meta name="description" content="${esc(description)}" />` : ""}
     <meta property="og:title" content="${esc(title)}" />
     ${description ? `<meta property="og:description" content="${esc(description)}" />` : ""}
-    <link rel="preload" as="script" href="/_of/index.js" crossorigin />
-    <link rel="stylesheet" href="/_of/styles.css" />
+    <link rel="preload" as="script" href="${ENGINE_BASE}/index.js" crossorigin />
+    <link rel="stylesheet" href="${ENGINE_BASE}/styles.css" />
     <!-- Self-hosted webfaces for the theme presets (PHASE-1-PLAN.md §4.9). A
          separate <link> rather than an @import inside styles.css, which would
          cost a serial round trip before the browser learns the font file exists.
          Each @font-face carries a unicode-range, so a page only downloads the
          faces it actually renders. -->
-    <link rel="stylesheet" href="/_of/fonts/fonts.css" />
+    <link rel="stylesheet" href="${ENGINE_BASE}/fonts/fonts.css" />
     <style>body{margin:0;background:var(--of-bg,#eef1f6)}</style>
     ${customCss ? `<style id="of-custom-css">${customCss}</style>` : ""}
     ${customHead ? customHead : ""}

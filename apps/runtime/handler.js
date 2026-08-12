@@ -8,7 +8,7 @@
  *   GET  /api/funnels/:slug  → the raw funnel JSON
  *   POST /api/lead           → lead capture   (see packages/engine/src/leads.js)
  *   POST /api/events         → analytics ingest
- *   GET  /_of/*              → the engine's ES modules + stylesheet, served raw
+ *   GET  /_of/[v-<hash>/]*   → the engine's ES modules + stylesheet, served raw
  *   GET  /healthz            → liveness probe
  *
  * ROUTE ORDER IS THE SECURITY MODEL

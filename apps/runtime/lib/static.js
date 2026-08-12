@@ -1,7 +1,7 @@
 /**
  * @file Static file serving for the console UIs and the engine source.
  *
- * `/_of/*` mirrors `packages/engine/src` 1:1, which is all the "bundling" a
+ * `/_of/[v-<hash>/]*` mirrors `packages/engine/src` 1:1, which is all the "bundling" a
  * browser needs given the engine imports its siblings with relative specifiers.
  * That is the no-build-step architecture in one function.
  *
@@ -12,7 +12,7 @@
 
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
-import { DEV, ENGINE_SRC, isInside } from "./config.js";
+import { DEV, ENGINE_SRC, ENGINE_VERSION_SEGMENT_RE, isInside } from "./config.js";
 
 /**
  * Read a file, or answer 404.
@@ -94,7 +94,22 @@ export async function serveStaticFile(rootDir, prefix, pathname) {
  * @param {string} pathname
  */
 export async function serveEngine(pathname) {
-  const rel = decodeURIComponent(pathname.slice("/_of/".length));
+  const raw = decodeURIComponent(pathname.slice("/_of/".length));
+
+  // A leading `v-<hash>/` is this deploy's version segment (lib/config.js). It
+  // is decorative to the lookup — every version resolves to the files on disk
+  // now — and load-bearing to the cache: it is what makes a URL safe to pin
+  // forever, because a new deploy serves a page that names different URLs.
+  //
+  // The header therefore follows the URL SHAPE, not the environment. An
+  // unversioned `/_of/theme.js` — an old cached page, the console's own import,
+  // a hand-typed URL — gets revalidated instead. Sending `immutable` on it is
+  // exactly the bug this fixes: it pinned every visitor to the engine they
+  // first loaded, for a year, with no way to correct it (PHASE-1-PLAN.md
+  // §4.9.1, found when a deleted Google Fonts request kept firing from cache).
+  const versioned = ENGINE_VERSION_SEGMENT_RE.test(raw);
+  const rel = versioned ? raw.replace(ENGINE_VERSION_SEGMENT_RE, "") : raw;
+
   const target = normalize(join(ENGINE_SRC, rel));
   if (!isInside(target, ENGINE_SRC)) return new Response("Forbidden", { status: 403 });
 
@@ -104,8 +119,8 @@ export async function serveEngine(pathname) {
   return new Response(body, {
     headers: {
       "content-type": MIME[extname(target)] || "application/octet-stream",
-      // Engine source is versioned with the deploy; cache hard in production.
-      "cache-control": DEV ? "no-cache" : "public, max-age=31536000, immutable",
+      "cache-control":
+        DEV || !versioned ? "no-cache" : "public, max-age=31536000, immutable",
     },
   });
 }

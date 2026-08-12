@@ -146,7 +146,7 @@ Routes:
 | Route | Auth | Purpose |
 | --- | --- | --- |
 | `GET /f/:slug` | public | funnel page — HTML shell with the funnel JSON inlined |
-| `GET /_of/*` | public | engine source served raw, mirroring `packages/engine/src` |
+| `GET /_of/[v-<hash>/]*` | public | engine source served raw, mirroring `packages/engine/src`; the optional version segment decides the cache header |
 | `GET /_app/*`, `/`, `/builder`, `/leads`, … | public | console shell (see `APP_ROUTES`) |
 | `GET /api/funnels`, `/api/funnels/:slug` | public | funnel list / document |
 | `POST /api/lead`, `/api/events` | public, rate-limited | ingest → JSONL + the Postgres delivery queue (or the direct fan-out) |
@@ -450,10 +450,27 @@ because their content was never hashed in. Two rules:
   Do not remove it — the failure was previously invisible server-side, and the
   operator only saw a CSP violation in the *visitor's* console.
 
+**Engine URLs carry a version segment, and only they are cached hard.**
+`/_of/v-<hash>/index.js`, built from `ENGINE_BASE` in `lib/config.js`. The
+segment is decorative to the lookup — `serveEngine` strips it and serves what is
+on disk, so an old cached page keeps working after a deploy — and load-bearing to
+the cache: it is what makes a URL safe to pin forever. The `immutable` header
+therefore follows the URL *shape*, not the environment, and an unversioned
+`/_of/theme.js` gets `no-cache` instead. Sending `immutable` on an unversioned
+URL is the bug this replaced: it pinned every browser that had ever loaded a
+funnel page to that deploy's engine for a year, so no engine fix reached a
+returning visitor — found live when a deleted Google Fonts request kept firing
+from cache (PHASE-1-PLAN.md §4.9.1). A query string does not work here: engine
+modules import their siblings relatively, so `?v=` on the entry point never
+reaches `./theme.js`.
+
 **Funnel pages carry a strict CSP.** `script-src` is pinned to the SHA-256 of the
-inline boot script, which is why `FUNNEL_BOOT_SCRIPT` must stay free of
-interpolation — put a funnel value in it and every funnel page stops running its
-own JavaScript, silently, with nothing thrown server-side. A test recomputes the
+inline boot script, which is why `FUNNEL_BOOT_SCRIPT` must carry nothing that
+varies *within* a deploy — put a funnel value in it and every funnel page stops
+running its own JavaScript, silently, with nothing thrown server-side.
+`ENGINE_BASE` is interpolated into it and is safe for exactly that reason: it is
+resolved once at import time, so the hash is computed from the bytes every page
+in this deploy serves. A test recomputes the
 digest from the served bytes. Third-party script origins are added only for the
 pixels a funnel configures, and `frame-ancestors` is deliberately absent because
 funnels are embedded and the builder previews them in an iframe.

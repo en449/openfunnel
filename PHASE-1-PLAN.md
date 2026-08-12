@@ -1350,6 +1350,16 @@ font silently falls back rather than leaking, but the browser has still been tol
 is not urgent today — nothing serves production traffic, the domain is `noindex`, and the leads are
 synthetic — which is why it is written down rather than bolted onto this commit.
 
+**Fixed 2026-08-12**, the same day it was found, as described below. Two details the implementation
+settled that the sketch did not: the version is `sha256(source).slice(0,12)` of an identifier that
+must be **per-deploy, not per-process** (`ENGINE_VERSION` env → `VERCEL_DEPLOYMENT_ID` →
+`VERCEL_GIT_COMMIT_SHA` → `VERCEL_URL` → `Date.now()`), because a serverless deploy is many
+processes and a per-process value would change the URL on every cold start and buy no caching at
+all; and the `immutable` header now follows the **URL shape** rather than `DEV`, so an unversioned
+`/_of/theme.js` — an old cached page, the console's own import — is revalidated instead of pinned.
+An unrecognised version still serves the current file, which is what keeps a page cached before the
+deploy working rather than 404ing.
+
 The fix is a **versioned path prefix**, not a query string: `/_of/<deployId>/index.js`. The engine's
 modules import their siblings relatively (`./theme.js`), so a `?v=` on the entry point does not reach
 them and they stay pinned to the cached copy — a path segment does, for free, because relative
