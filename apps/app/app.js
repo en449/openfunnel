@@ -2777,6 +2777,14 @@ async function loadDeliveries() {
       // delivery log is merely quiet.
       state.deliveryState = "unconfigured";
       state.deliveries = [];
+    } else if (res.status === 401) {
+      // The token lives in localStorage, which is per-ORIGIN — so opening the
+      // same deployment by a different hostname (a branch alias rather than the
+      // deployment URL, say) looks exactly like a broken server unless this
+      // says otherwise. "The server did not answer" sent me looking at the
+      // queue when the answer was a missing token.
+      state.deliveryState = "unauthorized";
+      state.deliveries = [];
     } else if (!res.ok) {
       throw new Error(`status ${res.status}`);
     } else {
@@ -2808,20 +2816,27 @@ function renderDeliveries() {
 
   const rows = state.deliveries;
   sub.textContent =
-    state.deliveryState === "error"
-      ? "Could not load the delivery log."
-      : rows.length
+    state.deliveryState === "unauthorized"
+      ? "Not authorised — paste the admin token in Settings."
+      : state.deliveryState === "error"
+        ? "Could not load the delivery log."
+        : rows.length
         ? `${count(rows.length, "delivery", "deliveries")}, newest first.`
         : "Where every lead went, and whether it arrived.";
 
   if (!rows.length) {
+    const EMPTY = {
+      unauthorized: [
+        "Not authorised",
+        "This browser has no admin token for this hostname. Settings → Admin API token.",
+      ],
+      error: ["Could not load deliveries", "The server did not answer — try Refresh."],
+      ready: ["Nothing queued", "No deliveries match this filter yet."],
+    };
+    const [title, hint] = EMPTY[state.deliveryState] || EMPTY.ready;
     body.innerHTML = `<tr><td colspan="8"><div class="empty">
-      <div class="empty-title">${state.deliveryState === "error" ? "Could not load deliveries" : "Nothing queued"}</div>
-      <p class="empty-body">${
-        state.deliveryState === "error"
-          ? "The server did not answer — try Refresh."
-          : "No deliveries match this filter yet."
-      }</p>
+      <div class="empty-title">${esc(title)}</div>
+      <p class="empty-body">${esc(hint)}</p>
     </div></td></tr>`;
     return;
   }

@@ -493,7 +493,7 @@ run after every non-trivial one; the parent applies all fixes. Baseline after ea
 | 5 | `lib/delivery.js` — dispatch by kind (webhook w/ `Idempotency-Key`, email, sheet) + claim/complete/fail loop | Sonnet | 2 | ✅
 | 6 | Inline first attempt after the 202, abort-polled | **Opus** | 4, 5 | ✅
 | 7 | `/api/internal/drain` + its own router gate (§1.4) | **Opus** | 5 | ✅
-| 8 | pg_cron + pg_net jobs (§3.3, §4.5), secret in Vault | **Opus** | 7 | ◐ Part A ready to run; Part B blocked on a Vercel bypass secret
+| 8 | pg_cron + pg_net jobs (§3.3, §4.5), secret in Vault | **Opus** | 7 | ✅ both parts live on the project; drain proven by attempts 1 → 4 with nobody watching
 | 9 | Rate limits → `rate_hit` RPC; `lib/ratelimit.js` keeps its signature | Sonnet | 2 | ✅
 | 10 | OTP + verified-email → Postgres; `MAIL_HOURLY_CAP` via `rate_hit` | Sonnet | 2, 9 | ✅ (§4.1, delivered with 9)
 | 11 | `Bun.serve` → `handleRequest(req)`, two entry points (§4.2) | **Opus** | 3–10 | ✅
@@ -921,6 +921,17 @@ domain, which is the one thing the Free-tier rule forbids outright.
 `openfunnel-git-<branch>-<team>.vercel.app` follows the newest deployment of the branch.
 A `openfunnel-<hash>-…` URL pins the drain to one build and its environment variables, so a rotated
 secret takes delivery down with nothing anywhere reporting it.
+
+### Applied, and proven rather than assumed (2026-08-12)
+
+Part A first: `pg_cron` + `pg_net` enabled, four jobs `active`. Then both secrets into Vault and the
+drain scheduled. The one-shot `net.http_post` came back
+`200 {"ok":true,"claimed":0,...,"passes":1,"ms":144}`, and the proof that matters arrived a few
+minutes later — the queued test delivery had gone from **1 attempt to 4**, backing off, with nobody
+touching it. That is the queue running unattended, which is what Phase 1 promised.
+
+`no_transport` is still the error on every attempt: no mail provider key exists on Vercel, so
+nothing can actually be delivered until the Brevo adapter lands.
 
 ### Not done here
 
