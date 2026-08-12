@@ -98,6 +98,14 @@ const ALLOWED_HOSTS = new Set(
 );
 
 export function isLoopbackRequest(req, server) {
+  // No server object means no socket to inspect, which is the serverless entry
+  // point (`api/index.js`). The honest answer there is "not local", and it is
+  // the whole of what PLAN.md §7.1 calls removing loopback trust: a Vercel
+  // deployment with no ADMIN_TOKEN refuses every privileged request, from
+  // everyone. The alternative is a gate that treats an unfamiliar platform as
+  // permission and hands `/api/admin/*` to the internet on the first deploy
+  // where an environment variable was forgotten.
+  if (!server || typeof server.requestIP !== "function") return false;
   if (req.headers.get("x-forwarded-for") || req.headers.get("forwarded")) return false;
   const addr = server.requestIP(req)?.address || "";
   if (addr !== "127.0.0.1" && addr !== "::1" && addr !== "::ffff:127.0.0.1") return false;

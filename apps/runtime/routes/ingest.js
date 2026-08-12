@@ -50,8 +50,16 @@ import { persist } from "../lib/store.js";
  * is reversible in seconds — the whole space is 2^32 — so it would be personal
  * data wearing a disguise. Rate limiting is unaffected either way; that runs on
  * the address in this process and never touches the column.
+ *
+ * Read per call, not captured at import — the same rule `lib/db.js`,
+ * `lib/store.js` and `lib/email.js` follow, and for the same two reasons. On
+ * serverless the environment belongs to the invocation, so a value frozen at
+ * module load is a setting an operator can change without it ever taking
+ * effect. And in-process, whichever test file imports this chain FIRST decided
+ * the value for every file after it, which is how a salt set at the top of one
+ * test arrived as an empty string inside the code under test.
  */
-const IP_HASH_SALT = process.env.IP_HASH_SALT || "";
+const ipHashSalt = () => process.env.IP_HASH_SALT || "";
 let warnedNoSalt = false;
 
 /**
@@ -60,7 +68,8 @@ let warnedNoSalt = false;
  */
 function hashIp(ip) {
   if (!ip) return null;
-  if (!IP_HASH_SALT) {
+  const salt = ipHashSalt();
+  if (!salt) {
     if (!warnedNoSalt) {
       warnedNoSalt = true;
       console.warn("[runtime] IP_HASH_SALT is unset — storing no IP with leads (set it to enable abuse forensics)");
@@ -69,7 +78,7 @@ function hashIp(ip) {
   }
   // `\x…` is Postgres's hex input format for bytea; PostgREST passes the JSON
   // string through as text and the cast happens on the parameter's declared type.
-  return `\\x${createHash("sha256").update(`${IP_HASH_SALT}:${ip}`).digest("hex")}`;
+  return `\\x${createHash("sha256").update(`${salt}:${ip}`).digest("hex")}`;
 }
 
 /**
@@ -232,8 +241,30 @@ async function storeEvent(record) {
  * ========================================================================== */
 
 /**
+ * Where work that outlives the response goes.
+ *
+ * On Bun the process is still running after the 202, so fire-and-forget is the
+ * whole implementation and always has been. On Vercel the invocation can be
+ * frozen the moment the response is written, and the promise below is the ONLY
+ * delivery a lead the queue refused will ever get — so the entry point supplies
+ * a `waitUntil` and this route stops assuming.
+ *
+ * Defaulted rather than required: the route is called directly by tests with a
+ * hand-built ctx, and an absent `waitUntil` must behave exactly like Bun.
+ *
+ * @param {{ waitUntil?: (p: Promise<any>) => void }} ctx
+ * @param {Promise<any>} promise
+ */
+function defer(ctx, promise) {
+  if (ctx.waitUntil) return ctx.waitUntil(promise);
+  void promise.catch((err) => {
+    console.warn(`[runtime] background task failed: ${errSummary(err)}`);
+  });
+}
+
+/**
  * @param {Request} req
- * @param {{ path: string, server: any }} ctx
+ * @param {{ path: string, server?: any, waitUntil?: (p: Promise<any>) => void }} ctx
  * @returns {Promise<Response|null>} null when this is not an ingest route.
  */
 export async function handleIngest(req, ctx) {
@@ -288,7 +319,7 @@ export async function handleIngest(req, ctx) {
 
   if (path === "/api/events") {
     const stored = dbConfigured() ? await storeEvent(record) : false;
-    void persist("events", record, { fanOut: !stored });
+    defer(ctx, persist("events", record, { fanOut: !stored }));
     return json({ ok: true }, 202, CORS);
   }
 
@@ -302,7 +333,7 @@ export async function handleIngest(req, ctx) {
   // why this reads `queueOwnsIt` rather than inferring it from `leadId`.
   // The JSONL sink is written either way — it is the console's lead inbox and
   // the operator's own copy, not a delivery channel.
-  void persist("leads", record, { fanOut: !queueOwnsIt });
+  defer(ctx, persist("leads", record, { fanOut: !queueOwnsIt }));
 
   // The first attempt happens here rather than waiting for the cron drain, so a
   // working webhook fires in the same second the visitor submitted. It goes
@@ -315,9 +346,12 @@ export async function handleIngest(req, ctx) {
   // is a late delivery, never a lost one. `req.signal` cuts it short when the
   // visitor's connection is gone.
   if (leadId) {
-    void drainOnce({ leadId, signal: req.signal }).catch((err) => {
-      console.warn(`[runtime] inline delivery attempt failed: ${errSummary(err)}`);
-    });
+    defer(
+      ctx,
+      drainOnce({ leadId, signal: req.signal }).catch((err) => {
+        console.warn(`[runtime] inline delivery attempt failed: ${errSummary(err)}`);
+      }),
+    );
   }
 
   return json({ ok: true }, 202, CORS);

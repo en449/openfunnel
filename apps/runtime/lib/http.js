@@ -136,6 +136,7 @@ export async function readJson(req) {
  * ========================================================================== */
 
 let warnedAboutProxy = false;
+let warnedNoSocket = false;
 
 /**
  * The address to attribute a request to, for rate-limit keys and lead records.
@@ -164,6 +165,25 @@ export function clientIp(req, server) {
         "key on the socket address and will apply to all proxied traffic together. " +
         "Set TRUST_PROXY=1 if this server really is behind a proxy you control."
     );
+  }
+
+  // Serverless: there is no socket to ask, so with TRUST_PROXY unset this can
+  // only answer null — and a null address is one shared rate-limit bucket for
+  // every visitor at once, which takes the funnel down for everybody the moment
+  // two people submit in the same minute. That is not a safe default, it is a
+  // self-inflicted outage, so it is loud. Once per process, naming the fix.
+  if (!server || typeof server.requestIP !== "function") {
+    // Not when the branch above already said the same thing: both warnings name
+    // TRUST_PROXY, and on a proxied serverless deployment both conditions hold.
+    if (!warnedNoSocket && !warnedAboutProxy) {
+      warnedNoSocket = true;
+      console.warn(
+        "[runtime] no socket address available (serverless) and TRUST_PROXY is not set, so every " +
+          "per-IP limit now shares ONE bucket across all callers. Set TRUST_PROXY=1 — the platform " +
+          "in front of this function is what writes x-forwarded-for.",
+      );
+    }
+    return null;
   }
   return server.requestIP(req)?.address || null;
 }
