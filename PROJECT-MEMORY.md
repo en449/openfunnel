@@ -434,6 +434,16 @@ Verified: 235 pass / 1 fail (the known Bun 1.3.13 413-vs-400), typecheck and all
 scripts green. Both new behaviours red-checked by reverting them and watching the tests fail — the
 provider precedence (3 red), the alert itself (2 red), the alert's ceiling (1 red).
 
+**Deployed and self-tested** (`2fbe1a1`). One thing to know before the next deploy: **the branch
+alias belongs to the deployment the GitHub integration builds from the push, not to a `npx vercel`
+CLI run.** Both happened here, nine seconds apart, and `vercel inspect` on the alias resolved to
+the Git one — so the CLI deployment was a second, unaliased preview and the pg_cron drain would
+have kept hitting whatever the alias pointed at. Push is the deploy; verify with
+`npx vercel inspect <branch-alias>` rather than assuming. On the alias: `/healthz` →
+`{"ok":true,"supabase":true}`, the Settings panel offers "Brevo API (EU, recommended)" and reveals
+its two fields on select (`screenshots/wo12b-brevo-settings-preview.png`), and `/delivery` renders
+and says "This browser has no admin token for this hostname" — correct, the token is per-ORIGIN.
+
 Still Enno's: the Brevo account, the verified sending domain (SPF/DKIM), the signed AVV, and
 `BREVO_API_KEY` in the Vercel Preview environment. Until that variable exists the deployed runtime
 still answers `no_transport` — the code path is there, the credential is not.
