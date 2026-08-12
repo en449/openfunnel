@@ -472,10 +472,34 @@ Also visible and expected: `cannot create /var/task/.data (ENOENT) — the JSONL
 read-only filesystem, named in §4.2 as known and deliberately not fixed. Leads are in Postgres;
 the console's JSONL lead inbox reads empty on Vercel.
 
-Still Enno's: the Brevo authorised-IP setting, `BREVO_FROM` (unset, so the sender falls back to
-`leads@openfunnel.dev` — not a verified domain, which is the next 400 after the IP one),
-`NOTIFY_EMAIL` (unset, so WO13's dead-letter alert has nobody to mail), the signed AVV, and the
-`dub1` region.
+**Mail works. Proven end to end, same session.** Enno first authorised the refused address, then
+the next one; the deciding measurement was six `/api/otp/send` calls fired in the same second —
+three warm instances came back 200 on the authorised address, three cold ones were refused with
+three *new* addresses at once (`98.92.148.107`, `54.211.126.166`, `98.83.164.192`). Seven distinct
+`us-east-1` egress addresses inside the hour. It is not a restart or a region change that breaks an
+allowlist here — two simultaneous visitors do. Enno then deactivated the restriction, and the same
+six parallel sends came back clean; the queued `lead-gen` lead drained across `15:57` and `15:58`
+with no warning logged, which under this code means the sends succeeded. Brevo also **accepted**
+mail from the unverified `leads@openfunnel.dev` rather than refusing it — so `BREVO_FROM` is a
+deliverability problem (no SPF/DKIM alignment, spam folder) and not the 400 predicted above.
+
+One gap surfaced by the same test: only `lead-gen` exists in the `funnel` table. `fitness`,
+`agency-landing` and `real-estate` answer `PT404` from `ingest_lead` and fall through to the direct
+fan-out, so they have no `delivery_target` rows at all — run `POST /api/admin/targets/sync` before
+WO14 or half the fixtures never touch the queue.
+
+DSGVO, asked and answered in-session: a US egress IP is not by itself unlawful. Vercel states DPF
+certification and additionally relies on SCC + UK Addendum, so the transfer has a basis — but the
+legacy `privacyshield.gov` record for Vercel Inc. still reads `Inactive - Lapse` (that is the old
+Privacy Shield entry, not the DPF one; the DPF list is a JS app that cannot be fetched), so the
+listing wants verifying before anyone leans on adequacy. The binding blocker is not the region at
+all: Art. 28 needs an AVV, Vercel's DPA is Pro-only and Hobby's ToS is non-commercial, so real
+leads on Hobby fail regardless of where the function runs. `dub1`/`fra1` removes the third-country
+transfer from the runtime path; platform logs stay US-side either way, so nothing should log lead
+PII. Generalised in [[feedback_vercel_function_region_us_default]].
+
+Still Enno's: `BREVO_FROM` (verified sending domain), `NOTIFY_EMAIL` (unset, so WO13's dead-letter
+alert still has nobody to mail), the signed AVV, and the `dub1` region.
 
 ### 2026-08-10 (session 3) — Gate confirmed, spike run, two research tracks landed
 
