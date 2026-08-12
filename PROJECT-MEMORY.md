@@ -464,6 +464,30 @@ scripts green, and the runner green across 20+ consecutive runs. One non-reprodu
 reported by an executor mid-development (`expected 2 delivery rows, got 1` in two files at once)
 and did not recur in any run against the final script; noted rather than hidden.
 
+**Then the new CI job found something none of the local runs could.** CI had never run on this
+branch at all — the workflow triggers on pushes to `main` and on pull requests, so a feature branch
+runs nothing, and the last run of any kind was 2026-08-10 on `main`. Dispatched by hand
+(`gh workflow run CI --repo en449/openfunnel --ref phase-1-delivery-queue`), the new
+`db-assertions` job passed — which is also what proves `psql` is on `ubuntu-latest` and the service
+container's health check works — while `test + typecheck` came back **219 pass / 18 fail on a commit
+that is 236 / 1 locally**, every failure carrying `ReferenceError: localStorage is not defined`.
+
+Nothing was wrong with the code under test. **Each engine test file carried its own `beforeAll`
+guarded by `if (globalThis.document) return;`, and each installed a different subset of globals.**
+Bun runs the files in one process, so the first file to reach its `beforeAll` won and every later
+file skipped its own setup — including the parts the winner never installed. `sanitize.test.js`
+sets four globals; `consent`, `render` and `landing` need eleven. Local file order put a complete
+file first; the runner's put `sanitize` first. The suite's colour was a function of file order, and
+had been since those files were written — `main` is green only because it drew a lucky order.
+
+Reproducible in one command, which is also the red-check:
+`bun test packages/engine/test/sanitize.test.js packages/engine/test/consent.test.js` — red before,
+green after, green in either order. Fixed at the shared cause in `6e092ff`: one
+`packages/engine/test/dom-setup.js` the four files import, installing the union. Patching
+`sanitize.test.js` alone would have left the guard meaning "the first file wins", so the next file
+added with a partial set brings it straight back. 60 lines of duplicated setup deleted, 11 added.
+CI then went green on all three jobs. Generalised in [[feedback_order_dependent_test_setup]].
+
 **Worth knowing before the next live test.** `POST /api/admin/targets/sync` cannot give `fitness`,
 `agency-landing` or `real-estate` delivery targets: `syncAllFunnelTargets()` selects from the
 `funnel` table, so a funnel existing only as `examples/*.json` is invisible to it. The row has to
