@@ -1360,6 +1360,14 @@ all; and the `immutable` header now follows the **URL shape** rather than `DEV`,
 An unrecognised version still serves the current file, which is what keeps a page cached before the
 deploy working rather than 404ing.
 
+**Confirmed live, on the browser that produced the original failure.** The warm load that had kept
+firing the deleted Google Fonts request now makes no third-party request at all bar Vercel's own
+preview toolbar, and all 23 engine modules arrive over the wire (`transferSize > 0`) under the new
+path. `VERCEL_DEPLOYMENT_ID` is present at runtime on this project — the served segment is exactly
+`sha256(dpl_DcmgjK8ULqhWAjKqorkx).slice(0,12)`, not the `VERCEL_URL` or `Date.now()` fallback — so
+the version is one value per deploy across every instance, which is the property the whole scheme
+rests on. Live headers: `immutable` on the versioned URL, `no-cache` on the unversioned one.
+
 The fix is a **versioned path prefix**, not a query string: `/_of/<deployId>/index.js`. The engine's
 modules import their siblings relatively (`./theme.js`), so a `?v=` on the entry point does not reach
 them and they stay pinned to the cached copy — a path segment does, for free, because relative

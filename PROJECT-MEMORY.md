@@ -455,6 +455,33 @@ a live self-test on the branch alias with screenshots in `screenshots/`. One toa
 screenshot — "Could not open agency-landing" — is a 401 from `/api/builder/funnel/*` on an origin
 that holds no admin token, not a regression.
 
+### 2026-08-12 (session 8b) — the engine path is versioned, so a fix now reaches a returning visitor
+
+Straight continuation of what the font gate's self-test found. `serveEngine` sent
+`max-age=31536000, immutable` on URLs with no version, so the browser kept last deploy's engine for
+a year. Engine URLs now carry `/_of/v-<12 hex>/`, and — the part that is actually the fix — the
+cache header follows the **URL shape** rather than `DEV`: unversioned gets `no-cache`.
+
+Three things worth carrying:
+
+- **A path segment, not `?v=`.** Engine modules import their siblings relatively, so a query on the
+  entry point never reaches `./theme.js` — which is the exact module that stayed stale.
+- **The version must be per-DEPLOY, not per-process.** A serverless deploy is many instances; a
+  per-process value changes the URL on every cold start and buys no caching at all. Chain is
+  `ENGINE_VERSION` → `VERCEL_DEPLOYMENT_ID` → `VERCEL_GIT_COMMIT_SHA` → `VERCEL_URL` → `Date.now()`,
+  and reaching the floor **warns once in production** — the reviewer's Major, and correctly raised:
+  the symptom is otherwise silent, because nothing breaks, the caching simply never happens.
+  Measured live: the served segment is `sha256(VERCEL_DEPLOYMENT_ID).slice(0,12)`, so this project
+  is on the good branch.
+- **`FUNNEL_BOOT_SCRIPT` now interpolates**, which CLAUDE.md forbade. The rule is restated as
+  "nothing that varies *within* a deploy": `ENGINE_BASE` resolves once at import, so the hash covers
+  the bytes every page serves. qa verified the CSP `sha256-` against the served script byte for byte.
+
+The production-mode test spawn is the point worth copying: DEV caches nothing, so a test against the
+default server passes either way — which is precisely how the original bug survived every local run.
+Reviewer PASS (containment holds: `isInside` runs on the resolved absolute path and never sees the
+stripped prefix), qa PASS, CI green, warm load on the failing browser now clean.
+
 ### 2026-08-12 (session 7) — WO14: the tests were already there, and nothing ran them
 
 The work order read "tests: state machine (claim/lease/sweep/dead), dedupe, rate window,
