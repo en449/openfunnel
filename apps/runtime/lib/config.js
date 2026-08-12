@@ -120,6 +120,7 @@ export const APP_ROUTES = new Set([
   "/builder",
   "/admin",
   "/leads",
+  "/delivery",
   "/analytics",
   "/templates",
   "/settings",

@@ -498,7 +498,7 @@ run after every non-trivial one; the parent applies all fixes. Baseline after ea
 | 10 | OTP + verified-email → Postgres; `MAIL_HOURLY_CAP` via `rate_hit` | Sonnet | 2, 9 | ✅ (§4.1, delivered with 9)
 | 11 | `Bun.serve` → `handleRequest(req)`, two entry points (§4.2) | **Opus** | 3–10 | ✅
 | 12a | Something creates `delivery_target` rows (§4.3) — pulled out of 12 | **Opus** | 3, 5 | ✅ (migration NOT pushed to the live project yet)
-| 12 | Delivery-log view in the console + manual re-send | Sonnet | 5, 12a |
+| 12 | Delivery-log view in the console + manual re-send (§4.4) | **Opus** (routes) + Sonnet (console) | 5, 12a |
 | 13 | Dead-letter alerting to Enno | Sonnet | 5 |
 | 14 | Tests: state machine (claim/lease/sweep/dead), dedupe, rate window, cancelled-on-restrict | Sonnet | 5–10 |
 
@@ -788,6 +788,90 @@ The console gains exactly one field (`integrations.notifyEmail` in the Integrati
 because the field is what makes per-funnel email delivery reachable without hand-editing JSON —
 and a server-side consumer with no console field is the mirror of the gap this repo already
 tracks.
+
+---
+
+## 4.4 WO12 — the delivery log, and a re-send the operator can actually click
+
+"Never lose a lead" is only half a promise while nobody can see which leads went out. WO4–WO7
+made delivery durable and WO12a gave it somewhere to deliver to; this work order makes the queue
+legible in the console and gives the operator one action on it.
+
+**No new migration.** `resend_delivery(p_id bigint)` already exists (§3.2) — it resets a terminal
+row to `pending`, zeroes `attempts`, **rotates the idempotency key** (an operator clicking re-send
+wants the lead to land, so letting the receiver dedupe it into a no-op would be a lie), and refuses
+while the lead is `restricted` or `deleted_at` — Art. 18 outranks the button.
+
+### Decision 1 — the log is a read of the queue, not a second copy of it
+
+`GET /api/admin/deliveries?status=<status>&limit=<n>` reads `delivery` through PostgREST with
+embeds for the lead, its funnel and the target's kind.
+
+```
+{ deliveries: [ { id, status, attempts, lastError, lastStatus,
+                  nextAttemptAt, createdAt, deliveredAt,
+                  kind, leadId, funnelId, funnelSlug, leadCreatedAt } ] }
+```
+
+**`funnelSlug` comes from the server, and the first version of this section was wrong about that.**
+It said the console could label a row from `funnelId` itself. It cannot: `/api/funnels` returns
+slugs, `funnel.id` is a UUID the console never sees anywhere else, and a client-side lookup by id
+would have labelled every row with a raw UUID forever. The nested embed (`lead(…, funnel(slug))`)
+is the price of a legible log.
+
+**`delivery_target.config` is never selected.** It holds the webhook secret, and §2's own comment
+says it must never be returned by a console API — so the select names `kind` and nothing else from
+that table. `last_error` is already `errSummary()` output, truncated, never an error object.
+
+No status counts. The list is filtered and limited, and a count needs either its own round trip per
+status or an unbounded scan; WO13 needs a server-side dead-letter count anyway and can bring one
+with it.
+
+Without a database this answers `503 { error: "db_not_configured" }` rather than an empty list —
+an empty log and no queue at all are opposite situations, and a deployment running on the legacy
+fan-out should not be told its delivery log is fine.
+
+### Decision 2 — re-send attempts the delivery immediately, and says what happened
+
+`POST /api/admin/deliveries/resend` with `{ id }`:
+
+1. Read the row first, so an unknown id is `404` and a row in a state `resend_delivery` refuses is
+   `409 { error: "not_resendable" }` — including `delivering`, where a lease is still out and a
+   second dispatch would double-send.
+2. Call `resend_delivery`. It returns false for the same reasons, and that is the authoritative
+   answer: the read above races the drain.
+3. `drainOnce({ leadId })`, awaited. The operator gets the outcome in the response instead of
+   watching a row sit in `pending` until `pg_cron` fires; the dispatcher's own timeouts bound it.
+
+Capped at 30/hour per client address like `/api/admin/test-email`, for the same reason: the route
+is authenticated, but a leaked token that can trigger unbounded outbound egress is worth a ceiling.
+
+Two refinements from review, both about telling the operator the truth. `resend_delivery` answers
+one boolean for two unrelated situations, so a refusal now looks up whether the lead is restricted
+or deleted and says so — Art. 18 is permanent, and an operator told "the state changed" just clicks
+again. And the inline drain carries a `limit` and a 20s `deadline`: `claim_deliveries` takes every
+due row for the lead, not only the one that was clicked, so without a bound the operator's wait is
+a function of something this route cannot see. Accelerating a sibling row that was already due is
+harmless; waiting an unbounded number of chunks for it is not.
+
+### Decision 3 — the console panel is read-mostly and boring
+
+One panel in `apps/app`, listing the rows newest-first with a status filter, a re-send button on
+terminal rows only, and the existing `POST /api/admin/targets/sync` behind a "re-sync targets"
+button (WO12a shipped that route with no caller). No polling loop, no live tail — a refresh button.
+A dead delivery is not an emergency the console has to animate; WO13 is what makes it reach Enno.
+
+`/delivery` joins `APP_ROUTES` in `lib/config.js`. Without it the tab works while clicking around
+the SPA and 404s on a hard refresh — which is exactly the state someone hits after bookmarking the
+page they were told to check when a lead does not arrive.
+
+### Unverified until the first deploy
+
+The PostgREST embed grammar. Local Postgres has no PostgREST, and the live project is not a test
+target on a free tier holding synthetic data, so the select is asserted against a stubbed `fetch`
+only: the tests pin the columns this code asks for and the shape it returns, not that PostgREST
+answers them. If the grammar is wrong the log answers `503 db_unavailable` and says so — the read
+path cannot lose a lead, which is why this is allowed to be verified late.
 
 ---
 

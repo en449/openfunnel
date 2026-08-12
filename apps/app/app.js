@@ -26,13 +26,18 @@ const state = {
   stats: null,
   dirty: false,
   view: "dashboard",
+  /** @type {any[]} */
+  deliveries: [],
+  /** "ready" | "unconfigured" (no database — §4.4 Decision 1) | "error". */
+  deliveryState: "ready",
 };
 
-const VIEWS = ["dashboard", "builder", "leads", "analytics", "templates", "settings"];
+const VIEWS = ["dashboard", "builder", "leads", "delivery", "analytics", "templates", "settings"];
 const ROUTES = {
   dashboard: "/",
   builder: "/builder",
   leads: "/leads",
+  delivery: "/delivery",
   analytics: "/analytics",
   templates: "/templates",
   settings: "/settings",
@@ -555,6 +560,9 @@ function showView(view, push = true) {
 
   if (view === "builder") mountPreview();
   if (view === "leads" || view === "analytics" || view === "dashboard") refreshData();
+  // Own load, not folded into refreshData(): a separate endpoint, and no
+  // polling — a fresh read only when the operator actually opens the panel.
+  if (view === "delivery") loadDeliveries();
 }
 
 /* ========================================================================== *
@@ -2694,6 +2702,244 @@ function renderAnalytics() {
 }
 
 /* ========================================================================== *
+ *  Delivery — a read of the queue, not a second copy of it (PHASE-1-PLAN.md
+ *  §4.4). No polling anywhere in this section: a fresh read happens when the
+ *  panel opens or the operator clicks Refresh, never on a timer.
+ * ========================================================================== */
+
+/** The only three states `resend_delivery` accepts — most importantly NOT
+ *  `delivering`, where a lease is still out and a second dispatch would
+ *  double-send. */
+const RESENDABLE_DELIVERY_STATUSES = new Set(["dead", "done", "cancelled"]);
+
+/** "done" reads positive, "dead" reads negative. Everything else is neutral —
+ *  `pending`/`delivering`/`cancelled` aren't good or bad, just states. */
+const DELIVERY_STATUS_TONE = { done: "trend-pos", dead: "trend-neg" };
+
+function deliveryStatusBadge(status) {
+  const tone = DELIVERY_STATUS_TONE[status];
+  return tone
+    ? `<span class="trend-badge ${tone}">${esc(status)}</span>`
+    : `<span class="tag">${esc(status)}</span>`;
+}
+
+function truncateText(value, max) {
+  const s = String(value ?? "");
+  return s.length > max ? `${s.slice(0, max)}…` : s;
+}
+
+/** An id shortened for a table cell; the untruncated value still lives in `title`. */
+function shortDeliveryId(id) {
+  const s = String(id ?? "");
+  return s.length > 10 ? `${s.slice(0, 8)}…` : s || "—";
+}
+
+/**
+ * Labels a row using the funnel list already loaded for the switcher
+ * (`state.funnels`, from `/api/funnels`) — no second API call to print a name.
+ *
+ * Matched on SLUG, which is why the server sends `funnelSlug`: `/api/funnels`
+ * returns `{ slug, name, primary, mode, steps }` and never the funnel table's
+ * UUID, so matching on `funnelId` would have labelled every row with a raw UUID
+ * forever (§4.4 Decision 1, corrected). The id is the last fallback, so a row
+ * still identifies itself if a funnel was deleted out from under it.
+ */
+function deliveryFunnelLabel(d) {
+  const match = d.funnelSlug ? state.funnels.find((f) => f.slug === d.funnelSlug) : null;
+  return (match && (match.name || match.slug)) || d.funnelSlug || d.funnelId || "—";
+}
+
+async function loadDeliveries() {
+  const status = $("deliveryStatusFilter")?.value || "all";
+  const qs = new URLSearchParams({ limit: "100" });
+  if (status !== "all") qs.set("status", status);
+
+  try {
+    const res = await apiFetch(`/api/admin/deliveries?${qs}`);
+    if (res.status === 503) {
+      // Opposite of an empty list, not a variant of one: no queue exists at
+      // all, so a self-hosted install without a database isn't told its
+      // delivery log is merely quiet.
+      state.deliveryState = "unconfigured";
+      state.deliveries = [];
+    } else if (!res.ok) {
+      throw new Error(`status ${res.status}`);
+    } else {
+      const data = await res.json();
+      state.deliveries = data.deliveries || [];
+      state.deliveryState = "ready";
+    }
+  } catch {
+    state.deliveryState = "error";
+    state.deliveries = [];
+  }
+  renderDeliveries();
+}
+
+function renderDeliveries() {
+  const unconfigured = $("deliveryUnconfigured");
+  const wrap = $("deliveryTableWrap");
+  const body = $("deliveryBody");
+  const sub = $("deliverySub");
+
+  if (state.deliveryState === "unconfigured") {
+    unconfigured.hidden = false;
+    wrap.hidden = true;
+    sub.textContent = "The delivery queue is not configured; leads are delivered directly.";
+    return;
+  }
+  unconfigured.hidden = true;
+  wrap.hidden = false;
+
+  const rows = state.deliveries;
+  sub.textContent =
+    state.deliveryState === "error"
+      ? "Could not load the delivery log."
+      : rows.length
+        ? `${count(rows.length, "delivery", "deliveries")}, newest first.`
+        : "Where every lead went, and whether it arrived.";
+
+  if (!rows.length) {
+    body.innerHTML = `<tr><td colspan="8"><div class="empty">
+      <div class="empty-title">${state.deliveryState === "error" ? "Could not load deliveries" : "Nothing queued"}</div>
+      <p class="empty-body">${
+        state.deliveryState === "error"
+          ? "The server did not answer — try Refresh."
+          : "No deliveries match this filter yet."
+      }</p>
+    </div></td></tr>`;
+    return;
+  }
+
+  // Every value below that came from the server — kind, funnelId (and its
+  // label), status, lastError — goes through `esc()` before it reaches
+  // `innerHTML`. `lastError` is a truncated summary of an upstream response to
+  // a URL an operator typed, so it is exactly as trusted as any other visitor
+  // input this console renders (see CLAUDE.md's escaping rule).
+  body.innerHTML = rows
+    .map((d, i) => {
+      const timing = d.deliveredAt
+        ? `Delivered ${esc(relativeTime(d.deliveredAt))}`
+        : d.status === "pending" || d.status === "delivering"
+          ? `Next ${esc(relativeTime(d.nextAttemptAt))}`
+          : "—";
+      const hasResult = d.lastStatus != null || d.lastError;
+      const result = hasResult
+        ? `<div class="cell-mono" style="white-space:normal;color:var(--text-2)" title="${esc(d.lastError || "")}">${
+            d.lastStatus != null ? esc(`HTTP ${d.lastStatus}`) : ""
+          }${d.lastStatus != null && d.lastError ? " — " : ""}${esc(truncateText(d.lastError, 80))}</div>`
+        : `<span style="color:var(--text-3)">—</span>`;
+      const resend = RESENDABLE_DELIVERY_STATUSES.has(d.status)
+        ? `<button class="btn btn-sm" data-resend="${i}">Resend</button>`
+        : "";
+      return `<tr>
+        <td class="cell-mono" title="${esc(d.createdAt || "")}">${esc(relativeTime(d.createdAt))}</td>
+        <td><span class="tag">${esc(deliveryFunnelLabel(d))}</span></td>
+        <td><span class="tag">${esc(d.kind)}</span></td>
+        <td>${deliveryStatusBadge(d.status)}<div class="cell-mono" style="margin-top:3px">${esc(count(d.attempts, "attempt"))}</div></td>
+        <td>${result}</td>
+        <td class="cell-mono">${timing}</td>
+        <td class="cell-mono" title="${esc(d.leadId || "")}">${esc(shortDeliveryId(d.leadId))}<div style="color:var(--text-3)">${esc(relativeTime(d.leadCreatedAt))}</div></td>
+        <td>${resend}</td>
+      </tr>`;
+    })
+    .join("");
+}
+
+/**
+ * Posts `{ id }` to the resend endpoint and reports whatever it answers. The
+ * server attempts the delivery inline, so this can take a few seconds — the
+ * button stays disabled for the whole round trip, not just until the request
+ * is sent (PHASE-1-PLAN.md §4.4 Decision 2).
+ */
+async function resendDelivery(id, btn) {
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Resending…";
+  }
+  let refresh = false;
+  try {
+    const res = await apiFetch("/api/admin/deliveries/resend", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      toast(`Resent — now ${data.status}, attempt ${data.attempts}`);
+      refresh = true;
+    } else if (res.status === 404) {
+      toast("That delivery no longer exists", "error");
+      refresh = true;
+    } else if (res.status === 409) {
+      // The server distinguishes a lost race from a lead that may not be
+      // delivered at all — clicking again fixes the first and never the second.
+      const reason = await res.json().catch(() => ({}));
+      toast(
+        reason.error === "lead_restricted"
+          ? "That lead is restricted — it cannot be delivered until the restriction is lifted"
+          : reason.error === "lead_deleted"
+            ? "That lead was deleted — it cannot be delivered"
+            : "That delivery's state changed before the resend landed",
+        "error",
+      );
+      refresh = true;
+    } else if (res.status === 429) {
+      toast("Hourly re-send limit reached — try again later", "error");
+    } else if (res.status === 503) {
+      toast("The delivery queue is not configured", "error");
+    } else {
+      toast("Could not resend that delivery", "error");
+    }
+  } catch {
+    toast("Could not resend that delivery", "error");
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Resend";
+    }
+  }
+  if (refresh) await loadDeliveries();
+}
+
+async function syncDeliveryTargets() {
+  const btn = $("deliverySyncBtn");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Re-syncing…";
+  }
+  try {
+    const res = await apiFetch("/api/admin/targets/sync", { method: "POST" });
+    if (!res.ok) throw new Error(`status ${res.status}`);
+    const data = await res.json();
+    toast(`Re-synced targets — ${data.synced ?? 0} synced, ${data.failed ?? 0} failed`, data.failed ? "error" : "ok");
+  } catch {
+    toast("Could not re-sync delivery targets", "error");
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = `${icon("broadcast", 13)} Re-sync targets`;
+    }
+  }
+}
+
+function bindDelivery() {
+  $("deliveryStatusFilter").addEventListener("change", loadDeliveries);
+  $("deliveryRefreshBtn").addEventListener("click", loadDeliveries);
+  $("deliverySyncBtn").addEventListener("click", syncDeliveryTargets);
+  // Delegated: rows are rendered, not authored, so a per-button listener would
+  // never survive the next innerHTML swap. Index into state.deliveries rather
+  // than round-tripping the id through a data-* string attribute, so a bigint
+  // id is passed back to the server exactly as the JSON response carried it.
+  $("deliveryBody").addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-resend]");
+    if (!btn) return;
+    const row = state.deliveries[+btn.dataset.resend];
+    if (row) resendDelivery(row.id, btn);
+  });
+}
+
+/* ========================================================================== *
  *  Templates
  * ========================================================================== */
 
@@ -3932,6 +4178,7 @@ async function init() {
   bindDashboard();
   bindBuilder();
   bindLeads();
+  bindDelivery();
   bindModals();
   bindKeys();
   initSymbolPicker();

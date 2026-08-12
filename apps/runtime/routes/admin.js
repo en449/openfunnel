@@ -20,7 +20,82 @@ import { isPreviewRecord } from "../lib/preview.js";
 import { rateLimit, tooMany } from "../lib/ratelimit.js";
 import { readJsonlRecords } from "../lib/store.js";
 import { syncAllFunnelTargets } from "../lib/targets.js";
-import { dbConfigured } from "../lib/db.js";
+import { dbConfigured, rpc, select } from "../lib/db.js";
+import { drainOnce } from "../lib/delivery.js";
+import { errSummary } from "../lib/log.js";
+
+/** The five states in the schema's own check constraint. */
+const DELIVERY_STATUSES = new Set(["pending", "delivering", "done", "dead", "cancelled"]);
+
+/**
+ * States `resend_delivery` accepts. `delivering` is excluded because a lease is
+ * still out on it and a second dispatch is a double-send; `pending` because it
+ * is already going to be attempted.
+ */
+const RESENDABLE = new Set(["dead", "done", "cancelled"]);
+
+/**
+ * Columns the delivery log reads.
+ *
+ * `delivery_target.config` is NOT among them and must never be — it holds the
+ * webhook secret, and §2 of the schema says in as many words that it may not be
+ * returned by a console API.
+ *
+ * The funnel's SLUG comes through a nested embed rather than being resolved in
+ * the console, because the console's funnel list is slugs only: `funnel.id` is a
+ * UUID that never reaches it, so a client-side lookup by id would label every
+ * row with a raw UUID forever.
+ */
+const DELIVERY_SELECT =
+  "select=id,status,attempts,last_error,last_status,next_attempt_at,created_at,delivered_at," +
+  "lead(id,funnel_id,created_at,funnel(slug)),delivery_target(kind)";
+
+/**
+ * Shape one delivery row for the console.
+ *
+ * An allowlist rather than a rename pass: if the select above ever grows a
+ * column, it does not reach the console until someone adds it here too.
+ *
+ * @param {any} row
+ */
+const deliveryView = (row) => ({
+  id: row.id,
+  status: row.status,
+  attempts: row.attempts,
+  lastError: row.last_error ?? null,
+  lastStatus: row.last_status ?? null,
+  nextAttemptAt: row.next_attempt_at ?? null,
+  createdAt: row.created_at ?? null,
+  deliveredAt: row.delivered_at ?? null,
+  kind: row.delivery_target?.kind ?? null,
+  leadId: row.lead?.id ?? null,
+  funnelId: row.lead?.funnel_id ?? null,
+  funnelSlug: row.lead?.funnel?.slug ?? null,
+  leadCreatedAt: row.lead?.created_at ?? null,
+});
+
+/**
+ * Why `resend_delivery` said no.
+ *
+ * The RPC answers with one boolean for two very different situations, and the
+ * console showed both as "the row's state changed" — which is a lie in the case
+ * that matters: a restricted lead (Art. 18) refuses the re-send permanently, and
+ * an operator told the state changed will simply click again. The lookup only
+ * runs on the refusal path.
+ *
+ * @param {string} leadId
+ * @returns {Promise<"lead_restricted"|"lead_deleted"|"not_resendable">}
+ */
+async function refusalReason(leadId) {
+  try {
+    const [lead] = await select("lead", `select=restricted,deleted_at&id=eq.${encodeURIComponent(leadId)}&limit=1`);
+    if (lead?.restricted) return "lead_restricted";
+    if (lead?.deleted_at) return "lead_deleted";
+  } catch {
+    /* the reason is a courtesy; the refusal itself already stands */
+  }
+  return "not_resendable";
+}
 
 /**
  * @param {Request} req
@@ -66,6 +141,73 @@ export async function handleAdmin(req, ctx) {
   if (path === "/api/admin/targets/sync" && req.method === "POST") {
     if (!dbConfigured()) return json({ error: "db_not_configured" }, 503);
     return json({ ok: true, ...(await syncAllFunnelTargets()) });
+  }
+
+  // The delivery log. A read of the queue, never a second copy of it.
+  if (path === "/api/admin/deliveries" && req.method === "GET") {
+    // An empty log and no queue at all are opposite situations: a deployment
+    // running on the legacy fan-out must not be told its delivery log is fine.
+    if (!dbConfigured()) return json({ error: "db_not_configured" }, 503);
+    const wanted = url.searchParams.get("status") || "";
+    if (wanted && !DELIVERY_STATUSES.has(wanted)) return json({ error: "invalid_status" }, 400);
+    const asked = Number(url.searchParams.get("limit"));
+    const limit = Number.isFinite(asked) ? Math.min(Math.max(Math.trunc(asked), 1), 500) : 100;
+
+    try {
+      const rows = await select(
+        "delivery",
+        `${DELIVERY_SELECT}&order=id.desc&limit=${limit}${wanted ? `&status=eq.${wanted}` : ""}`,
+      );
+      return json({ deliveries: rows.map(deliveryView) });
+    } catch (err) {
+      console.warn(`[admin] delivery log unavailable: ${errSummary(err)}`);
+      return json({ error: "db_unavailable" }, 503);
+    }
+  }
+
+  // Manual re-send. `resend_delivery` is the authority on whether the row may
+  // move — the read below only exists to tell "no such row" apart from "not in a
+  // state you can re-send", which the RPC's boolean cannot.
+  if (path === "/api/admin/deliveries/resend" && req.method === "POST") {
+    if (!dbConfigured()) return json({ error: "db_not_configured" }, 503);
+    const body = await readJson(req);
+    const id = Number(body?.id);
+    if (!Number.isSafeInteger(id) || id <= 0) return json({ error: "invalid_id" }, 400);
+    // Authenticated, but a leaked token that can trigger unbounded outbound
+    // egress is worth a ceiling — same reasoning as the test-email route.
+    if (!(await rateLimit(`resend:${clientIp(req, server) || "unknown"}`, 30, 60 * 60 * 1000))) return tooMany();
+
+    try {
+      const [row] = await select("delivery", `select=id,status,lead_id&id=eq.${id}&limit=1`);
+      if (!row) return json({ error: "not_found" }, 404);
+      if (!RESENDABLE.has(row.status)) return json({ error: "not_resendable", status: row.status }, 409);
+      // Races the drain: the row can be claimed between the read and here, which
+      // is exactly what the RPC's own status filter refuses.
+      if (!(await rpc("resend_delivery", { p_id: id }))) return json({ error: await refusalReason(row.lead_id) }, 409);
+
+      // Attempted inline, and awaited: the operator clicked a button and should
+      // get the outcome, not a row that sits in `pending` until pg_cron fires.
+      //
+      // Bounded twice over. Each attempt has the dispatcher's own timeout, and
+      // the deadline stops this claiming more work — `claim_deliveries` takes
+      // every due row for the lead, not only the one that was clicked, so the
+      // wait is not a function of anything this route can see. Accelerating a
+      // sibling row that was already due is harmless; making the operator wait
+      // an unbounded number of chunks for it is not.
+      await drainOnce({ leadId: row.lead_id, limit: 10, deadline: Date.now() + 20_000, signal: req.signal });
+
+      const [after] = await select("delivery", `select=status,attempts,last_error,last_status&id=eq.${id}&limit=1`);
+      return json({
+        ok: true,
+        status: after?.status ?? "pending",
+        attempts: after?.attempts ?? 0,
+        lastError: after?.last_error ?? null,
+        lastStatus: after?.last_status ?? null,
+      });
+    } catch (err) {
+      console.warn(`[admin] re-send of delivery ${id} failed: ${errSummary(err)}`);
+      return json({ error: "db_unavailable" }, 503);
+    }
   }
 
   if (path === "/api/admin/test-email" && req.method === "POST") {

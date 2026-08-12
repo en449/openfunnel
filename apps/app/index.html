@@ -164,6 +164,7 @@
       <button class="tab" role="tab" data-view="leads" aria-selected="false">
         Leads <span class="tab-badge" id="tabLeadBadge">0</span>
       </button>
+      <button class="tab" role="tab" data-view="delivery" aria-selected="false">Delivery</button>
       <button class="tab" role="tab" data-view="analytics" aria-selected="false">Analytics</button>
       <button class="tab" role="tab" data-view="templates" aria-selected="false">Templates</button>
       <button class="tab" role="tab" data-view="settings" aria-selected="false">Settings</button>
@@ -408,6 +409,64 @@
                   </tr>
                 </thead>
                 <tbody id="leadsBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── Delivery ─────────────────────────────────────────────────────── -->
+      <section id="view-delivery" class="view" role="tabpanel">
+        <div class="view-pad">
+          <div class="page-head">
+            <div>
+              <h1 class="page-title">Delivery</h1>
+              <p class="page-sub" id="deliverySub">Where every lead went, and whether it arrived.</p>
+            </div>
+            <div class="page-actions">
+              <select id="deliveryStatusFilter" class="select" aria-label="Filter by delivery status" style="width: 150px; height: 32px; padding: 4px 24px 4px 10px">
+                <option value="all">All statuses</option>
+                <option value="pending">Pending</option>
+                <option value="delivering">Delivering</option>
+                <option value="done">Done</option>
+                <option value="dead">Dead</option>
+                <option value="cancelled">Cancelled</option>
+              </select>
+              <button id="deliverySyncBtn" class="btn btn-ghost" title="Re-derive every funnel's delivery targets from its document">
+                <svg width="14" height="14"><use href="#i-broadcast" /></svg>
+                Re-sync targets
+              </button>
+              <button id="deliveryRefreshBtn" class="btn">
+                <svg width="14" height="14"><use href="#i-refresh" /></svg>
+                Refresh
+              </button>
+            </div>
+          </div>
+
+          <!-- Shown instead of the table when no database is configured — an
+               empty log and no queue at all are opposite situations
+               (PHASE-1-PLAN.md §4.4, Decision 1). -->
+          <div id="deliveryUnconfigured" class="card empty" hidden>
+            <div class="empty-title">Delivery queue not configured</div>
+            <p class="empty-body">The delivery queue is not configured; leads are delivered directly.</p>
+          </div>
+
+          <div id="deliveryTableWrap" class="card">
+            <div class="table-wrap">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th>Created</th>
+                    <th>Funnel</th>
+                    <th>Kind</th>
+                    <th>Status</th>
+                    <th>Result</th>
+                    <th>Timing</th>
+                    <th>Lead</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="deliveryBody"></tbody>
               </table>
             </div>
           </div>

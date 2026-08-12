@@ -153,6 +153,8 @@ Routes:
 | `GET /api/admin/leads`, `/api/admin/stats` | **admin** | console data, preview-filtered |
 | `GET\|POST /api/admin/email-settings` | **admin** | mail config; secrets never returned |
 | `POST /api/admin/targets/sync` | **admin** | re-derive every funnel's delivery targets |
+| `GET /api/admin/deliveries` | **admin** | delivery log; never selects `delivery_target.config` |
+| `POST /api/admin/deliveries/resend` | **admin** | `resend_delivery` + an inline attempt; refuses `delivering` |
 | `POST /api/admin/test-email` | **admin** | send a test message |
 | `POST /api/ai/generate`, `/api/ai/improve-copy` | **admin** | copilot (OpenAI optional) |
 
@@ -508,7 +510,10 @@ metadata address.
 them with `…Set` booleans; writes go through an allowlist (`WRITABLE_EMAIL_KEYS`)
 so an unexpected key cannot be persisted, and a blank secret means "keep the
 existing value" rather than wiping it. The HTTP relay URL is env-only and never
-settable through the API.
+settable through the API. The same rule shapes the delivery log: it names its
+columns and never selects `delivery_target.config`, which holds the webhook
+secret, and the row is rebuilt field by field on the way out — so a select that
+one day grows a column still cannot reach the console by accident.
 
 **Path traversal.** Any route that reads or writes a file validates against
 `SLUG_RE` *and* checks the resolved path still `startsWith` its root dir. Copy
