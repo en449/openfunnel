@@ -467,6 +467,26 @@ this environment and hangs on its password prompt; I did not go looking in `.env
 runs, the console's Domains view is read-only against the deployment and `FUNNEL_DOMAINS` is the
 working path.
 
+**The review said FAIL first.** Three Majors on the domains change, all fixed in the same commit
+before it was pushed, and all three are the kind that read as fine:
+
+- The `domain` table shipped with **no RLS**. Every other table in this schema has it; a new table
+  without it is readable by the anon key from the browser, and this one maps clients to hostnames.
+- The **`Host` header must arrive unmodified**, which no code can enforce. Behind a proxy that
+  rewrites it, every mapping misses — and a mapping that misses fails **open** to the console, the
+  exact failure the gate exists to prevent. It is now stated in `README.md` next to the variable and
+  in the module header, because it is a deployment requirement, not a code path.
+- **Remove on a `FUNNEL_DOMAINS` entry lied.** A PostgREST `DELETE` matching no row still succeeds,
+  so the console reported a client's domain disconnected while it kept serving, and the row came
+  back on the next refresh. Every mapping now carries its source; env entries are read-only in the
+  UI and the API refuses them with 409, and the delete response reports what is *still* mapped.
+
+Second review round could not run — the agent hit the session limit — so I verified its three focus
+areas myself rather than claim a second PASS.
+
+Final state: `6e6bcac` (typecheck), `a6a2fd7` (CI fix), `26aaa50` (custom domains), pushed, CI
+green. 268 pass / 1 known Bun-version failure, typecheck 0 errors, all three check scripts 0.
+
 ### 2026-08-13 (session 9b) — Phase 2 starts: images, and the delete that was too eager
 
 Asset upload to Supabase Storage, designed in [PHASE-2-PLAN.md](PHASE-2-PLAN.md) §1 and confirmed
