@@ -1026,34 +1026,39 @@ costs nothing extra in design.
 The reason the project exists. Sized up from 2–3 weeks: the serverless port and moving three
 in-memory stores to Postgres are real work the VPS design did not need.
 
+Checklist state verified against the code on 2026-08-13, item by item — not from the session log.
+Where something shipped in a different shape than this list described, the line says so instead of
+just carrying a tick.
+
 *Port*
-- [ ] Extract the router from `Bun.serve` into `handleRequest(req)`; two entry points — Vercel function (prod) and a Bun dev shell (local). Node runtime, not Edge (§2.2)
-- [ ] **Rate limits, OTP store and `MAIL_HOURLY_CAP` into Postgres.** Without this none of them bind on serverless (§2.2)
-- [ ] `TRUST_PROXY=1`, `clientIp()` reads Vercel's forwarded header; remove loopback trust
-- [ ] Vercel edge rate limiting on the public project
+- [x] Extract the router from `Bun.serve` into `handleRequest(req, opts)`; two entry points — `api/index.js` (Vercel, Node runtime, `maxDuration: 60` in `vercel.json`) and `apps/runtime/server.js` (Bun, local). Done 2026-08-12, WO11, PHASE-1-PLAN.md §4.2. One seam this list did not anticipate: `waitUntil` is passed in alongside `server`, because Vercel may freeze the invocation the moment the response is written
+- [x] **Rate limits, OTP store and `MAIL_HOURLY_CAP` into Postgres** — `rate_hit`, `issue_otp`, `verify_otp`, `is_email_verified` (WO9 + WO10, PHASE-1-PLAN.md §4.1); `MAIL_HOURLY_CAP` goes through the same `rate_hit`. Different shape than "into Postgres" reads: the in-process bucket stays as the fallback for an install with no database and for an RPC that throws, so a database blip degrades the ceiling rather than failing the request. OTP is the deliberate exception — `verifyOtpCode` / `isEmailVerified` fail **closed**
+- [x] `TRUST_PROXY=1`, `clientIp()` reads Vercel's forwarded header (`lib/config.js`, `lib/http.js`; the variable is set on the Preview environment, and the code warns once when a forwarded header shows up without it). Loopback trust was **not removed** — it is structurally unreachable off Bun instead: `isLoopbackRequest` returns false the moment there is no `server` object, so the Vercel entry point has no loopback trust at all while the local Bun shell keeps it (§4.2 Decision 1)
+- [ ] Vercel edge rate limiting on the public project — untouched. No firewall rule, nothing in `vercel.json`; every ceiling is application-side
 
 *Durable delivery*
-- [ ] Postgres schema + migrations, up **and** down (§2.5)
-- [ ] Lead + event writes in one transaction with their delivery rows
-- [ ] Inline first attempt via `after()`, with `assertNotAborted()` polling between steps
-- [ ] Degrade-forward path: on a failed insert, deliver directly and log loudly (§2.6)
-- [ ] `pg_cron` + `pg_net` retry drain → `/api/internal/drain`, shared secret
-- [ ] Stuck-`delivering` sweeper (>5 min back to `pending`) — without it a function timeout strands leads
-- [ ] Targets: email (Brevo adapter), webhook with `Idempotency-Key`, Google Sheets
-- [ ] Delivery log view in the console + manual re-send
-- [ ] Dead-letter alerting to Enno
+- [x] Postgres schema + migrations (§2.5) — four files in `supabase/migrations/`. **Down is not a runnable migration:** each file carries a commented `drop` block in dependency order, because `supabase db push` has no down step. Reversing one means pasting that block
+- [x] Lead writes in one transaction with their delivery rows — `ingest_lead`. Events are deliberately **not** part of this: `ingest_event` writes the row and stops, because an event has no delivery targets to write
+- [x] Inline first attempt — `drainOnce({ leadId, signal: req.signal })`, deferred through the `waitUntil` seam rather than Vercel's `after()`. No `assertNotAborted()` polling: `supportsCancellation` is off in `vercel.json` on purpose (§4.2 Decision 4), so a client disconnect never aborts that attempt on Vercel. Turn it on only together with dropping `req.signal` from this call
+- [x] Degrade-forward path (§2.6) — `persist(kind, record, { fanOut })`. `storeLead()` returns `{ leadId, queueOwnsIt }`, and the fan-out reads `queueOwnsIt`; inferring it from `Boolean(leadId)` sent duplicates in one direction and went silently dark in the other
+- [x] `pg_cron` + `pg_net` retry drain → `/api/internal/drain`, `INTERNAL_SECRET` in Supabase Vault — `supabase/cron.sql`, which is deliberately not a migration. Proven unattended on the live project, attempts 1 → 4 with nobody watching (WO8, §4.5)
+- [x] Stuck-`delivering` sweeper — `sweep_stuck_deliveries()` against a 5-minute lease, scheduled every minute
+- [x] Targets: email (Brevo adapter, WO12b) and webhook with `Idempotency-Key` — derived from the funnel document by `lib/targets.js` and written through `sync_delivery_targets`
+- [ ] Google Sheets target — not built. `DerivedTarget` is `webhook | email` only; nothing has needed a sheet yet
+- [x] Delivery log view in the console + manual re-send (§4.4) — the log names its columns and never selects `delivery_target.config`, and a re-send refuses a row still in `delivering`
+- [x] Dead-letter alerting to Enno (§4.7) — one digest per drain pass, on its own rate bucket, carrying no secret. `NOTIFY_EMAIL` is still unset, so it currently has nobody to mail (Enno's, §8.10)
 
 *Deploy + safety*
-- [ ] Two Vercel projects, `funnel` public and `console` behind Vercel Authentication — **verified logged-out** (§5.2)
-- [ ] Supabase Pro, `eu-west-1`, PITR window set explicitly + **one verified restore**
+- [ ] Two Vercel projects, `funnel` public and `console` behind Vercel Authentication — **verified logged-out** (§5.2). Still one project: console and funnel share an origin, and the whole preview sits behind Vercel SSO — which protects the preview, not the console on a production domain
+- [ ] Supabase Pro, `eu-west-1`, PITR window set explicitly + **one verified restore** — needs the Pro upgrade (Enno's, §8.10)
 - [ ] Uptime monitor on a real funnel URL, off-platform
 
 *DSGVO gates*
 - [x] **GATE — self-host the preset fonts, remove the Google Fonts path entirely** (§8.2) — done 2026-08-12, PHASE-1-PLAN.md §4.9. The console's own Inter/JetBrains Mono hotlink was found in the same pass and went with it
 - [x] **GATE — strip `fonts.googleapis.com` / `fonts.gstatic.com` from the default `funnelCsp`** (§8.2, found in the spike) — done 2026-08-12, same change
-- [ ] **GATE — Brevo wired, Resend removed from the default path** (§8.3). Needs an adapter; `SMTP_RELAY_URL` posts a fixed `{to, subject, html, text}` body no provider accepts as-is
+- [ ] **GATE — Brevo wired, Resend removed from the default path** (§8.3). **Half closed 2026-08-12.** The adapter shipped (WO12b, PHASE-1-PLAN.md §4.6) and mail is proven end to end on the live preview, which holds a `BREVO_API_KEY` and no Resend key — so this deployment does not touch Resend. What is still open is the *default path* in the code: `resend` is the first entry in `API_TRANSPORTS`, so any install with `RESEND_API_KEY` and no `EMAIL_PROVIDER` still sends through it. Closing the gate means reordering that table (or defaulting `EMAIL_PROVIDER`) and saying so in the docs. `BREVO_FROM` on a verified sending domain and the Brevo AVV are Enno's
 - [ ] **GATE — Vercel + Supabase DPAs in force, SCCs in place, TIA written** (§8.0, §8.3). Neither is signed in the classic sense: Supabase's is auto-incorporated on acceptance of the terms on every tier, Vercel's binds on entering the agreement **but covers Pro and Enterprise only** — so this gate is not passable while the build sits on Hobby (§2.1). Action is: upgrade, archive both PDFs with their acceptance dates, then write the TIA and name both processors in every client AVV
-- [ ] IP hashing with a salt; no raw IP written anywhere ([REALITY-CHECK.md](REALITY-CHECK.md) §3)
+- [ ] IP hashing with a salt; no raw IP written anywhere ([REALITY-CHECK.md](REALITY-CHECK.md) §3). The Postgres half shipped with WO4: `hashIp()` writes `lead.ip_hash` salted with `IP_HASH_SALT` (set on Preview) and stores **nothing** when the salt is missing, and `lib/delivery.js` strips `ip` / `referer` / `user_agent` off the outbound payload. The clause still false is *anywhere*: `persist()` appends the whole record — raw `ip` included — to `.data/leads.jsonl`, which is also what the console's lead inbox reads
 - [x] **Version the `/_of/*` path** (`/_of/v-<hash>/…`) — done 2026-08-12. `serveEngine` used to send `max-age=31536000, immutable` on URLs with no version, so a returning visitor ran the engine from the deploy they first saw; measured on the live preview, where a warm load still fired the deleted Google Fonts request. The header now follows the URL shape, so only a versioned URL is pinned. Design in PHASE-1-PLAN.md §4.9.1
 - [ ] Measure real-device LCP on a preset funnel over 4G — 22 unbundled module requests per page load, decide whether the no-build-step invariant still pays ([REALITY-CHECK.md](REALITY-CHECK.md) §6)
 
