@@ -39,9 +39,17 @@ const state = {
   deliveries: [],
   /** "ready" | "unconfigured" (no database — §4.4 Decision 1) | "error". */
   deliveryState: "ready",
+  /** @type {{host:string,slug:string}[]} */
+  domains: [],
+  /** Mirrors `GET /api/admin/domains`'s `writable` — false with no database,
+   *  where `FUNNEL_DOMAINS` is the only mapping and it is an env var this
+   *  console cannot write (PHASE-2-PLAN.md §2 Decision 2). */
+  domainsWritable: false,
+  /** "ready" | "unauthorized" | "error", same shape as `deliveryState`. */
+  domainsState: "ready",
 };
 
-const VIEWS = ["dashboard", "builder", "leads", "delivery", "analytics", "templates", "settings"];
+const VIEWS = ["dashboard", "builder", "leads", "delivery", "analytics", "templates", "domains", "settings"];
 const ROUTES = {
   dashboard: "/",
   builder: "/builder",
@@ -49,6 +57,7 @@ const ROUTES = {
   delivery: "/delivery",
   analytics: "/analytics",
   templates: "/templates",
+  domains: "/domains",
   settings: "/settings",
 };
 
@@ -572,6 +581,7 @@ function showView(view, push = true) {
   // Own load, not folded into refreshData(): a separate endpoint, and no
   // polling — a fresh read only when the operator actually opens the panel.
   if (view === "delivery") loadDeliveries();
+  if (view === "domains") loadDomains();
 }
 
 /* ========================================================================== *
@@ -3257,6 +3267,251 @@ function bindDelivery() {
 }
 
 /* ========================================================================== *
+ *  Domains — map a client hostname to one of this workspace's funnels
+ *  (PHASE-2-PLAN.md §2). This view only ever writes a row in the `domain`
+ *  table. It never calls Vercel and never shows a DNS value: attaching the
+ *  domain to this project and pointing the client's DNS at it are Decision
+ *  3's two steps the plan deliberately leaves manual (no production
+ *  deployment exists yet on Hobby, and the A/CNAME values are per-project —
+ *  see reference/vercel-custom-domains-2026-08-13.md §Q4), so the view says
+ *  what to do instead of getting either one wrong.
+ * ========================================================================== */
+
+/**
+ * One line per `{ error }` body `POST /api/admin/domains` and its DELETE can
+ * send back. A generic "something went wrong" would cost the operator a trip
+ * to the server log for a failure the response already named — especially
+ * `would_lock_out_console`, where the fix is "map a different host", and
+ * `db_not_configured`, where the fix is "edit FUNNEL_DOMAINS instead", and
+ * conflating either with a normal failure sends the operator retrying a
+ * request that cannot succeed differently next time.
+ */
+const DOMAIN_ERRORS = {
+  invalid_host: "That doesn't look like a real hostname.",
+  invalid_slug: "Pick a funnel first.",
+  would_lock_out_console: "That is the hostname this console is on — mapping it would lock the console out of itself.",
+  db_not_configured: "No database configured — set FUNNEL_DOMAINS instead.",
+  db_unavailable: "The database didn't answer — try again.",
+  env_mapping: "That mapping comes from FUNNEL_DOMAINS — edit it on the server, not here.",
+  rate_limited: "Too many domain changes — try again in an hour.",
+};
+
+function domainErrorToast(res, body) {
+  toast(DOMAIN_ERRORS[body?.error] || `Could not save that (status ${res.status})`, "error");
+}
+
+async function loadDomains() {
+  try {
+    const res = await apiFetch("/api/admin/domains");
+    if (res.status === 401) {
+      // Same signal as the delivery log: the admin token lives in
+      // localStorage per ORIGIN, so a branch alias with nothing pasted in
+      // looks exactly like a broken server unless this says otherwise.
+      state.domainsState = "unauthorized";
+      state.domains = [];
+    } else if (!res.ok) {
+      throw new Error(`status ${res.status}`);
+    } else {
+      const data = await res.json();
+      state.domains = data.domains || [];
+      state.domainsWritable = Boolean(data.writable);
+      state.domainsState = "ready";
+    }
+  } catch {
+    state.domainsState = "error";
+    state.domains = [];
+  }
+  renderDomains();
+}
+
+const DOMAINS_EMPTY = {
+  unauthorized: ["Not authorised", "This browser has no admin token for this hostname. Settings → Admin API token."],
+  error: ["Could not load domains", "The server did not answer — try Refresh."],
+};
+
+function renderDomains() {
+  const notice = $("domainsUnwritable");
+  const body = $("domainsBody");
+  const sub = $("domainsSub");
+  const addBtn = $("domainAddBtn");
+  const hostInput = $("domainHostInput");
+  const funnelSelect = $("domainFunnelSelect");
+
+  const writable = state.domainsState === "ready" && state.domainsWritable;
+
+  // The form is disabled outright rather than left clickable and failing on
+  // submit: the server already told us (via `writable`) that a write here
+  // cannot succeed, so waiting for the operator to click and then toasting
+  // the reason is strictly worse than showing it up front.
+  if (addBtn) addBtn.disabled = !writable;
+  if (hostInput) hostInput.disabled = !writable;
+  if (funnelSelect) funnelSelect.disabled = !writable;
+  // Only shown for the specific "loaded fine, but read-only" case — the
+  // unauthorized/error states get their own empty-table message below, and
+  // showing both would tell the operator two different things at once.
+  if (notice) notice.hidden = writable || state.domainsState !== "ready";
+
+  if (funnelSelect) {
+    const current = funnelSelect.value;
+    // Sourced from `state.funnels`, the same list every other view's funnel
+    // picker reads (`renderSwitcher`, `deliveryFunnelLabel`) — no second
+    // fetch to populate a dropdown the console already has the data for.
+    const options = state.funnels
+      .map((f) => `<option value="${esc(f.slug)}">${esc(f.name || f.slug)}</option>`)
+      .join("");
+    funnelSelect.innerHTML = `<option value="">Select a funnel…</option>${options}`;
+    if (state.funnels.some((f) => f.slug === current)) funnelSelect.value = current;
+  }
+
+  if (sub) {
+    sub.textContent =
+      state.domainsState === "unauthorized"
+        ? "Not authorised — paste the admin token in Settings."
+        : state.domainsState === "error"
+          ? "Could not load domain mappings."
+          : !state.domainsWritable
+            ? "Read-only — no database configured."
+            : state.domains.length
+              ? `${count(state.domains.length, "mapping")}.`
+              : "No hostnames mapped yet.";
+  }
+
+  if (!body) return;
+
+  if (state.domainsState !== "ready") {
+    const [title, hint] = DOMAINS_EMPTY[state.domainsState] || DOMAINS_EMPTY.error;
+    body.innerHTML = `<tr><td colspan="3"><div class="empty">
+      <div class="empty-title">${esc(title)}</div>
+      <p class="empty-body">${esc(hint)}</p>
+    </div></td></tr>`;
+    return;
+  }
+
+  if (!state.domains.length) {
+    body.innerHTML = `<tr><td colspan="3"><div class="empty">
+      <div class="empty-title">No domains mapped</div>
+      <p class="empty-body">Add a hostname above once its DNS points at this Vercel project.</p>
+    </div></td></tr>`;
+    return;
+  }
+
+  // `host` and `slug` reach here off a database row (or FUNNEL_DOMAINS) — a
+  // hostname a client typed into their DNS provider, not something this
+  // console authored, so it gets the same esc() treatment as any other
+  // visitor-sourced string rendered as markup (CLAUDE.md's Escaping rule).
+  body.innerHTML = state.domains
+    .map(
+      (d, i) => `<tr>
+        <td class="cell-mono">${esc(d.host)}</td>
+        <td><span class="tag">${esc(d.slug)}</span></td>
+        <td>${
+          writable && d.source !== "env"
+            ? `<button class="btn btn-sm" data-delete-domain="${i}">Remove</button>`
+            // An env mapping has no row to delete, and a PostgREST delete that
+            // matches nothing still succeeds — so a button here would report
+            // "unmapped" while the mapping stayed live and came back on the
+            // next refresh. Say where it lives instead.
+            : d.source === "env"
+              ? `<span class="field-hint">FUNNEL_DOMAINS</span>`
+              : ""
+        }</td>
+      </tr>`,
+    )
+    .join("");
+}
+
+async function addDomainMapping() {
+  const hostInput = $("domainHostInput");
+  const funnelSelect = $("domainFunnelSelect");
+  const btn = $("domainAddBtn");
+  const host = hostInput?.value.trim() || "";
+  const slug = funnelSelect?.value || "";
+  if (!host) return toast("Enter a hostname", "error");
+  if (!slug) return toast("Pick a funnel", "error");
+
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Mapping…";
+  }
+  try {
+    const res = await apiFetch("/api/admin/domains", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ host, slug }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      toast(`${host} now serves ${slug}`);
+      if (hostInput) hostInput.value = "";
+      await loadDomains();
+    } else {
+      domainErrorToast(res, data);
+    }
+  } catch {
+    toast("Could not reach the server", "error");
+  } finally {
+    if (btn) {
+      // Re-enable unless the state that made it clickable has itself
+      // changed mid-request — loadDomains() (on success) already re-runs
+      // renderDomains(), which sets this correctly; this covers the error
+      // path, where nothing else touches the button.
+      btn.disabled = !(state.domainsState === "ready" && state.domainsWritable);
+      btn.textContent = "Map domain";
+    }
+  }
+}
+
+async function deleteDomainMapping(host, btn) {
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Removing…";
+  }
+  try {
+    const res = await apiFetch(`/api/admin/domains?host=${encodeURIComponent(host)}`, { method: "DELETE" });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      // `stillMappedBy` is set when the host is also in FUNNEL_DOMAINS: the row
+      // is gone and the hostname still serves a funnel, so "unmapped" would be
+      // wrong in the one direction that matters.
+      toast(
+        data.stillMappedBy === "env"
+          ? `${host} now falls back to its FUNNEL_DOMAINS mapping`
+          : `${host} unmapped`,
+      );
+      await loadDomains();
+      return;
+    }
+    domainErrorToast(res, data);
+  } catch {
+    toast("Could not reach the server", "error");
+  }
+  if (btn) {
+    btn.disabled = false;
+    btn.textContent = "Remove";
+  }
+}
+
+function bindDomains() {
+  $("domainsRefreshBtn")?.addEventListener("click", loadDomains);
+  $("domainAddBtn")?.addEventListener("click", addDomainMapping);
+  $("domainHostInput")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      addDomainMapping();
+    }
+  });
+  // Delegated, like the delivery log's resend button: rows are rendered, not
+  // authored, so a listener bound to one button would not survive the next
+  // innerHTML swap.
+  $("domainsBody")?.addEventListener("click", (e) => {
+    const trigger = e.target.closest("[data-delete-domain]");
+    if (!trigger) return;
+    const row = state.domains[+trigger.dataset.deleteDomain];
+    if (row) deleteDomainMapping(row.host, trigger);
+  });
+}
+
+/* ========================================================================== *
  *  Templates
  * ========================================================================== */
 
@@ -3408,13 +3663,26 @@ async function generateFunnel() {
  *  Command palette
  * ========================================================================== */
 
+/**
+ * The `hint` on a Navigation entry is the number key that opens it, and the key
+ * binding reads `VIEWS` by position (`VIEWS[index - 1]`) — so a hint written by
+ * hand is a second copy of that order and drifts the moment a view is inserted.
+ * It had: `delivery` went in at position 4 and every hint below it was off by
+ * one, so the palette taught three wrong shortcuts. Derived from `VIEWS` now.
+ *
+ * @param {string} view
+ */
+const viewHint = (view) => String(VIEWS.indexOf(view) + 1);
+
 const PALETTE_ACTIONS = [
-  { label: "Overview", icon: "grid", hint: "1", category: "Navigation", run: () => showView("dashboard") },
-  { label: "Builder", icon: "layers", hint: "2", category: "Navigation", run: () => showView("builder") },
-  { label: "Leads", icon: "inbox", hint: "3", category: "Navigation", run: () => showView("leads") },
-  { label: "Analytics", icon: "chart", hint: "4", category: "Navigation", run: () => showView("analytics") },
-  { label: "Templates", icon: "grid", hint: "5", category: "Navigation", run: () => showView("templates") },
-  { label: "Settings", icon: "settings", hint: "6", category: "Navigation", run: () => showView("settings") },
+  { label: "Overview", icon: "grid", hint: viewHint("dashboard"), category: "Navigation", run: () => showView("dashboard") },
+  { label: "Builder", icon: "layers", hint: viewHint("builder"), category: "Navigation", run: () => showView("builder") },
+  { label: "Leads", icon: "inbox", hint: viewHint("leads"), category: "Navigation", run: () => showView("leads") },
+  { label: "Delivery", icon: "broadcast", hint: viewHint("delivery"), category: "Navigation", run: () => showView("delivery") },
+  { label: "Analytics", icon: "chart", hint: viewHint("analytics"), category: "Navigation", run: () => showView("analytics") },
+  { label: "Templates", icon: "grid", hint: viewHint("templates"), category: "Navigation", run: () => showView("templates") },
+  { label: "Domains", icon: "external", hint: viewHint("domains"), category: "Navigation", run: () => showView("domains") },
+  { label: "Settings", icon: "settings", hint: viewHint("settings"), category: "Navigation", run: () => showView("settings") },
 
   { label: "Funnel theme", icon: "palette", category: "Funnel Settings & Config", run: () => openModal("themeOverlay") },
   { label: "Pixels and integrations", icon: "broadcast", category: "Funnel Settings & Config", run: () => openModal("pixelsOverlay") },
@@ -4501,6 +4769,7 @@ async function init() {
   bindBuilder();
   bindLeads();
   bindDelivery();
+  bindDomains();
   bindModals();
   bindKeys();
   initSymbolPicker();

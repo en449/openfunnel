@@ -273,3 +273,26 @@ export async function update(table, query, values, opts = {}) {
   });
   return Array.isArray(out) ? out : out == null ? [] : [out];
 }
+
+/**
+ * Delete rows matching a PostgREST filter.
+ *
+ * Same required filter as `update`, and for a stronger reason: DELETE with no
+ * filter empties the table, and nothing in this runtime ever wants that. The
+ * guard is the API's shape rather than a comment, because the failure has no
+ * second chance.
+ *
+ * @param {string} table
+ * @param {string} query  PostgREST filter, e.g. `host=eq.example.com`.
+ * @param {{ timeoutMs?: number }} [opts]
+ * @returns {Promise<void>}
+ */
+export async function remove(table, query, opts = {}) {
+  if (!query) throw dbError("refusing an unfiltered delete", { code: "db_unfiltered_delete" });
+
+  await request(`/${encodeURIComponent(table)}?${query}`, {
+    method: "DELETE",
+    headers: { prefer: "return=minimal" },
+    timeoutMs: opts.timeoutMs,
+  });
+}

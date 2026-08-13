@@ -292,6 +292,22 @@ MAX_READ_BYTES=
 # Leave blank and those routes accept localhost only (fine for local dev).
 ADMIN_TOKEN=
 
+# Custom domains: host=slug pairs, comma separated. A hostname listed here
+# serves ONLY that funnel — the console, the funnel list and every admin route
+# answer 404 on it, which is what keeps your console off a client's domain when
+# both are served by the same deployment. With Supabase configured the `domain`
+# table does the same job and the console can edit it; the two are merged and
+# the table wins a conflict. The DNS and the platform's own domain settings are
+# still yours to configure.
+#
+# Behind a reverse proxy, the Host header must reach this server UNCHANGED
+# (nginx: `proxy_set_header Host $host;`). A proxy that rewrites it makes every
+# mapping miss, and a hostname whose mapping misses serves the console — the
+# thing this setting exists to prevent. There is deliberately no
+# x-forwarded-host fallback: that header is set by the caller, so trusting it
+# would let anyone claim any mapping.
+FUNNEL_DOMAINS=
+
 # Absolute ceiling on outbound mail per hour, across all callers — covers both
 # the OTP challenge and the lead autoresponder. Both mail an address taken from
 # a public request body, and their per-IP limits key off x-forwarded-for, which

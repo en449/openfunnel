@@ -402,6 +402,71 @@ must not be inside this repo).
 
 ## Session Log
 
+### 2026-08-13 (session 9c) — the typecheck that checked nothing, and a client domain that served the console
+
+Two work orders, in the order Enno asked for them.
+
+**1. `bun run typecheck` now covers `apps/runtime`.** It did not. `tsconfig.base.json` has no
+`include` and no `allowJs`, so the only file it ever checked was one `.d.ts` — measured with
+`tsc --listFiles`, not inferred. Every JSDoc annotation in the runtime was decoration, which means
+every "typecheck green" in this project's history said nothing about the delivery queue, the egress
+guard or the privileged gate. `apps/runtime/jsconfig.json` turns it on over 30 files including
+`api/index.js` (the Vercel entry imports straight into that directory, so it belongs in the same
+program); `test/**` stays out, since `bun:test` has no types here.
+
+101 errors, now zero. Almost all were annotations, plus guards for `noUncheckedIndexedAccess` where
+the surrounding code already guaranteed the value. Three `any` casts, each for a real type-system
+gap (no `@types/bun`; Node's `Buffer` vs DOM's `BodyInit`). **One real bug fell out**: `computeStats`
+counts drop-off with a `Set`, and `sessionId` comes from the public `/api/events` body — so `77` and
+`"77"` were two visitors on the same step, and anyone with the endpoint could inflate the operator's
+numbers. Coerced, with a test that goes red without it.
+
+Worth carrying: I rejected the subagent's `const Bun = globalThis.Bun` at module scope. It is
+equivalent today and a trap tomorrow — it shadows the global for the whole file, so a `Bun.file()`
+added above that line throws a temporal-dead-zone error while reading exactly like the global it is
+not.
+
+**CI had been red since `ff4d827` and nobody looked.** The asset-storage migration runs `insert into
+storage.buckets`, and the SQL assertion job applies every migration to a bare Postgres, where that
+schema does not exist — so the job died before its first assertion. Two green jobs beside it are why
+it went unnoticed. The migration is guarded now (no storage schema, no bucket, and a NOTICE saying
+so) rather than skipped in the runner, because a skip list is a second place to remember. **Look at
+CI after a push that touches `supabase/`.**
+
+**2. Custom domains — the runtime half, PHASE-2-PLAN.md §2.** The feature is not a nicer URL. The
+console, the builder and the whole privileged API ship in the same handler as the funnel pages, so a
+client's hostname pointed at this project serves all of it — and a page on that host is same-origin
+with itself, so `isCrossSiteRequest` passes and `ADMIN_TOKEN` is the only thing left. A mapped host
+is therefore a different server: `handleFunnelHost` is a third structural gate, an **allowlist**, and
+it answers 404 to the console shell, `/api/funnels` (the LIST — every other client's slug and name)
+and every privileged and internal prefix.
+
+`normalizeHost` parses rather than pattern-matches, which is this repo's own URL rule and also what
+makes an internationalised domain work: `kaufhaus-münchen.de` and its `xn--` form have to normalise
+to one string, or the console stores a row no browser's `Host` header can match. `POST
+/api/admin/domains` refuses to map the host the request arrived on — that is the one mistake the
+console cannot undo, since every admin route is 404 on a mapped host.
+
+**The Vercel attachment is deliberately not automated** (research in
+`reference/vercel-custom-domains-2026-08-13.md`): on Hobby a custom domain is only public when
+attached to Production, and adding one fails until a successful production deployment exists —
+which is a standing No-Go while the console ships in this handler. Attached to a preview branch
+instead, every client funnel would sit behind Vercel's SSO wall.
+
+**Ordering hazard, from the qa run:** an unmapped host gets the console. That is the design, and it
+means a domain attached in Vercel BEFORE it is mapped in the console serves the console on the
+client's domain until someone maps it. Map first, attach second.
+
+Self-tested in a real browser against a real server: `demo.localhost:3111` renders the funnel, and a
+same-origin `fetch` from that page — the exact shape a script on a client's domain would use — gets
+404 for `/builder`, `/api/funnels`, `/api/admin/*`, `/api/builder/save` and `/api/internal/drain`.
+Screenshots in `screenshots/custom-domain-*.png`.
+
+**Blocked, and Enno's:** `supabase db push` for the `domain` table. The CLI is not authenticated in
+this environment and hangs on its password prompt; I did not go looking in `.env*` for it. Until it
+runs, the console's Domains view is read-only against the deployment and `FUNNEL_DOMAINS` is the
+working path.
+
 ### 2026-08-13 (session 9b) — Phase 2 starts: images, and the delete that was too eager
 
 Asset upload to Supabase Storage, designed in [PHASE-2-PLAN.md](PHASE-2-PLAN.md) §1 and confirmed

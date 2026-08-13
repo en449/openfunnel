@@ -124,6 +124,7 @@ lib/db.js            PostgREST client + the error classification callers branch 
 lib/delivery.js      dispatch a claimed delivery, report the outcome, drainOnce()
 lib/targets.js       derive delivery_target rows from the funnel doc + mail settings
 lib/webhook.js       egress guard (resolveSafeTarget) + the direct fan-out delivery
+lib/domains.js       host → funnel slug: which funnel a custom domain serves
 lib/storage.js       Supabase Storage: sign an upload, delete an object
 lib/capi.js          Meta Conversions API forward
 lib/email.js         settings, transports, OTP, lead notifications
@@ -160,6 +161,7 @@ Routes:
 | `POST /api/admin/targets/sync` | **admin** | re-derive every funnel's delivery targets |
 | `GET /api/admin/deliveries` | **admin** | delivery log; never selects `delivery_target.config` |
 | `POST /api/admin/deliveries/resend` | **admin** | `resend_delivery` + an inline attempt; refuses `delivering` |
+| `GET\|POST\|DELETE /api/admin/domains` | **admin** | the host → funnel mapping; refuses to map the console's own host |
 | `POST /api/admin/assets/sign` | **admin** | mint a signed Storage upload URL; the bytes never come here |
 | `DELETE /api/admin/assets` | **admin** | delete one uploaded object |
 | `POST /api/admin/test-email` | **admin** | send a test message |
@@ -189,8 +191,10 @@ Resend and Supabase calls all follow the same rule for the same reason.
 Client-routed SPA. Views are `<section id="view-*">` blocks in `index.html`;
 state is one working funnel document (`state.funnel`) edited in the builder,
 previewed live in an iframe via `postMessage`, and saved back through
-`/api/builder/save`. `Cmd/Ctrl+K` opens the command palette, `Cmd/Ctrl+S` saves,
-`1`–`6` switch views.
+`/api/builder/save`. `Cmd/Ctrl+K` opens the command palette, `Cmd/Ctrl+S` saves, and a number key
+switches views by POSITION in `VIEWS` — so inserting a view renumbers every one
+below it. The palette's `hint` labels are derived from `VIEWS` for that reason;
+they were hand-written once and taught three wrong shortcuts.
 
 Workspace-level settings (workspace name, domain, currency, language, lead
 notification email, global head/CSS injection, GDPR bar, AI provider/model/key/
@@ -411,6 +415,51 @@ caller presenting a guess: an unconfigured endpoint must not advertise that it
 exists and is worth guessing at. Loopback is not trusted here either — there is
 no developer convenience to buy, and `pg_net` never arrives over loopback.
 `/api/internal/*` is never added to `PUBLIC_CORS_PATHS`.
+
+**A mapped custom domain is a THIRD structural gate, and it is an allowlist.**
+`funnelHostSlug()` in `lib/domains.js` answers what a hostname is, and
+`handleFunnelHost` in `handler.js` is entered before any other dispatch. A mapped
+host serves exactly one funnel — `/`, its own `/f/:slug` and `/api/funnels/:slug`,
+the engine assets, and the ingest endpoints the page posts to. Everything else
+answers **404**: the console shell, `/api/funnels` (the LIST), and every
+privileged and internal prefix.
+
+It is not a routing nicety. The console, the builder and the whole privileged API
+ship in this same handler, so a client's hostname pointed at this project serves
+all of it — and because a page on that host is *same-origin with itself*,
+`isCrossSiteRequest` passes and `ADMIN_TOKEN` is the only thing left in the way.
+The funnel LIST is refused for its own reason: it returns every funnel's slug,
+name and colour, which on a client's domain is a directory of the operator's
+other clients.
+
+The gate runs **before** the `OPTIONS` reply and before `/healthz`, so "before
+any dispatch" is literal. `OPTIONS` is answered by the same `corsPreflight()` on
+both hosts — identical bytes, so it reveals nothing about which routes exist
+where — and `/healthz` answers 404 there like everything else: an uptime probe
+belongs on the console host, and a client's domain has no reason to report
+whether a database is configured.
+
+It requires the `Host` header to reach the process **unmodified**. A reverse
+proxy that rewrites it (nginx `proxy_pass` without `proxy_set_header Host
+$host;`) makes every mapping miss, and a hostname whose mapping misses serves
+the console. There is no `x-forwarded-host` fallback on purpose: that header is
+caller-supplied, and trusting it would let anyone claim any mapping with one
+header.
+
+Three rules follow. The branch is an **allowlist**, so a route added later does
+not appear on client domains by default — invert it and every new endpoint is
+published on every client's brand until someone remembers. The host is matched
+**exactly**, after a normalisation that only ever removes (case, port, one
+trailing dot): `Host` is attacker-controlled, and a suffix test is satisfied by
+`client.de.attacker.tld`. And `POST /api/admin/domains` refuses to map the host
+the request arrived on, because every admin route is 404 on a mapped host — so
+that mistake can only be undone by deleting a row in the database.
+
+Every mapping carries **where it came from**, and the delete path refuses an
+`env` one. A PostgREST `DELETE` that matches no row still succeeds, so a Remove
+button on a `FUNNEL_DOMAINS` entry reported a client's domain disconnected while
+it was still serving, and the row came back on the next refresh. The console
+shows those as read-only; `listDomains()` is what carries the distinction.
 
 Loopback trust also validates the `Host` header against `LOOPBACK_HOST_RE` (plus
 `ALLOWED_HOSTS`). Without that, DNS rebinding walks straight through every other
@@ -648,7 +697,7 @@ create `src/render/<type>.js` → register it in `renderBody()` in
 builder can create it.
 
 **Add a console view:** add it to `VIEWS` and `ROUTES` in `apps/app/app.js`, add
-the path to `APP_ROUTES` in `apps/runtime/server.js` (so a hard refresh on the
+the path to `APP_ROUTES` in `apps/runtime/lib/config.js` (so a hard refresh on the
 URL still serves the shell), and add a `<section id="view-<name>">` to
 `apps/app/index.html`.
 

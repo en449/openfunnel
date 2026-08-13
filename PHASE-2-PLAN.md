@@ -128,3 +128,123 @@ section so nobody reads the current signal as stronger than it is.
   nothing needs it until a client has more than a handful of images.
 - Retention or orphan cleanup for assets no funnel references any more. Named here so it is not
   discovered later: it belongs with the §8.7 deletion work, which walks Storage anyway.
+
+---
+
+## 2. Custom domains
+
+**The problem it solves.** A funnel lives at `openfunnel-…vercel.app/f/client-slug`. A client
+running paid traffic to that is advertising our vendor URL on their own campaign, and ad platforms
+score domain reputation — so `angebot.client-firma.de` is not cosmetic. PLAN.md §2.3 and §10 both
+carry it, and the Vercel research is in
+[reference/vercel-custom-domains-2026-08-13.md](reference/vercel-custom-domains-2026-08-13.md).
+
+The feature has two halves, and only one of them is buildable today.
+
+### Decision 1 — a funnel host is a routing MODE, not a redirect
+
+The whole product ships in one handler: the console, the builder, the privileged API and the
+funnel pages. Attaching `angebot.client-firma.de` to that project without changing anything means
+the client's domain also serves `/` (the console shell), `/builder`, `/leads`, and — same-origin,
+so `isCrossSiteRequest` passes — the entire `/api/admin/*` surface, held shut by nothing but
+`ADMIN_TOKEN`. On a deployment with no token set, loopback trust is the only other gate and a
+custom domain is not loopback, so that case refuses; with a token set, the console UI is still
+published on a domain the operator does not control, inviting the operator to type their token
+into it.
+
+So the host decides what the server is:
+
+| Host | What it serves |
+| --- | --- |
+| the console host (anything not mapped) | everything, exactly as today |
+| a mapped funnel host | **only** that funnel: `/` → its page, `/_of/*`, `/api/lead`, `/api/events`, `/api/otp/*`, and its own `/api/funnels/<slug>` |
+
+Everything else — the console shell, `/api/funnels` (the LIST), `/healthz`, and every privileged and
+internal prefix — answers **404**, not 401 — the same posture `/api/internal/*` already takes when
+`INTERNAL_SECRET` is unset. A client's domain should not advertise that an admin API exists behind
+it.
+
+`/api/funnels` matters more than it looks: it returns every funnel's slug, name and colour. It is
+public on every host today. On a client's domain that is a list of the operator's other clients,
+which is why it is refused there rather than left alone.
+
+**Order matters, and it is the operator's to get right.** An unmapped host is a console host — that
+is what makes the console reachable at all. So a domain attached to the Vercel project BEFORE it is
+mapped here serves the console on the client's hostname until someone maps it. Map first, attach
+second. (Found by the qa run, not by the design.)
+
+This is built as a THIRD structural gate in `handler.js`, in the same shape as
+`PRIVILEGED_PREFIXES` and `INTERNAL_PREFIXES`: the funnel-host branch is checked before dispatch
+and returns before the privileged branch is ever reached, so a new privileged route cannot leak
+onto a client domain by being added in the wrong file.
+
+The gate sits above the `OPTIONS` reply and above `/healthz` so that "before any dispatch" is
+literal rather than nearly true, and the preflight is answered by one shared function on both hosts
+— identical bytes either way, so it cannot become a signal for which routes exist where.
+
+It requires the `Host` header to arrive **unmodified**; a reverse proxy that rewrites it makes every
+mapping miss, and a hostname whose mapping misses serves the console. No `x-forwarded-host`
+fallback: that header is caller-supplied, so trusting it would let anyone claim any mapping.
+
+### Decision 2 — the mapping is a table, with an env fallback
+
+`domain` (host PK, funnel slug, created_at) in Postgres, read through the same PostgREST client as
+everything else, cached for 60s in production like the funnel cache and not at all in DEV. A
+self-hoster with no database gets `FUNNEL_DOMAINS="angebot.client-firma.de=client-slug"` — same
+posture as the rest of the runtime, where Supabase is opt-in and the database-less path is
+maintained rather than deprecated.
+
+The host is normalised by PARSING it (`new URL`), not by pattern-matching the string — the rule this
+repo already applies to every other URL check, and what makes an internationalised domain work:
+`kaufhaus-münchen.de` and its `xn--` form have to normalise to one string, or the console stores a
+row no browser's `Host` header can match. A `Host` header is attacker-controlled, so the lookup is
+an exact match against a stored string and never a suffix or pattern test.
+
+Each entry carries its **source**, and the delete path refuses an `env` one: a PostgREST `DELETE`
+matching no row still succeeds, so a Remove button on a `FUNNEL_DOMAINS` entry told the operator a
+client's domain was disconnected while it was still serving.
+
+### Decision 3 — the Vercel attachment is NOT automated in this work order
+
+Vercel's Domains API can attach a hostname to the project in one call, and it is deliberately not
+being wired up now. From the research:
+
+- On Hobby, a custom domain is only publicly reachable when it is attached to the **Production**
+  environment, and adding one fails with a documented `400` until at least one **successful
+  production deployment** exists. This project has never run `vercel --prod`, and doing so on
+  Hobby is a standing No-Go while the console ships in the same handler — which is exactly what
+  Decision 1 is a prerequisite for fixing.
+- Attaching it to the preview branch instead leaves the client's funnel behind Vercel's SSO login
+  wall.
+- A wildcard (`*.f.enno.de`) needs the whole zone's nameservers delegated to Vercel, which is a
+  DNS decision about a domain the operator owns, not a code change.
+
+So this work order builds the half that makes the other half safe, and the operator attaches a
+domain in the Vercel dashboard by hand. The console shows what the client's DNS needs, read from
+`GET /v6/domains/{domain}/config` at display time rather than hardcoded — the A record and the
+per-project CNAME are dynamic values now, and the docs say in as many words not to copy the ones
+in a blog post.
+
+### Work orders
+
+| # | Work order | Tier | Depends on |
+| --- | --- | --- | --- |
+| B1 | `lib/domains.js` — normalise + resolve a host to a slug (table, env fallback, cache) + the `domain` migration | **Opus** (it decides what a request is allowed to be) | — |
+| B2 | `handler.js` funnel-host gate + tests: console/list/privileged/internal all 404 on a funnel host, ingest and engine assets still work | **Opus** (structural gate) | B1 |
+| B3 | Console: a Domains section — map a host to a funnel, show the DNS records the client must set, delete a mapping | Sonnet | B1 |
+| B4 | Docs: CLAUDE.md invariant, README, `.env.example` (`FUNNEL_DOMAINS`), PLAN.md §10 checklist line | Sonnet | B1–B3 |
+
+**Acceptance criteria.** With `FUNNEL_DOMAINS=demo.test=lead-gen` set, a request carrying
+`Host: demo.test` to `/` renders the `lead-gen` funnel page; `/builder`, `/api/funnels`,
+`/api/admin/leads` and `/api/internal/drain` all answer 404 on that host; `/api/lead` still answers
+202 and `/_of/…` still serves the engine. Every one of those is unchanged on the console host. The
+same behaviour verified live against the branch alias with an explicit `Host` header, and a
+screenshot of the funnel page rendering on a mapped host.
+
+### Not in scope, deliberately
+
+- The Vercel Domains API call, per Decision 3. It needs a production deployment and a
+  `VERCEL_API_TOKEN`, and neither is available while this is a Hobby project.
+- Wildcard subdomains (`*.f.enno.de`) — nameserver delegation of a zone the operator owns.
+- Per-domain TLS, redirects, `www` handling, apex→subdomain rules: all of that is Vercel's, and
+  none of it is code in this repo.

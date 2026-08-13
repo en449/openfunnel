@@ -56,6 +56,11 @@ const BLANK_CREDENTIALS = {
   SMTP_RELAY_URL: "",
   META_CAPI_ACCESS_TOKEN: "",
   TRUST_PROXY: "",
+  // Not a credential either, and the one with the widest blast radius: a host
+  // listed here stops serving the console entirely (PHASE-2-PLAN.md §2). A
+  // developer with `FUNNEL_DOMAINS=localhost=…` in their `.env` would watch
+  // every console assertion in this file 404.
+  FUNNEL_DOMAINS: "",
   // Not credentials, but the same rule and the same reason: these four decide
   // the engine's version segment, and `vercel env pull` writes VERCEL_* into a
   // local .env. Left alone, a developer's file would choose the URLs these

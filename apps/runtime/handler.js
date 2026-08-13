@@ -38,8 +38,10 @@
 
 import { SUPABASE_ON } from "./lib/config.js";
 import { isInternalPath, isPrivilegedPath, requireAdmin, requireInternal } from "./lib/auth.js";
+import { funnelHostSlug } from "./lib/domains.js";
 import { CORS, PUBLIC_CORS_PATHS, isCrossSiteRequest, json } from "./lib/http.js";
 import { errSummary } from "./lib/log.js";
+import { serveEngine } from "./lib/static.js";
 import { handleAdmin } from "./routes/admin.js";
 import { handleAi } from "./routes/ai.js";
 import { handleAssets } from "./routes/assets.js";
@@ -62,14 +64,25 @@ export async function handleRequest(req, opts = {}) {
     const path = url.pathname.replace(/\/+$/, "") || "/";
     const ctx = { url, path, server, waitUntil };
 
+    // --- Custom-domain surface ----------------------------------------------
+    // A THIRD structural gate, in the same shape as the two below: the branch is
+    // entered before ANY other dispatch — including the OPTIONS reply and
+    // `/healthz`, which is why it sits above both — and returns from inside it,
+    // so nothing added to a route module later can escape onto a client's
+    // domain by accident.
+    //
+    // A mapped host is not a prettier `/f/:slug`. The console, the builder and
+    // the whole privileged API ship in this same handler, so without this branch
+    // a client's domain also serves them — same-origin, so `isCrossSiteRequest`
+    // passes, leaving `ADMIN_TOKEN` as the only thing between the internet and
+    // `/api/admin/*`. See PHASE-2-PLAN.md §2.
+    const hostSlug = await funnelHostSlug(req.headers.get("host"));
+    if (hostSlug) return handleFunnelHost(req, ctx, hostSlug);
+
     // Only the public ingest surface is cross-origin callable. Answering every
     // path with `Allow-Origin: *` would let a preflight succeed for the
     // privileged routes below.
-    if (req.method === "OPTIONS") {
-      return PUBLIC_CORS_PATHS.has(path)
-        ? new Response(null, { status: 204, headers: CORS })
-        : new Response(null, { status: 204 });
-    }
+    if (req.method === "OPTIONS") return corsPreflight(path);
 
     // --- Health -------------------------------------------------------------
     if (path === "/healthz") return json({ ok: true, supabase: SUPABASE_ON });
@@ -139,4 +152,77 @@ export async function handleRequest(req, opts = {}) {
     console.error(`[runtime] unhandled: ${errSummary(err)}`);
     return json({ error: "internal" }, 500);
   }
+}
+
+/**
+ * The `OPTIONS` reply: CORS headers for the public ingest surface, a bare 204
+ * for everything else.
+ *
+ * Deliberately identical on every host. It carries no host-specific and no
+ * path-existence signal, so answering it on a mapped host tells a prober
+ * nothing — and keeping ONE function means a future change to it cannot make
+ * the two hosts disagree about what may be called cross-origin.
+ *
+ * @param {string} path
+ */
+const corsPreflight = (path) =>
+  PUBLIC_CORS_PATHS.has(path)
+    ? new Response(null, { status: 204, headers: CORS })
+    : new Response(null, { status: 204 });
+
+/**
+ * Everything a mapped funnel host is allowed to answer.
+ *
+ * An allowlist, not a blocklist of the console's paths. The difference is what
+ * happens when someone adds a route: a blocklist has to be updated or the new
+ * route appears on every client domain, and nothing would fail to remind them.
+ *
+ * 404 rather than 401 for what is refused, matching the posture `/api/internal/*`
+ * already takes when `INTERNAL_SECRET` is unset: a client's domain should not
+ * advertise that there is an admin API behind it worth guessing at.
+ *
+ * `/api/funnels` — the LIST — is refused here even though it is public on the
+ * console host, because it returns every funnel's slug, name and colour. On a
+ * client's domain that is a directory of the operator's other clients.
+ *
+ * @param {Request} req
+ * @param {{ url: URL, path: string, server: any, waitUntil?: (p: Promise<any>) => void }} ctx
+ * @param {string} slug  The funnel this host serves.
+ * @returns {Promise<Response>}
+ */
+async function handleFunnelHost(req, ctx, slug) {
+  const { path } = ctx;
+
+  // The page posts leads from its own origin, so the preflight has to be
+  // answered here too — but by the same function the console host uses, so the
+  // set of cross-origin-callable paths cannot come to differ by host.
+  if (req.method === "OPTIONS") return corsPreflight(path);
+
+  // The engine's own modules and stylesheet. Served through `serveEngine` and
+  // not `handleAssets`, which would also match `/` and every console route.
+  if (path.startsWith("/_of/")) return serveEngine(path);
+
+  // The page itself. `/` is the whole point of a custom domain; `/f/<its own
+  // slug>` stays valid so a link that was shared before the domain existed keeps
+  // working. Any OTHER slug 404s — one host serves one funnel, and serving a
+  // second one here would put another client's page on this client's brand.
+  if (path === "/" || path === `/f/${slug}`) {
+    return (await handleFunnels(req, { ...ctx, path: `/f/${slug}` })) ?? new Response("Not found", { status: 404 });
+  }
+
+  // The document, for its own funnel only. Same bytes the page already inlines.
+  if (path === `/api/funnels/${slug}`) {
+    return (await handleFunnels(req, ctx)) ?? new Response("Not found", { status: 404 });
+  }
+
+  // Lead capture, drop-off events and the email challenge: the page posts to
+  // these on its own origin, so a custom domain without them is a funnel that
+  // cannot submit.
+  const otp = await handleOtp(req, ctx);
+  if (otp) return otp;
+
+  const ingest = await handleIngest(req, ctx);
+  if (ingest) return ingest;
+
+  return new Response("Not found", { status: 404 });
 }

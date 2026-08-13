@@ -20,10 +20,11 @@ import { isPreviewRecord } from "../lib/preview.js";
 import { rateLimit, tooMany } from "../lib/ratelimit.js";
 import { readJsonlRecords } from "../lib/store.js";
 import { syncAllFunnelTargets } from "../lib/targets.js";
-import { dbConfigured, rpc, select } from "../lib/db.js";
+import { dbConfigured, insert, remove, rpc, select } from "../lib/db.js";
 import { drainOnce } from "../lib/delivery.js";
 import { errSummary } from "../lib/log.js";
 import { SLUG_RE } from "../lib/config.js";
+import { domainSource, invalidateDomains, listDomains, normalizeHost } from "../lib/domains.js";
 import { ASSET_TYPES, MAX_ASSET_BYTES, assetPath, deleteAsset, signAssetUpload } from "../lib/storage.js";
 
 /** The five states in the schema's own check constraint. */
@@ -282,6 +283,96 @@ export async function handleAdmin(req, ctx) {
       if (/** @type {any} */ (err)?.status === 404) return json({ ok: true, missing: true });
       console.warn(`[admin] could not delete an asset: ${errSummary(err)}`);
       return json({ error: "storage_unavailable" }, 503);
+    }
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  Custom domains — PHASE-2-PLAN.md §2
+   *
+   *  A row here decides what the SERVER IS for that hostname: the console, the
+   *  funnel list and every privileged route answer 404 on a mapped host. So the
+   *  write path's real job is refusing the two mappings an operator cannot undo
+   *  from the console afterwards — its own host, and a host it does not own.
+   *  Only the first is checkable here; the second is Vercel's verification.
+   * ------------------------------------------------------------------ */
+  if (path === "/api/admin/domains" && req.method === "GET") {
+    return json({ domains: await listDomains(), writable: dbConfigured() });
+  }
+
+  if (path === "/api/admin/domains" && req.method === "POST") {
+    const body = await readJson(req);
+
+    const host = normalizeHost(body?.host);
+    if (!host) return json({ error: "invalid_host" }, 400);
+
+    // Lowercase as well as SLUG_RE: that pattern is case-insensitive and the
+    // table's CHECK constraint is not, so a mixed-case slug passed here and then
+    // failed in Postgres — surfacing as `db_unavailable`, which sends the
+    // operator looking at the database for a typo in their own input.
+    const slug = String(body?.slug || "").trim();
+    if (!SLUG_RE.test(slug) || slug !== slug.toLowerCase()) return json({ error: "invalid_slug" }, 400);
+
+    // The lockout guard, and it runs BEFORE the database check on purpose: it is
+    // a fact about the request, not about the store, and an operator who is
+    // about to take the console off its own hostname should be told that rather
+    // than "no database". Mapping the host this request arrived on removes the
+    // console from that hostname the moment the cache expires — including the
+    // page making the request — and the only way back is deleting the row in
+    // the database, because every console API answers 404 on a mapped host.
+    if (host === normalizeHost(req.headers.get("host"))) {
+      return json({ error: "would_lock_out_console" }, 409);
+    }
+
+    // No table, no writes. `FUNNEL_DOMAINS` still works and is what a
+    // database-less self-hoster uses; saying so beats a 500.
+    if (!dbConfigured()) return json({ error: "db_not_configured" }, 503);
+
+    if (!(await rateLimit(`domains-write:${clientIp(req, server) || "unknown"}`, 60, 60 * 60 * 1000))) return tooMany();
+
+    try {
+      // Upsert: pointing an existing domain at a different funnel is an edit,
+      // not an error, and it is the operation an operator reaches for when a
+      // client's funnel is replaced.
+      await insert("domain", [{ host, slug }], { onConflict: "host", returning: false });
+      invalidateDomains();
+      return json({ ok: true, host, slug });
+    } catch (err) {
+      console.warn(`[admin] could not map a domain: ${errSummary(err)}`);
+      return json({ error: "db_unavailable" }, 503);
+    }
+  }
+
+  if (path === "/api/admin/domains" && req.method === "DELETE") {
+    const host = normalizeHost(url.searchParams.get("host"));
+    if (!host) return json({ error: "invalid_host" }, 400);
+
+    // Asked before deleting, because a PostgREST DELETE that matches nothing
+    // still succeeds. An entry from `FUNNEL_DOMAINS` has no row: deleting it
+    // would report success while the mapping stayed live and came back on the
+    // next read. The console hides the button for these, and this is the same
+    // refusal for anything that does not go through the console.
+    // Before the database check, for the same reason the lockout guard is: this
+    // is a fact about the mapping the operator is pointing at, and "that one
+    // lives in an env var" is a more useful answer than "no database".
+    if ((await domainSource(host)) === "env") return json({ error: "env_mapping" }, 409);
+
+    if (!dbConfigured()) return json({ error: "db_not_configured" }, 503);
+
+    if (!(await rateLimit(`domains-write:${clientIp(req, server) || "unknown"}`, 60, 60 * 60 * 1000))) return tooMany();
+
+    try {
+      await remove("domain", `host=eq.${encodeURIComponent(host)}`);
+      invalidateDomains();
+
+      // A host can be in BOTH stores — the table wins, so deleting its row hands
+      // the hostname back to `FUNNEL_DOMAINS` rather than unmapping it. Saying
+      // "unmapped" there would be the same untrue success this route was just
+      // fixed for, one layer down.
+      const remaining = await domainSource(host);
+      return json({ ok: true, host, stillMappedBy: remaining });
+    } catch (err) {
+      console.warn(`[admin] could not unmap a domain: ${errSummary(err)}`);
+      return json({ error: "db_unavailable" }, 503);
     }
   }
 

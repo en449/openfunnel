@@ -169,6 +169,7 @@
       <button class="tab" role="tab" data-view="delivery" aria-selected="false">Delivery</button>
       <button class="tab" role="tab" data-view="analytics" aria-selected="false">Analytics</button>
       <button class="tab" role="tab" data-view="templates" aria-selected="false">Templates</button>
+      <button class="tab" role="tab" data-view="domains" aria-selected="false">Domains</button>
       <button class="tab" role="tab" data-view="settings" aria-selected="false">Settings</button>
       <a id="liveLink" class="live-link" href="/f/lead-gen" target="_blank" rel="noopener">
         <span id="liveLinkText">/f/lead-gen</span>
@@ -538,6 +539,89 @@
             </div>
           </div>
           <div id="templateGrid" class="grid"></div>
+        </div>
+      </section>
+
+      <!-- ── Domains ──────────────────────────────────────────────────────── -->
+      <section id="view-domains" class="view" role="tabpanel">
+        <div class="view-pad">
+          <div class="page-head">
+            <div>
+              <h1 class="page-title">Domains</h1>
+              <p class="page-sub" id="domainsSub">Map a client's hostname onto one of your funnels.</p>
+            </div>
+            <div class="page-actions">
+              <button id="domainsRefreshBtn" class="btn">
+                <svg width="14" height="14"><use href="#i-refresh" /></svg>
+                Refresh
+              </button>
+            </div>
+          </div>
+
+          <!-- Shown when `writable` is false — no database means FUNNEL_DOMAINS
+               is the only mapping, and it's an env var this console cannot
+               write (PHASE-2-PLAN.md §2 Decision 2). Not an error state: a
+               self-hoster with no database is a maintained, ordinary one. -->
+          <div id="domainsUnwritable" class="card empty" hidden style="margin-bottom: 16px">
+            <div class="empty-title">Read-only — no database configured</div>
+            <p class="empty-body">This deployment maps hostnames through the <code>FUNNEL_DOMAINS</code> environment variable. Edit that on the server and redeploy — there's nothing to save from here.</p>
+          </div>
+
+          <div class="card" style="margin-bottom: 16px">
+            <div class="card-head"><span class="card-title">Add a mapping</span></div>
+            <div class="card-pad">
+              <div style="display: grid; grid-template-columns: 1fr 1fr auto; gap: 12px; align-items: end">
+                <div class="field" style="margin: 0">
+                  <label for="domainHostInput">Hostname</label>
+                  <input id="domainHostInput" class="input input-mono" type="text" placeholder="angebot.client-firma.de" autocomplete="off" />
+                </div>
+                <div class="field" style="margin: 0">
+                  <label for="domainFunnelSelect">Funnel</label>
+                  <span class="select-wrap">
+                    <select id="domainFunnelSelect" class="select"></select>
+                    <span class="select-caret"><svg width="14" height="14"><use href="#i-chevron" /></svg></span>
+                  </span>
+                </div>
+                <button id="domainAddBtn" class="btn btn-primary">
+                  <svg width="14" height="14"><use href="#i-plus" /></svg>
+                  Map domain
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="card" style="margin-bottom: 16px">
+            <div class="table-wrap">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th>Host</th>
+                    <th>Funnel</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="domainsBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- What this console cannot do. It only ever writes a row in the
+               `domain` table — attaching the hostname to this Vercel project
+               and pointing the client's DNS at it both happen outside it
+               (PHASE-2-PLAN.md §2 Decision 3). No Vercel API call here, and
+               deliberately no IP or CNAME value hardcoded below: both are
+               per-project, and Vercel's own docs say to copy them from the
+               project's domain card, never from a written guide
+               (reference/vercel-custom-domains-2026-08-13.md §Q4). -->
+          <div class="card card-pad">
+            <div class="card-title" style="margin-bottom: 8px">Still needed outside this console</div>
+            <ol class="field-hint" style="margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px">
+              <li><strong>Map it here first, then add it in Vercel.</strong> A hostname this console does not know is treated as a console hostname — so a domain attached in Vercel before it is mapped here serves this console on your client's domain until you map it.</li>
+              <li>Add the domain to this project in the Vercel dashboard.</li>
+              <li>Have the client point DNS at it: an <strong>A record</strong> for an apex domain (e.g. <code>client-firma.de</code>), or a <strong>CNAME</strong> for a subdomain (e.g. <code>angebot.client-firma.de</code>).</li>
+              <li>Use the exact value Vercel's own domain card shows for THAT domain — those values are per-project and change over time, so copy them fresh from Vercel, never from a document like this one.</li>
+            </ol>
+          </div>
         </div>
       </section>
 
