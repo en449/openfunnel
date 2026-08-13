@@ -967,6 +967,15 @@ the `{ url, headers, body }` for one message. `sendEmail` selects an entry and o
 after it — the timeout, the abort, the `res.ok` check, the error mapping, the logging rule. A
 provider is then a data entry, and the parts that are security controls are written once.
 
+**Amended 2026-08-13 — the order flipped, which is what closed the gate.** Everything below
+describes the seam as built, and one line of it is now false: Resend is no longer declared first.
+The table order *is* the default path, so leaving Resend at the top meant an install with both keys
+and no `EMAIL_PROVIDER` still sent a German client's leads through a US processor — the gate's whole
+subject. Brevo leads the table now, and the inference chain in `getEmailSettings` was flipped in the
+same change because the two are one decision. An install with only `RESEND_API_KEY` is unaffected:
+the entry above it has no key, so it is skipped. The only deployment that changes behaviour is one
+with both keys and no explicit choice, which already warns.
+
 **This is an addition, not a migration.** Resend and `SMTP_RELAY_URL` keep working, unchanged, in
 that order. The selection is:
 

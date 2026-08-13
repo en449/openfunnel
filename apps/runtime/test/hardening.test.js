@@ -144,6 +144,24 @@ test("readJsonlRecords reads a bounded tail and skips a partial line", async () 
   expect(records[0].id).toBe("newest");
 });
 
+// Nothing writes an `ip` any more, but a sink written before that change still
+// holds one — and every admin reader (lead inbox, CSV export, the drawer's "Copy
+// JSON") returns these records verbatim. Stripping on read is what makes the
+// upgrade apply to the file that is already on disk.
+test("readJsonlRecords drops an ip left by an older writer", async () => {
+  const { readJsonlRecords } = await import("../lib/store.js");
+  await writeFile(
+    join(dataDir, "legacy.jsonl"),
+    `${JSON.stringify({ id: "old", ip: "203.0.113.9", lead: { email: "a@b.invalid" } })}\n`,
+    "utf8",
+  );
+
+  const records = await readJsonlRecords("legacy.jsonl");
+  expect(records).toHaveLength(1);
+  expect(records[0].ip).toBeUndefined();
+  expect(records[0].lead.email).toBe("a@b.invalid");
+});
+
 test("readJsonlRecords skips a malformed line instead of returning nothing", async () => {
   const { readJsonlRecords } = await import("../lib/store.js");
   await writeFile(join(dataDir, "torn.jsonl"), '{"id":"a"}\n{not json\n{"id":"b"}\n', "utf8");

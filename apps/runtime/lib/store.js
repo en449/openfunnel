@@ -157,7 +157,20 @@ export async function readJsonlRecords(filename) {
     return lines.flatMap((line) => {
       if (!line.trim()) return [];
       try {
-        return [JSON.parse(line)];
+        // `ip` dropped on the way out as well as on the way in. Nothing writes it
+        // any more, but a sink written before that change still holds one on
+        // disk, and every admin reader — the lead inbox, the CSV export, the
+        // drawer's "Copy JSON" — reads these records verbatim. Stripping here
+        // means the upgrade takes effect on the existing file too, without
+        // rewriting a file the operator may be tailing.
+        const parsed = JSON.parse(line);
+        // Object-guarded before the destructure. Rest-destructuring a primitive
+        // boxes it — a stray `"hello"` line would come back as
+        // `{0:"h",1:"e",…}` rather than being skipped — and every reader here
+        // expects a record.
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return [];
+        const { ip: _ip, ...record } = parsed;
+        return [record];
       } catch {
         return [];
       }
@@ -189,7 +202,16 @@ export async function readJsonlRecords(filename) {
  */
 export async function persist(kind, record, opts = {}) {
   const { fanOut = true } = opts;
-  const tasks = [appendJsonl(kind, record), forwardMetaCapi(record)];
+
+  // The sink copy carries no raw IP (PLAN.md §10, REALITY-CHECK.md §3). The
+  // Postgres column has always been a salted hash and `lib/delivery.js` strips
+  // the address off every outbound payload — but `.data/*.jsonl` was written
+  // from the record verbatim, so the one store a deployment with no database
+  // has was also the one store still holding the address in the clear. Stripped
+  // here rather than at the call site because `record.ip` still has an in-process
+  // consumer: `forwardMetaCapi` reads it below, consent-gated and opt-in.
+  const { ip: _ip, ...sinkRecord } = record;
+  const tasks = [appendJsonl(kind, sinkRecord), forwardMetaCapi(record)];
   if (kind === "leads") {
     // The autoresponder is outside the `fanOut` decision on purpose. It is a
     // courtesy mail to the VISITOR, not a delivery of the lead to the operator,

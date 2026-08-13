@@ -253,6 +253,12 @@ describe("ingest", () => {
     const row = JSON.parse(rows.at(-1) || "{}");
     expect(row.lead.email).toBe("jane@example.com");
     expect(row.received_at).toBeTruthy();
+
+    // The sink is the one lead store a deployment with no database has, and it
+    // used to hold the visitor's address in the clear. Both halves matter: the
+    // field is gone, and the address does not survive under some other key.
+    expect(row.ip).toBeUndefined();
+    expect(rows.at(-1)).not.toContain("127.0.0.1");
   });
 
   test("accepts an analytics event", async () => {
@@ -266,6 +272,12 @@ describe("ingest", () => {
     await Bun.sleep(80);
     const rows = (await readFile(join(dataDir, "events.jsonl"), "utf8")).trim().split("\n");
     expect(JSON.parse(rows.at(-1) || "{}").type).toBe("step_view");
+
+    // Events go through the same `persist()` strip as leads. Asserted on both
+    // kinds, because the strip lives above a `kind` branch and a refactor that
+    // moves it below one would leave this sink holding addresses in silence.
+    expect(JSON.parse(rows.at(-1) || "{}").ip).toBeUndefined();
+    expect(rows.at(-1)).not.toContain("127.0.0.1");
   });
 
   test("rejects malformed bodies and wrong methods", async () => {

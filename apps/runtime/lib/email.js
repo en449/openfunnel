@@ -96,6 +96,35 @@ const SECRET_EMAIL_KEYS = Object.keys(SECRET_ENV);
 /** Sender used when the operator has configured none. Not a deliverable address. */
 const DEFAULT_FROM = "OpenFunnel Leads <leads@openfunnel.dev>";
 
+/**
+ * The first transport whose environment key is set, in `API_TRANSPORTS` order —
+ * which is the order that decides the default path (see the table's header).
+ *
+ * Reads `API_TRANSPORTS` and `SECRET_ENV`, both declared below: this runs per
+ * call, long after module init, so there is no temporal-dead-zone problem. It is
+ * placed here because it belongs to `getEmailSettings`, which is the only caller.
+ *
+ * @returns {string} A transport name, or "" when no provider key is configured.
+ */
+function envTransport() {
+  return emailTransportNames().find((name) => process.env[emailTransportEnvVar(name)]) || "";
+}
+
+/**
+ * The transports, in the order that decides the default path. Exported so a test
+ * can hold the table to its own rules rather than restating them.
+ */
+export const emailTransportNames = () => Object.keys(API_TRANSPORTS);
+
+/**
+ * The environment variable a transport's key comes from, or "" if the table and
+ * `SECRET_ENV` have drifted — which would make that transport unselectable by
+ * inference, silently. A test asserts this is never empty.
+ *
+ * @param {string} name
+ */
+export const emailTransportEnvVar = (name) => SECRET_ENV[API_TRANSPORTS[name]?.keyField] || "";
+
 export async function getEmailSettings() {
   const settingsFile = join(dataDir(), "email_settings.json");
   let stored = {};
@@ -111,11 +140,12 @@ export async function getEmailSettings() {
   const explicit = stored.provider || process.env.EMAIL_PROVIDER || "";
 
   const cfg = {
-    // Resend is checked before Brevo so an install that has only RESEND_API_KEY
-    // and no EMAIL_PROVIDER resolves exactly as it did before Brevo existed.
-    provider:
-      explicit ||
-      (process.env.RESEND_API_KEY ? "resend" : process.env.BREVO_API_KEY ? "brevo" : process.env.SMTP_HOST ? "smtp" : "none"),
+    // Derived from `API_TRANSPORTS` rather than re-listed here. This used to be
+    // a hand-written ternary chain, which made the default provider two facts in
+    // two places: reorder the table for the DSGVO gate (PLAN.md §8.3) and forget
+    // this line, and the ambiguity warning names one provider while another
+    // sends. Now there is one order and it cannot disagree with itself.
+    provider: explicit || envTransport() || (process.env.SMTP_HOST ? "smtp" : "none"),
     resendApiKey: stored.resendApiKey || process.env.RESEND_API_KEY || "",
     resendFrom: stored.resendFrom || process.env.RESEND_FROM || DEFAULT_FROM,
     brevoApiKey: stored.brevoApiKey || process.env.BREVO_API_KEY || "",
@@ -257,32 +287,23 @@ function splitAddress(value) {
  * below and is therefore written exactly once.
  *
  * ORDER IS BEHAVIOUR. With no explicit `provider`, the first entry whose key is
- * configured wins, which is why Resend is declared first: an install carrying
- * `RESEND_API_KEY` and nothing else must resolve the way it did before this
- * table existed. Brevo is the DSGVO-preferred one (PLAN.md §8.3) and is selected
- * by naming it in `EMAIL_PROVIDER`, not by shuffling this object.
+ * configured wins, so this order IS the default path — which is what PLAN.md
+ * §8.3's gate is about. Brevo (Brevo SAS, Paris) is declared first because a
+ * German client's leads must not reach a US processor by default; Resend stays
+ * in the table, supported and unchanged, for the installs already on it.
+ *
+ * Reordering this changes exactly one deployment: one that configures BOTH keys
+ * and names neither in `EMAIL_PROVIDER`. That case already warns (once, naming
+ * the variable), and it now resolves to the EU provider rather than to whichever
+ * happened to be written first. An install with only `RESEND_API_KEY` still
+ * sends through Resend — the entry above it has no key, so it is skipped.
+ * `getEmailSettings` runs the same order over the environment; the two have to
+ * be changed together.
  *
  * @type {Record<string, ApiTransport>}
  */
 const API_TRANSPORTS = {
-  resend: {
-    keyField: "resendApiKey",
-    request: (cfg, msg) => ({
-      url: "https://api.resend.com/emails",
-      headers: {
-        authorization: `Bearer ${cfg.resendApiKey}`,
-        "content-type": "application/json",
-      },
-      body: {
-        from: cfg.resendFrom || DEFAULT_FROM,
-        to: msg.recipients,
-        subject: msg.subject,
-        html: msg.html,
-        text: msg.text,
-      },
-    }),
-  },
-  // Brevo SAS, Paris — the EU processor this project moves to, researched in
+  // Brevo SAS, Paris — the EU processor this project defaults to, researched in
   // reference/eu-mail-providers-2026-08-10.md. The key travels in its own
   // header, never in the URL: a URL carrying a credential is what forces the
   // errSummary rule on every fetch rejection in this repo.
@@ -301,6 +322,27 @@ const API_TRANSPORTS = {
         subject: msg.subject,
         htmlContent: msg.html,
         textContent: msg.text,
+      },
+    }),
+  },
+  // Resend Inc. (US). Still fully supported — an install already sending through
+  // it keeps working with no change — but it is no longer what an unconfigured
+  // deployment reaches for first. See PLAN.md §8.3: a US processor in the mail
+  // path is a subprocessor a German client's AVV has to carry.
+  resend: {
+    keyField: "resendApiKey",
+    request: (cfg, msg) => ({
+      url: "https://api.resend.com/emails",
+      headers: {
+        authorization: `Bearer ${cfg.resendApiKey}`,
+        "content-type": "application/json",
+      },
+      body: {
+        from: cfg.resendFrom || DEFAULT_FROM,
+        to: msg.recipients,
+        subject: msg.subject,
+        html: msg.html,
+        text: msg.text,
       },
     }),
   },
@@ -349,9 +391,10 @@ function warnAmbiguousProvider(explicit, cfg) {
  * A named provider wins even with no key configured — a deployment that says
  * `EMAIL_PROVIDER=brevo` and forgot the key has to fail loudly as Brevo rather
  * than quietly succeed as something else. Otherwise the first configured key
- * wins, which is the old `cfg.resendApiKey && cfg.provider !== "smtp"` fallback
- * generalised, `provider: "smtp"` included: that value means the operator chose
- * the relay path below, so a stale API key must not override it.
+ * wins in `API_TRANSPORTS` order, which since 2026-08-13 means the EU provider
+ * ahead of the US one (PLAN.md §8.3). `provider: "smtp"` still short-circuits:
+ * that value means the operator chose the relay path below, so a stale API key
+ * must not override it.
  *
  * @param {any} cfg
  * @returns {string|null}

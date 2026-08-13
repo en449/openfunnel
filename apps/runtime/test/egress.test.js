@@ -15,8 +15,17 @@
 
 import { describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
+
+/* Bun auto-loads the repo's `.env`, and `webhookConfigFor` reads the environment
+ * BEFORE the funnel document — so a real WEBHOOK_URL lying around would send the
+ * fan-out test's synthetic lead to a real destination. Unset, never restored:
+ * the hazard is the next test file inheriting a live endpoint, not the absence
+ * of one. */
+for (const key of ["WEBHOOK_URL", "ZAPIER_WEBHOOK_URL", "WEBHOOK_SECRET"]) {
+  delete process.env[key];
+}
 import { isInside, isPreviewRecord, isSafeWebhookTarget, isSafeWebhookTargetResolved, resolveSafeTarget } from "../server.js";
-import { withDnsTimeout } from "../lib/webhook.js";
+import { forwardWebhook, outboundPayload, withDnsTimeout } from "../lib/webhook.js";
 
 describe("isSafeWebhookTarget", () => {
   test("allows ordinary public destinations", () => {
@@ -276,5 +285,61 @@ describe("withDnsTimeout", () => {
   // refuse more, never turn a failed resolution into a usable one.
   test("a lookup that fails still fails", async () => {
     await expect(withDnsTimeout(Promise.reject(new Error("ENOTFOUND")))).rejects.toThrow("ENOTFOUND");
+  });
+});
+
+// The queue path (`lib/delivery.js`) stripped these three and the direct fan-out
+// did not, so the address the rest of the system takes care to hash was posted to
+// the operator's CRM in the clear — on every install with no database, which is
+// exactly what the fan-out exists for. Both callers now share `outboundPayload`.
+//
+// An IP literal is used as the destination so nothing here needs DNS.
+describe("forwardWebhook — what actually leaves the server", () => {
+  const record = {
+    funnelId: "lead-gen",
+    sessionId: "sess-1",
+    lead: { email: "jane@example.invalid" },
+    answers: { goal: "grow" },
+    received_at: "2026-08-13T00:00:00.000Z",
+    ip: "203.0.113.9",
+    referer: "https://ads.example.invalid/campaign",
+    user_agent: "Mozilla/5.0 (test)",
+  };
+
+  test("the payload carries the lead and none of the visitor's context", async () => {
+    /** @type {any[]} */
+    const calls = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = /** @type {any} */ (
+      async (url, init) => {
+        calls.push({ url: String(url), init });
+        return new Response("{}", { status: 200 });
+      }
+    );
+
+    try {
+      await forwardWebhook(record, { integrations: { webhookUrl: "https://8.8.8.8/hook" } });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+
+    expect(calls).toHaveLength(1);
+    const body = JSON.parse(calls[0].init.body);
+
+    // Still a usable delivery.
+    expect(body.lead.email).toBe("jane@example.invalid");
+    expect(body.answers).toEqual({ goal: "grow" });
+
+    expect(body.ip).toBeUndefined();
+    expect(body.referer).toBeUndefined();
+    expect(body.user_agent).toBeUndefined();
+    // Not under any other key either — the record is the operator's own shape
+    // and a future field could carry the address along by accident.
+    expect(calls[0].init.body).not.toContain("203.0.113.9");
+  });
+
+  test("outboundPayload leaves a record that never had them alone", () => {
+    expect(outboundPayload({ lead: { email: "a@b.invalid" } })).toEqual({ lead: { email: "a@b.invalid" } });
+    expect(outboundPayload(/** @type {any} */ (null))).toEqual({});
   });
 });

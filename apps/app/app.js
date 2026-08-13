@@ -2544,7 +2544,10 @@ function openLeadDrawer(lead) {
 
     <div class="kv" style="margin-top:16px">
       <div class="kv-key">Raw Submission Metadata</div>
-      <div class="kv-val"><pre>${esc(JSON.stringify({ id: lead.id, received_at: lead.received_at, funnelId: lead.funnelId, ip: lead.ip || "127.0.0.1" }, null, 2))}</pre></div>
+      <!-- No IP field: nothing stores one any more (PLAN.md §10), and the line
+           that used to print one fell back to a hardcoded "127.0.0.1" whenever
+           the record had none — a fabricated address in a panel labelled raw. -->
+      <div class="kv-val"><pre>${esc(JSON.stringify({ id: lead.id, received_at: lead.received_at, funnelId: lead.funnelId }, null, 2))}</pre></div>
     </div>
 
     <div style="margin-top:20px;padding-top:14px;border-top:1px solid var(--line);display:flex;gap:8px">
@@ -2606,7 +2609,6 @@ function exportCsv() {
     "fbclid",
     "answers",
     "referrer",
-    "ip",
   ];
   const rows = leads.map((l) => {
     const utm = l.meta?.utm || l.utm || {};
@@ -2625,7 +2627,6 @@ function exportCsv() {
       utm.fbclid || "",
       JSON.stringify(l.answers || {}),
       l.referrer || l.meta?.referrer || "",
-      l.ip || "",
     ].map(cell).join(",");
   });
 

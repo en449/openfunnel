@@ -402,6 +402,83 @@ must not be inside this repo).
 
 ## Session Log
 
+### 2026-08-13 (session 9) — the checklist told the truth, and two gates closed behind it
+
+Two pieces of work, in that order, both inside Free tier.
+
+**PLAN.md §10 Phase 1, re-ticked against the code** (`d96b7b6`, docs only). Nine shipped items were
+still unticked. More useful than the ticks: six lines describe something that shipped in a different
+shape than they asked for, and now say so — the router port also passes `waitUntil` in, rate limits
+kept the in-process bucket as a fallback while OTP fails closed, loopback trust was made unreachable
+off Bun rather than removed, migrations carry a commented rollback block rather than a runnable down,
+only leads are transactional with their delivery rows (events have no targets), and the inline first
+attempt has no abort polling because `supportsCancellation` is deliberately off. Two lines were
+part-shipped and split rather than ticked: Google Sheets as a delivery target was never built, and
+the Brevo gate was half closed.
+
+**Then the two gates that were cheap and genuinely open.**
+
+*Resend off the default path.* The adapter has been live since session 6, but `resend` was the first
+entry in `API_TRANSPORTS` — and that table's order IS the default path, so an install with both keys
+and no `EMAIL_PROVIDER` still sent a German client's leads through a US processor. Brevo leads now.
+The trap worth remembering: the decision has **two halves**, the table order and the inference chain
+in `getEmailSettings`, and reverting only the chain in the red-check was enough to turn the test red
+— so a future edit that flips one and not the other would have the warning naming one provider while
+another sends. An install with only `RESEND_API_KEY` is untouched; Resend stays supported.
+
+*No raw IP anywhere.* The lead column has been a salted hash since WO4, which is what made this look
+done. It was not, and the gap was not where the reality-check had recorded it — the address was in
+**four** other places, one of which was not a store at all but an egress:
+
+- **The direct fan-out's webhook posted the whole record**, `ip` / `referer` / `user_agent` included,
+  to the operator's CRM. The queue path had stripped them since WO5 and `forwardWebhook` never did,
+  so the one path that runs on every install *without* a database — the self-hoster's entire
+  deployment — was shipping the field the rest of the system hashes, to a third party, in the clear.
+  Caught by the reviewer, not by me: I had traced the datum to every *store* and stopped there.
+  There is one stripper now, `outboundPayload()` in `lib/webhook.js`, called by both paths, because
+  the fan-out is what the queue degrades to and two copies of that field list would drift.
+
+And three stores:
+
+- `.data/*.jsonl`, written from the record verbatim. That is the only lead store a deployment with
+  no database has, so the "we hash the IP" claim was false for exactly the self-hoster it mattered
+  to. Stripped in `persist()`, not at the call site: `record.ip` still has an in-process consumer in
+  the opt-in Meta CAPI forward.
+- `rate_bucket.key` in Postgres. Every per-IP and per-address ceiling puts its subject in the key —
+  `ingest:<ip>`, `otp-send:<email>` — and WO9 moved those buckets out of a heap and into a table
+  without anyone noticing that the key had become durable personal data. `rateLimit` now hashes on
+  the way out. Nothing ever reads a key back, so the digest costs the limiter nothing. The salt
+  policy differs from the lead column on purpose: no salt degrades to an unsalted digest rather than
+  storing nothing, because a bucket that is not written is a ceiling that does not bind.
+- The console's lead drawer, which printed `lead.ip || "127.0.0.1"` — so the moment the stores went
+  clean it started displaying a **fabricated** address in a panel labelled raw metadata.
+
+Two smaller things went with it: `readJsonlRecords` strips `ip` on the way out too, so a sink written
+before today stops feeding addresses to the admin readers without rewriting a file the operator may
+be tailing; and the provider default stopped being two facts in two places — `getEmailSettings` now
+derives its order from `Object.keys(API_TRANSPORTS)` instead of re-listing it in a ternary.
+
+The general lesson, and it is the same shape as session 8's fifth font hotlink: **a privacy claim
+written about one store is a claim about one store.** Grep for the datum, not for the control. The
+reviewer found the egress leak precisely because it was told the goal ("no raw IP written anywhere")
+rather than the diff.
+
+**Named and left:** two paths still print a raw email address to the server log — the `logged`
+transport's `console.log` in `lib/email.js`, and the `unverified lead claimed email_verified`
+warning in `routes/ingest.js`, which exists to surface a client lying about verification. Neither is
+new and "nothing logs a raw email" is not an invariant here today; if it becomes one, those two are
+the sites. Written down so the next reader knows it was seen, not missed.
+
+Red-checked every fix by reverting it and watching the exact new assertion fail: raw record to the
+sink, plain key to `rate_hit`, the inference chain back to Resend-first, the raw record to
+`forwardWebhook`, the unstripped read path, and a `SECRET_ENV` key renamed so the transport table
+drifts from it — and, for the email derivation, by inserting a bogus first entry in
+`API_TRANSPORTS` and confirming the inference followed the table. Reviewer round 1
+FAIL (the egress leak) → fixed → round 2. qa PASS both rounds: 244 pass / 1 fail (the known Bun
+1.3.13 413-vs-400), typecheck and all three check scripts green, plus a production-mode run that
+submitted a synthetic lead and confirmed the written record carries neither an `ip` field nor the
+address.
+
 ### 2026-08-12 (session 8) — the DSGVO font gate, and the reason it does not reach everyone yet
 
 The phase-exit gate from PLAN.md §8.2: self-host the preset fonts, delete the Google Fonts path,

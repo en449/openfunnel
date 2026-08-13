@@ -16,7 +16,14 @@
  * abuse it exists to stop. The fallback is never worse than the status quo
  * before this file called Postgres at all, so failing the request over a
  * database hiccup was never on the table.
+ *
+ * What reaches the table is a salted digest, never the key the caller built —
+ * see `bucketKey()`. The subject of every per-IP and per-address limit is
+ * personal data, and moving the buckets into Postgres turned strings that used
+ * to live for an hour in one heap into rows sitting in a database.
  */
+
+import { createHash } from "node:crypto";
 
 import { dbConfigured, rpc } from "./db.js";
 import { CORS, json } from "./http.js";
@@ -77,6 +84,45 @@ function inMemoryRateLimit(key, max, windowMs) {
   return true;
 }
 
+let warnedUnsaltedRateKeys = false;
+
+/**
+ * What actually reaches `rate_bucket.key`.
+ *
+ * The keys callers build are `ingest:<ip>`, `otp-send:<email>`,
+ * `autoresponder:<recipient>` — the subject of the limit IS the personal datum,
+ * and since the buckets moved into Postgres those strings are personal data at
+ * rest. Nothing ever reads a key back (the only operation is equality against
+ * the one being written), so a digest works exactly as well as the text and the
+ * table stops holding addresses. This is the same rule the lead column follows,
+ * one layer down.
+ *
+ * Salted with `IP_HASH_SALT`, because the IPv4 space is 2^32 and an unsalted
+ * digest of an address is the address wearing a disguise. Unlike the lead
+ * column, a missing salt cannot mean "store nothing" — a bucket that is not
+ * written is a ceiling that does not bind, which is the abuse hole this file
+ * exists to close. So it degrades to an unsalted digest and says so once.
+ *
+ * Read per call rather than at import: the tests set the salt after this module
+ * is loaded, and a deployment that adds it later should not need a redeploy to
+ * get the stronger form. Both halves of the pair must agree on it, but there is
+ * only one half — the same process writes and reads.
+ *
+ * @param {string} key
+ * @returns {string}
+ */
+function bucketKey(key) {
+  const salt = process.env.IP_HASH_SALT || "";
+  if (!salt && !warnedUnsaltedRateKeys) {
+    warnedUnsaltedRateKeys = true;
+    console.warn(
+      "[ratelimit] IP_HASH_SALT is unset — rate-bucket keys are hashed without a salt, which is " +
+        "reversible for an IP address. Set it; the limits themselves are unaffected either way.",
+    );
+  }
+  return createHash("sha256").update(`${salt}:${key}`).digest("hex").slice(0, 32);
+}
+
 /**
  * The one rate limiter in the codebase — every caller from `/api/lead` to the
  * admin test-email route goes through this, so a new endpoint cannot pick up a
@@ -97,7 +143,10 @@ export async function rateLimit(key, max, windowMs) {
   if (!dbConfigured()) return inMemoryRateLimit(key, max, windowMs);
 
   try {
-    return Boolean(await rpc("rate_hit", { p_key: key, p_max: max, p_window_ms: windowMs }));
+    // Hashed on the way out only. The in-process fallback keys a `Map` in this
+    // heap, which dies with the process and is not a store — nothing is gained
+    // by hiding a value from the code holding it.
+    return Boolean(await rpc("rate_hit", { p_key: bucketKey(key), p_max: max, p_window_ms: windowMs }));
   } catch (err) {
     const now = Date.now();
     if (now - lastRpcFallbackWarnAt > 60_000) {

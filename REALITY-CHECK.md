@@ -82,16 +82,28 @@ demonstrated fact rather than an argument. Phase 1 ordering is correct.
 
 ---
 
-## 3. CONFIRMED — raw IP stored in plaintext
+## 3. CONFIRMED — raw IP stored in plaintext — **CLOSED 2026-08-13**
 
-Every record in `.data/leads.jsonl`:
+Every record in `.data/leads.jsonl` used to read:
 
 ```json
 {"funnelId":"lead-gen","lead":{...},"received_at":"...","ip":"127.0.0.1","user_agent":"curl/8.7.1"}
 ```
 
-The plan's requirement to store a salted hash (§6 item 15) is closing a real gap, not a
-theoretical one. Same for `user_agent`, which is retained in full.
+The plan's requirement to store a salted hash (§6 item 15) was closing a real gap, not a
+theoretical one — and the gap was wider than this file's one example. Closed in two passes
+(WO4 2026-08-12, the rest 2026-08-13): `lead.ip_hash` is a salted digest, omitted entirely when
+no salt is set; `persist()` strips `ip` before the sink above and `readJsonlRecords()` strips it
+again on read, so an older file stops leaking too; `rate_hit` receives a salted digest instead of
+`ingest:<ip>` / `otp-send:<email>`, which became durable rows when the buckets moved to Postgres;
+and one shared `outboundPayload()` strips the address off every outbound payload. That last one
+was the real find: only the queue path had been stripping, so the **direct fan-out** — the path
+every install without a database runs — was posting the raw IP to the operator's webhook. See
+PLAN.md §10 and the "Nothing stores a raw IP" invariant in CLAUDE.md.
+
+**`user_agent` is still retained in full**, in the sink and in its own column. That is a
+separate decision, not an oversight — it is the one signal left for telling a bot submission
+from a real one — but it belongs in the Datenschutzerklärung and in the Löschkonzept (§8.7).
 
 ---
 

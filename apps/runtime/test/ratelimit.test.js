@@ -51,11 +51,49 @@ test("rate_hit returning false produces false from rateLimit", async () => {
   expect(allowed).toBe(false);
   expect(calls).toHaveLength(1);
   expect(calls[0].url).toBe("https://db.test.invalid/rest/v1/rpc/rate_hit");
-  expect(JSON.parse(calls[0].init.body)).toEqual({
-    p_key: "test:rate-hit-false",
-    p_max: 5,
-    p_window_ms: 60_000,
-  });
+
+  const body = JSON.parse(calls[0].init.body);
+  expect(body.p_max).toBe(5);
+  expect(body.p_window_ms).toBe(60_000);
+  // The key the caller built never reaches the table — see `bucketKey()`. Every
+  // per-IP and per-address limit puts its subject in that string, so a plain
+  // key is an address (or an email) stored in Postgres.
+  expect(body.p_key).not.toContain("rate-hit-false");
+  expect(body.p_key).toMatch(/^[0-9a-f]{32}$/);
+});
+
+// Stable, or the limit resets on every call and binds nothing at all — the
+// failure mode a per-process salt would have produced.
+test("the same key hashes to the same bucket, a different key does not", async () => {
+  const { rateLimit } = await import("../lib/ratelimit.js");
+  const calls = stub(() => jsonResponse(true));
+
+  await rateLimit("ingest:203.0.113.9", 5, 60_000);
+  await rateLimit("ingest:203.0.113.9", 5, 60_000);
+  await rateLimit("ingest:203.0.113.10", 5, 60_000);
+
+  const keys = calls.map((c) => JSON.parse(c.init.body).p_key);
+  expect(keys[0]).toBe(keys[1]);
+  expect(keys[2]).not.toBe(keys[0]);
+  for (const key of keys) expect(key).not.toContain("203.0.113");
+});
+
+// The salt is what stops a 2^32 walk of the IPv4 space from turning the digest
+// back into the address, so the two forms must not be the same string.
+test("IP_HASH_SALT changes the digest", async () => {
+  const { rateLimit } = await import("../lib/ratelimit.js");
+  const calls = stub(() => jsonResponse(true));
+
+  await rateLimit("ingest:203.0.113.9", 5, 60_000);
+  process.env.IP_HASH_SALT = "pepper-not-a-real-salt";
+  try {
+    await rateLimit("ingest:203.0.113.9", 5, 60_000);
+  } finally {
+    delete process.env.IP_HASH_SALT;
+  }
+
+  const [unsalted, salted] = calls.map((c) => JSON.parse(c.init.body).p_key);
+  expect(salted).not.toBe(unsalted);
 });
 
 test("rate_hit returning true produces true from rateLimit", async () => {

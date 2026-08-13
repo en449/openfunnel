@@ -245,6 +245,28 @@ export function webhookConfigFor(funnel) {
 }
 
 /**
+ * What may leave the server in an outbound lead payload.
+ *
+ * `ip`, `referer` and `user_agent` are dropped. The address is stored hashed and
+ * must not travel; the other two are the visitor's browsing context, and the
+ * destination is a third party the visitor never consented to.
+ *
+ * This is the ONE stripper. `lib/delivery.js` (the queue path) had it and the
+ * fan-out here did not, so the exact field the rest of the system takes care to
+ * hash was posted to the operator's CRM in the clear — on every install running
+ * without a database, which is the fan-out's whole purpose, and on every lead
+ * that degraded to it. A second copy of this list would drift the same way, so
+ * both callers import this one.
+ *
+ * @param {Record<string, any>} record
+ * @returns {Record<string, any>}
+ */
+export function outboundPayload(record) {
+  const { ip: _ip, referer: _referer, user_agent: _ua, ...rest } = record || {};
+  return rest;
+}
+
+/**
  * Forward a captured lead to a Webhook URL (Zapier, Make, GoHighLevel, HubSpot, CRM).
  *
  * @param {Record<string, any>} record
@@ -279,7 +301,7 @@ export async function forwardWebhook(record, funnel) {
     const res = await fetch(target.url, {
       method: "POST",
       headers,
-      body: JSON.stringify(record),
+      body: JSON.stringify(outboundPayload(record)),
       redirect: "manual", // a 302 would sidestep the target check above
     });
     if (!res.ok) console.warn(`[runtime] webhook dispatch HTTP ${res.status}`);

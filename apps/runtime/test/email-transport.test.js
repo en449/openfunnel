@@ -98,6 +98,19 @@ test("an array of recipients is split per address, not passed through as strings
   expect(body.to).toEqual([{ email: "a@example.invalid" }, { name: "Ops Team", email: "b@example.invalid" }]);
 });
 
+// `envTransport()` looks each transport's environment variable up through
+// SECRET_ENV. A transport added to the table without an entry there resolves to
+// `process.env[undefined]` — always falsy — so it could never become the
+// inferred default even with its key set, and nothing would say so. Cheaper to
+// fail here than to debug a provider that silently never gets picked.
+test("every transport's key field has an environment variable behind it", async () => {
+  const { emailTransportNames, emailTransportEnvVar } = await import("../lib/email.js");
+
+  for (const name of emailTransportNames()) {
+    expect(emailTransportEnvVar(name)).toBeTruthy();
+  }
+});
+
 test("a Brevo rejection maps to its own error code and does not claim success", async () => {
   process.env.EMAIL_PROVIDER = "brevo";
   process.env.BREVO_API_KEY = "xkeysib-not-a-real-key";
@@ -130,7 +143,13 @@ test("RESEND_API_KEY alone still sends through Resend, unchanged", async () => {
 // for — an operator adding a second key to migrate, who then keeps sending
 // through the first with no signal at all. It is once per process, so it has to
 // be captured at the first send that can raise it.
-test("with both keys and no EMAIL_PROVIDER, the pre-existing provider keeps the traffic — and says so", async () => {
+//
+// The direction of this test flipped on 2026-08-13 with PLAN.md §8.3's gate: the
+// table order IS the default path, so with two keys and nobody choosing, the EU
+// provider takes the traffic. The warning is what makes that survivable — an
+// operator who did want Resend sees which one is sending and the variable that
+// decides it.
+test("with both keys and no EMAIL_PROVIDER, the EU provider takes the traffic — and says so", async () => {
   process.env.RESEND_API_KEY = "re_not_a_real_key";
   process.env.BREVO_API_KEY = "xkeysib-not-a-real-key";
 
@@ -139,8 +158,8 @@ test("with both keys and no EMAIL_PROVIDER, the pre-existing provider keeps the 
   console.warn = (...args) => warnings.push(args.join(" "));
   try {
     const calls = stub(200);
-    expect((await sendEmail(message)).provider).toBe("resend");
-    expect(calls[0].url).toContain("api.resend.com");
+    expect((await sendEmail(message)).provider).toBe("brevo");
+    expect(calls[0].url).toContain("api.brevo.com");
 
     const ambiguous = warnings.filter((line) => line.includes("more than one provider key"));
     expect(ambiguous).toHaveLength(1);

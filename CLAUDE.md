@@ -296,13 +296,42 @@ alive after the response; Vercel supplies neither. Three rules follow:
   only delivery a lead the queue refused will get, so `/api/lead` may become
   slower and must never become lossy.
 
-**Nothing stores a raw IP.** `routes/ingest.js` hashes it with `IP_HASH_SALT`
-into `lead.ip_hash`, and with no salt set it stores nothing at all rather than
-an unsalted hash — the IPv4 space is 2^32, so an unsalted digest is the address
-wearing a disguise. Rate limiting is unaffected either way: that runs on the
-address in this process and never touches the column. `lib/delivery.js` strips
-`ip`, `referer` and `user_agent` from the payload again on the way out, because
-a webhook body leaving the server is the one copy that cannot be recalled.
+**Nothing stores a raw IP** — and "nothing" is four places, because the address
+arrives on the record and every store downstream had to be closed separately.
+
+- `routes/ingest.js` hashes it with `IP_HASH_SALT` into `lead.ip_hash`, and with
+  no salt set it stores nothing at all rather than an unsalted hash — the IPv4
+  space is 2^32, so an unsalted digest is the address wearing a disguise.
+- `persist()` strips `ip` before the JSONL sink. `.data/*.jsonl` was written from
+  the record verbatim, so the one lead store a deployment with no database has
+  was the one still holding the address in the clear. The record keeps `ip`
+  in-process for `forwardMetaCapi`, which is opt-in and consent-gated.
+- `lib/ratelimit.js` sends `rate_hit` a salted digest of the key, never the key
+  itself. Every per-IP and per-address ceiling puts its subject in that string
+  (`ingest:<ip>`, `otp-send:<email>`), and once the buckets moved into Postgres
+  those became rows rather than a `Map` in one heap. Here a missing salt degrades
+  to an unsalted digest instead of storing nothing — a bucket that is not written
+  is a ceiling that does not bind. Nothing reads a key back, so the digest costs
+  the limiter nothing.
+- **Outbound payloads go through `outboundPayload()` in `lib/webhook.js`** —
+  `ip`, `referer` and `user_agent` are dropped, because a body leaving the
+  server is the one copy that cannot be recalled. It is a shared helper for a
+  reason: the queue path (`recordOf` in `lib/delivery.js`) stripped them and the
+  direct fan-out (`forwardWebhook`) did not, so the address the rest of this
+  list takes care to hash was posted to the operator's CRM in the clear — on
+  every install running without a database, which is the fan-out's whole
+  purpose, and on every lead that degraded to it. Any new outbound channel calls
+  this helper rather than re-listing the fields.
+- `readJsonlRecords()` strips `ip` on the way out as well, so a sink written
+  before all of the above stops feeding addresses to the admin readers.
+
+The console shows no IP either, and did not simply hide the field: the lead
+drawer printed `lead.ip || "127.0.0.1"`, so once nothing stored an address it
+displayed a fabricated one in a panel labelled raw metadata.
+
+The pattern behind all of it: a privacy claim written about one store is a claim
+about one store. When you add a datum to the record, grep for the datum and find
+every sink it reaches — the control you added is not the audit.
 
 **Preview traffic must never pollute analytics.** Two independent guards, and
 new code needs both: `Controller._emit()` bails when `isPreview` or
@@ -734,10 +763,16 @@ once per accumulated listener.
   anything else falls through to a hardcoded built-in generator that always
   returns the same 5-step funnel. A "success" response does not mean a model ran.
 - Direct SMTP is **not implemented**. The working transports are the JSON-API
-  providers in `API_TRANSPORTS` (`RESEND_API_KEY`, `BREVO_API_KEY`) plus
+  providers in `API_TRANSPORTS` (`BREVO_API_KEY`, `RESEND_API_KEY`) plus
   `SMTP_RELAY_URL`, selected by `EMAIL_PROVIDER`; a named provider is used even
   with no key configured, so a missing key fails loudly as that provider rather
-  than silently sending through another one. Setting only `SMTP_*` logs a
+  than silently sending through another one. **The declaration order of
+  `API_TRANSPORTS` is the default path**, and Brevo (EU) is declared first for
+  that reason (PLAN.md §8.3) — with both keys and no `EMAIL_PROVIDER`, Brevo
+  sends and a one-time warning names the variable. The inference chain in
+  `getEmailSettings` runs the same order over the environment; change one and
+  you must change the other, or the warning names one provider while another
+  sends. Setting only `SMTP_*` logs a
   warning and sends nothing. `sendEmail` reports `ok: false` in that case rather
   than claiming success, so don't "fix" a failing send by making it return true.
 - Rate limits and OTP verification are Postgres-backed (`rate_hit`, `issue_otp`,

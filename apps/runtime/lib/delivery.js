@@ -30,7 +30,7 @@ import { dbErrorKind, rpc } from "./db.js";
 import { alertDeadLetters, leadNotificationEmail, sendEmail } from "./email.js";
 import { errSummary, oneLine } from "./log.js";
 import { MAIL_HOURLY_CAP, rateLimit } from "./ratelimit.js";
-import { isSafeWebhookTarget, resolveSafeTarget } from "./webhook.js";
+import { isSafeWebhookTarget, outboundPayload, resolveSafeTarget } from "./webhook.js";
 
 /**
  * Per-attempt ceiling. Well under the 5-minute lease, so a hung endpoint gives
@@ -67,9 +67,9 @@ const maxParallel = () => Math.max(1, Number(process.env.DELIVERY_PARALLEL) || 5
  * Rebuild the record shape the old fan-out shipped, so an automation already
  * receiving OpenFunnel webhooks keeps parsing them after this change.
  *
- * Two fields the old shape had are deliberately gone: `ip` and `referer`. The
- * IP is stored hashed and never leaves, and neither belongs in a payload sent
- * to a third party the visitor never consented to.
+ * Three fields the old shape had are deliberately gone: `ip`, `referer` and
+ * `user_agent`. The IP is stored hashed and never leaves, and none of the three
+ * belongs in a payload sent to a third party the visitor never consented to.
  *
  * @param {Claim} claim
  */
@@ -78,7 +78,11 @@ function recordOf(claim) {
   // the column; this keeps them out of the request even if a row predates that
   // change or arrives from a future writer — the two are different failures and
   // only one of them is undoable, because this one has already left the server.
-  const { ip: _ip, referer: _referer, user_agent: _ua, ...payload } = claim.payload || {};
+  //
+  // Shared with the fan-out's `forwardWebhook` rather than re-listed here: the
+  // queue is what the fan-out degrades to, so the day the two lists disagree is
+  // the day an outage starts leaking a field the healthy path removes.
+  const payload = outboundPayload(claim.payload || {});
   return {
     ...payload,
     funnelId: claim.funnel_slug,
