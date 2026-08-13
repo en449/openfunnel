@@ -20,6 +20,15 @@ const state = {
   /** The document being edited. May not exist on disk yet. */
   funnel: null,
   stepIndex: 0,
+  /**
+   * Storage objects the operator removed from a field, waiting for the save that
+   * makes that removal real. Emptied by `purgeRemovedAssets()` after a
+   * successful save — see `removeImageField`. Nothing here is deleted until the
+   * document that stopped referencing it is on disk.
+   *
+   * @type {string[]}
+   */
+  pendingAssetDeletes: [],
   /** @type {any[]} */
   leads: [],
   /** @type {any} */
@@ -90,7 +99,7 @@ const BLOCK_SCHEMA = {
     glyph: "🖼",
     make: () => ({ type: "image", src: "" }),
     fields: [
-      { key: "src", label: "Image URL", kind: "url" },
+      { key: "src", label: "Image URL", kind: "image" },
       { key: "alt", label: "Alt text", kind: "text" },
       { key: "aspect", label: "Aspect ratio", kind: "text", placeholder: "16/9" },
       { key: "fit", label: "Fit", kind: "pick", options: ["cover", "contain"] },
@@ -102,7 +111,7 @@ const BLOCK_SCHEMA = {
     make: () => ({ type: "video", src: "" }),
     fields: [
       { key: "src", label: "Video or YouTube/Vimeo URL", kind: "url" },
-      { key: "poster", label: "Poster image URL", kind: "url" },
+      { key: "poster", label: "Poster image URL", kind: "image" },
       { key: "autoplay", label: "Autoplay (muted)", kind: "bool" },
     ],
   },
@@ -128,7 +137,7 @@ const BLOCK_SCHEMA = {
           { key: "icon", label: "Icon", kind: "text" },
           { key: "title", label: "Title", kind: "text" },
           { key: "text", label: "Description", kind: "area" },
-          { key: "image", label: "Image URL (replaces icon)", kind: "url" },
+          { key: "image", label: "Image URL (replaces icon)", kind: "image" },
         ],
       },
     ],
@@ -249,7 +258,7 @@ const BLOCK_SCHEMA = {
           { key: "text", label: "Quote", kind: "area" },
           { key: "name", label: "Name", kind: "text" },
           { key: "rating", label: "Rating (0–5)", kind: "num" },
-          { key: "avatar", label: "Avatar URL", kind: "url" },
+          { key: "avatar", label: "Avatar URL", kind: "image" },
         ],
       },
     ],
@@ -263,7 +272,7 @@ const BLOCK_SCHEMA = {
       { key: "name", label: "Name", kind: "text" },
       { key: "role", label: "Role / company", kind: "text" },
       { key: "rating", label: "Rating (0–5)", kind: "num" },
-      { key: "avatar", label: "Avatar URL", kind: "url" },
+      { key: "avatar", label: "Avatar URL", kind: "image" },
     ],
   },
   gallery: {
@@ -278,7 +287,7 @@ const BLOCK_SCHEMA = {
         kind: "list",
         add: () => ({ src: "" }),
         item: [
-          { key: "src", label: "Image URL", kind: "url" },
+          { key: "src", label: "Image URL", kind: "image" },
           { key: "caption", label: "Caption", kind: "text" },
           { key: "alt", label: "Alt text", kind: "text" },
         ],
@@ -343,7 +352,7 @@ const BLOCK_SCHEMA = {
         add: () => ({ label: "New badge" }),
         item: [
           { key: "label", label: "Label", kind: "text" },
-          { key: "src", label: "Logo URL (replaces label)", kind: "url" },
+          { key: "src", label: "Logo URL (replaces label)", kind: "image" },
         ],
       },
     ],
@@ -763,6 +772,9 @@ async function saveFunnel() {
     }
     markDirty(false);
     label.textContent = "Saved";
+    // Only now: an image removed in the builder is not removed until the
+    // document that stopped pointing at it is the one on disk.
+    void purgeRemovedAssets();
     toast(`${state.funnel.name || state.funnel.slug} saved`);
     await loadFunnelList();
     renderDashboard();
@@ -1458,7 +1470,7 @@ function valueFromControl(el) {
 function fieldControl(field, base, parent) {
   const path = base ? `${base}.${field.key}` : field.key;
   const raw = parent?.[field.key];
-  const attrs = `data-path="${esc(path)}" data-kind="${esc(field.kind === "area" || field.kind === "url" ? "text" : field.kind === "pick" ? (field.num ? "num" : "text") : field.kind)}"`;
+  const attrs = `data-path="${esc(path)}" data-kind="${esc(field.kind === "area" || field.kind === "url" || field.kind === "image" ? "text" : field.kind === "pick" ? (field.num ? "num" : "text") : field.kind)}"`;
   const hint = field.hint ? `<p class="field-hint">${esc(field.hint)}</p>` : "";
 
   if (field.kind === "bool") {
@@ -1532,6 +1544,26 @@ function fieldControl(field, base, parent) {
     </div>`;
   }
 
+  if (field.kind === "image") {
+    // Same text field the paste box has always been — an operator with their
+    // own CDN keeps that path — plus an "Upload" button next to it and a
+    // "Remove" one that only appears once the value is something OUR bucket
+    // produced (`isStorageAssetUrl`), so it never offers to delete a URL it
+    // does not own.
+    const value = typeof raw === "string" ? raw : "";
+    const canRemove = isStorageAssetUrl(value);
+    return `<div class="field">
+      <label>${esc(field.label)}</label>
+      <input class="input input-mono" type="text" ${attrs} value="${esc(value)}" placeholder="${esc(field.placeholder || "")}" />
+      <div class="repeat-row">
+        <button type="button" class="btn btn-ghost btn-sm" data-img-upload="${esc(path)}">Upload</button>
+        ${canRemove ? `<button type="button" class="btn btn-ghost btn-sm" data-img-remove="${esc(path)}">${icon("close", 12)} Remove</button>` : ""}
+      </div>
+      <p class="field-hint">Uploaded images are stored in a public bucket — anyone with the link can view them.</p>
+      ${hint}
+    </div>`;
+  }
+
   const mono = field.kind === "url" ? " input-mono" : "";
   const type = field.kind === "num" ? "number" : "text";
   const list = field.list ? ` list="${esc(field.list)}"` : "";
@@ -1544,6 +1576,246 @@ function fieldControl(field, base, parent) {
 /** @param {any[]} fields */
 function renderFields(fields, base, parent) {
   return fields.map((f) => fieldControl(f, base, parent)).join("");
+}
+
+/* ---- Image uploads (PHASE-2-PLAN.md §1) ----------------------------------
+ * A `kind: "image"` field renders the same URL text box every `kind: "url"`
+ * field always has — an operator with their own CDN keeps pasting into it —
+ * plus "Upload" and, once the value is one of ours, "Remove". Both buttons
+ * are bound in `bindInspector`'s delegated `onClick`, the same one every
+ * other structural edit in the inspector goes through.
+ * -------------------------------------------------------------------------- */
+
+/**
+ * Every public URL `signAssetUpload` (apps/runtime/lib/storage.js) hands back
+ * looks like `<supabase-url>/storage/v1/object/public/funnel-assets/<path>`.
+ * The console never sees the Supabase URL or the bucket name from the server
+ * — it is a separate browser bundle with no import path into runtime code —
+ * so this marker is the one place that has to be kept in step with
+ * `ASSET_BUCKET` by hand if that constant ever changes.
+ */
+const ASSET_URL_MARKER = "/object/public/funnel-assets/";
+
+/**
+ * Whether a field's current value is something the "Remove" button may delete.
+ *
+ * Parsed, not substring-matched. The decision is only cosmetic here — the server
+ * re-validates the object path against an anchored regex before deleting
+ * anything — but this repo's rule is that a check on a URL resolves the URL, and
+ * a value like `https://evil.tld/?x=/object/public/funnel-assets/` satisfies a
+ * substring test while being nothing of the kind.
+ */
+function isStorageAssetUrl(value) {
+  if (typeof value !== "string") return false;
+  try {
+    return new URL(value).pathname.includes(ASSET_URL_MARKER);
+  } catch {
+    return false;
+  }
+}
+
+/** The Storage object path a public asset URL was minted for, or "" if it is not one of ours. */
+function assetPathFromPublicUrl(value) {
+  if (!isStorageAssetUrl(value)) return "";
+  const { pathname } = new URL(String(value));
+  return pathname.slice(pathname.indexOf(ASSET_URL_MARKER) + ASSET_URL_MARKER.length);
+}
+
+/** Turn `/api/admin/assets*`'s error codes into copy an operator can act on. */
+function imageUploadErrorMessage(code) {
+  if (code === "invalid_slug") return "Save the funnel with a valid slug before uploading images.";
+  if (code === "unsupported_type") return "That file type isn't supported — use WebP, JPEG, PNG, GIF or SVG.";
+  if (code === "too_large") return "That file is over the 8MB upload limit.";
+  if (code === "storage_not_configured" || code === "storage_unavailable") return "Storage isn't available right now.";
+  if (code === "rate_limited") return "Too many uploads in the last hour — try again shortly.";
+  return "Could not upload that image.";
+}
+
+/**
+ * SVG has no raster to resample and a GIF's frames would collapse to one the
+ * moment a canvas reads it, so both go up byte-for-byte. Everything else is
+ * re-encoded as WebP at a fixed quality — Storage's own image transformations
+ * are a Pro feature (PHASE-2-PLAN.md §1 Decision 2), so this is the only place
+ * a funnel's photos get smaller before they cost storage and bandwidth.
+ *
+ * @param {File} file
+ * @returns {Promise<Blob>}
+ */
+async function prepareImageUpload(file) {
+  if (file.type === "image/svg+xml" || file.type === "image/gif") return file;
+
+  let bitmap;
+  try {
+    // `imageOrientation: "from-image"` is not the default, and without it a
+    // phone photo is decoded with its EXIF rotation ignored — so the canvas
+    // re-encode BAKES IN a sideways image and there is no metadata left to
+    // correct it with. The paste path never had this problem because a browser
+    // rendering an <img> applies the tag itself.
+    bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+  } catch {
+    // Not decodable as an image on this path — hand the original to Storage's
+    // own content-type check rather than fail the upload ourselves.
+    return file;
+  }
+
+  const longest = Math.max(bitmap.width, bitmap.height);
+  const scale = Math.min(1, 1920 / longest); // never upscale a smaller original
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return file;
+  ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+
+  const webp = await new Promise((resolve) => canvas.toBlob(resolve, "image/webp", 0.82));
+  // A null blob (canvas quirk) or a "smaller" WebP that actually grew both mean
+  // the re-encode lost — the original file is always a valid upload, so it is
+  // the fallback rather than a failure.
+  return webp && webp.size <= file.size ? webp : file;
+}
+
+/**
+ * "Upload" opens a file picker that exists only for the one pick it is made
+ * for — a persisted hidden `<input type="file">` would need resetting after
+ * every use or a second click would silently reuse the first one's listener.
+ * The chosen file is downscaled (`prepareImageUpload`), signed through the
+ * admin route, and PUT straight to Storage: PHASE-2-PLAN.md §1 Decision 1 is
+ * that the bytes never pass through this server, so this fetch is the one
+ * place the console talks to Supabase directly rather than through `apiFetch`.
+ *
+ * @param {any} step
+ * @param {string} path  The step-relative JSON path `writePath` will set.
+ * @param {HTMLButtonElement} btn
+ */
+function uploadImageField(step, path, btn) {
+  const slug = state.funnel?.slug;
+  // Says why rather than doing nothing. The object path is `funnel/<slug>/…`
+  // and the route refuses a slug that is not one, so a funnel that has not been
+  // saved yet cannot upload — and a button that silently returns is the exact
+  // dead-click failure the "Use template" cards had.
+  if (!slug) {
+    toast("Save the funnel first — an upload is filed under its slug.", "error");
+    return;
+  }
+
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "image/*";
+  input.addEventListener(
+    "change",
+    async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+
+      const label = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "Uploading…";
+
+      try {
+        const blob = await prepareImageUpload(file);
+        const contentType = blob.type || file.type;
+
+        const signRes = await apiFetch("/api/admin/assets/sign", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ slug, contentType, size: blob.size }),
+        });
+        if (!signRes.ok) {
+          const body = await signRes.json().catch(() => ({}));
+          throw new Error(body.error || `sign_${signRes.status}`);
+        }
+        const { uploadUrl, publicUrl } = await signRes.json();
+
+        // No apiFetch here: the upload token lives in `uploadUrl`'s own query
+        // string, and Storage never asked for the console's admin bearer on
+        // top of it.
+        const putRes = await fetch(uploadUrl, {
+          method: "PUT",
+          headers: { "content-type": contentType },
+          body: blob,
+        });
+        if (!putRes.ok) throw new Error(`upload_${putRes.status}`);
+
+        writePath(step, path, publicUrl);
+        onFunnelEdited();
+        renderInspector();
+        toast("Image uploaded");
+      } catch (err) {
+        toast(imageUploadErrorMessage(err.message), "error");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = label;
+      }
+    },
+    { once: true }
+  );
+
+  input.click();
+}
+
+/**
+ * "Remove" clears the field and QUEUES the object for deletion. It does not
+ * delete it.
+ *
+ * Every other edit in this builder is in-memory and discardable by reloading
+ * without saving, and the first version of this one was not: it fired the
+ * `DELETE` on the click. An operator editing a LIVE funnel who removed an image
+ * and then changed their mind had already destroyed the object, while the
+ * published document still pointed at it — a broken image on a page they never
+ * saved a change to, and nothing to undo it with. Deletion has to be a
+ * consequence of saving, because saving is what makes the removal true.
+ *
+ * The queue is deliberately lossy in the safe direction: a save that never
+ * happens, a closed tab or a failed delete all leave the object in place, which
+ * is an orphan (a cleanup job, PHASE-2-PLAN.md §1) rather than a broken page.
+ *
+ * @param {any} step
+ * @param {string} path
+ */
+function removeImageField(step, path) {
+  const objectPath = assetPathFromPublicUrl(readPath(step, path));
+  if (objectPath && !state.pendingAssetDeletes.includes(objectPath)) {
+    state.pendingAssetDeletes.push(objectPath);
+  }
+  writePath(step, path, undefined);
+  onFunnelEdited();
+  renderInspector();
+  toast("Image removed — the stored file goes when you save");
+}
+
+/**
+ * Delete the queued objects, after the document that stopped referencing them
+ * is on disk.
+ *
+ * Re-checked against the saved document rather than trusted: an operator can
+ * remove an image and paste the same URL back, or undo by reloading a template,
+ * and deleting something the funnel still points at is the failure this whole
+ * mechanism exists to avoid. A substring test over the serialised document is
+ * crude and deliberately so — it errs toward keeping the object, and the cost of
+ * being wrong in that direction is a file nobody references.
+ *
+ * Failures are swallowed: the save succeeded, which is what the operator asked
+ * for, and an object that outlives its funnel is not worth a red toast.
+ */
+async function purgeRemovedAssets() {
+  const queued = state.pendingAssetDeletes;
+  state.pendingAssetDeletes = [];
+  if (!queued.length) return;
+
+  const saved = JSON.stringify(state.funnel || {});
+  for (const objectPath of queued) {
+    if (saved.includes(objectPath)) continue;
+    try {
+      await apiFetch("/api/admin/assets", {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: objectPath }),
+      });
+    } catch {
+      // Orphan. See the header.
+    }
+  }
 }
 
 /** Split `nav.links.2` into the array it lives in and the index within it. */
@@ -1643,7 +1915,7 @@ const LANDING_FIELDS = {
     { key: "media.src", label: "Media URL", kind: "url", hint: "Shown beside the copy on a split layout, below it otherwise." },
   ],
   background: [
-    { key: "background.image", label: "Background image URL", kind: "url" },
+    { key: "background.image", label: "Background image URL", kind: "image" },
     { key: "background.video", label: "Background video URL", kind: "url", hint: "Muted, looping, autoplaying." },
     { key: "background.color", label: "Background colour", kind: "text", placeholder: "#0b1020" },
     { key: "background.gradient", label: "Background gradient (CSS)", kind: "text", placeholder: "linear-gradient(160deg,#4f46e5,#0f172a)" },
@@ -1670,7 +1942,7 @@ const LANDING_FIELDS = {
   ],
   nav: [
     { key: "nav.brand", label: "Brand name", kind: "text" },
-    { key: "nav.logo", label: "Logo URL", kind: "url" },
+    { key: "nav.logo", label: "Logo URL", kind: "image" },
     { key: "nav.ctaLabel", label: "Nav button label", kind: "text" },
     {
       key: "nav.links",
@@ -2214,6 +2486,20 @@ function bindInspector(step) {
         onEdit();
         pushPreview();
       }
+      return;
+    }
+
+    /* ----- image fields (`kind: "image"`) --------------------------------- */
+
+    if (btn.dataset.imgUpload !== undefined) {
+      // Fire-and-forget, same as `resendDelivery` below: the click handler
+      // stays sync, the async work owns its own button state.
+      uploadImageField(step, btn.dataset.imgUpload, btn);
+      return;
+    }
+
+    if (btn.dataset.imgRemove !== undefined) {
+      removeImageField(step, btn.dataset.imgRemove);
       return;
     }
 

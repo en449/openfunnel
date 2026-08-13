@@ -124,6 +124,7 @@ lib/db.js            PostgREST client + the error classification callers branch 
 lib/delivery.js      dispatch a claimed delivery, report the outcome, drainOnce()
 lib/targets.js       derive delivery_target rows from the funnel doc + mail settings
 lib/webhook.js       egress guard (resolveSafeTarget) + the direct fan-out delivery
+lib/storage.js       Supabase Storage: sign an upload, delete an object
 lib/capi.js          Meta Conversions API forward
 lib/email.js         settings, transports, OTP, lead notifications
 lib/html.js          esc, jsonScript, themeVars, funnelPage
@@ -159,6 +160,8 @@ Routes:
 | `POST /api/admin/targets/sync` | **admin** | re-derive every funnel's delivery targets |
 | `GET /api/admin/deliveries` | **admin** | delivery log; never selects `delivery_target.config` |
 | `POST /api/admin/deliveries/resend` | **admin** | `resend_delivery` + an inline attempt; refuses `delivering` |
+| `POST /api/admin/assets/sign` | **admin** | mint a signed Storage upload URL; the bytes never come here |
+| `DELETE /api/admin/assets` | **admin** | delete one uploaded object |
 | `POST /api/admin/test-email` | **admin** | send a test message |
 | `POST /api/ai/generate`, `/api/ai/improve-copy` | **admin** | copilot (OpenAI optional) |
 
@@ -332,6 +335,23 @@ displayed a fabricated one in a panel labelled raw metadata.
 The pattern behind all of it: a privacy claim written about one store is a claim
 about one store. When you add a datum to the record, grep for the datum and find
 every sink it reaches — the control you added is not the audit.
+
+**An upload never passes through this server, and its path is never a filename.**
+`POST /api/admin/assets/sign` mints a Storage token scoped to ONE object path and
+the console PUTs the bytes straight to Supabase (PHASE-2-PLAN.md §1). Two reasons
+it is built that way, and both are load-bearing: `Bun.serve` caps every request
+body at `MAX_BODY` (64KB) **process-wide**, so an upload route that accepted the
+file would have to raise that ceiling for public, anonymous `/api/lead` as well;
+and Vercel caps a function body at 4.5MB, which a phone photo clears.
+
+`assetPath()` builds `funnel/<slug>/<16 random bytes>.<ext>` where the extension
+comes from the declared **content type**, never from the uploaded filename — the
+browser owns that filename, it is often a person's name, and the bucket is
+world-readable. The bucket has a public read policy and **no write policy at
+all**: every upload is authorised by its own signed token, which keeps "who may
+upload" answerable in one place. A deleted object can still be served from
+Supabase's CDN for a while — verified, 2026-08-13 — so a deletion under Art. 17
+is not complete at the moment the delete call returns.
 
 **Preview traffic must never pollute analytics.** Two independent guards, and
 new code needs both: `Controller._emit()` bails when `isPreview` or
@@ -668,8 +688,17 @@ instead of returning silently. Don't re-hardcode them.
 
 ## Style
 
-- JSDoc types throughout, `checkJs: true`, `strict: true`. No `.ts` files in
-  runtime code; `packages/engine/types/index.d.ts` is the published surface.
+- JSDoc types throughout, `strict: true`. No `.ts` files in runtime code;
+  `packages/engine/types/index.d.ts` is the published surface.
+- **`bun run typecheck` does not cover `apps/`.** Measured 2026-08-13 with
+  `tsc --listFiles`: `packages/engine/jsconfig.json` checks the engine (`checkJs`
+  on), and `tsconfig.base.json` has no `include` and no `allowJs`, so its only
+  file is that one `.d.ts`. Every JSDoc annotation under `apps/runtime` and
+  `apps/app` is documentation, not a checked contract. Turning it on costs
+  ~200 errors, most of them `Cannot find name 'process'` — it needs a
+  `@types/node` devDependency first (a devDependency is fine;
+  `check-no-deps.mjs` only forbids runtime ones). Until then, do not read a
+  green typecheck as evidence about anything in `apps/`.
 - Every module opens with a `@file` block explaining *why* it exists, not just
   what it does. Section banners (`/* ===== *`) separate concerns in long files.
   Match this density.

@@ -71,6 +71,22 @@ export function dbConfigured() {
 }
 
 /**
+ * The project's base URL and service key, for the ONE caller that is not
+ * PostgREST: `lib/storage.js` talks to the Storage API on the same project, at a
+ * different path prefix (PHASE-2-PLAN.md §1).
+ *
+ * Exported from here rather than read again over there so there is one place
+ * that knows which variables name a Supabase project — the alternative is two
+ * readers that agree until someone adds a fallback to one of them.
+ *
+ * @returns {{ url: string, key: string }}
+ */
+export function supabaseConn() {
+  const { url, key } = conn();
+  return { url, key };
+}
+
+/**
  * @param {string} message
  * @param {{ status?: number|null, code?: string|null }} [meta]
  * @returns {Error & { status: number|null, code: string|null }}

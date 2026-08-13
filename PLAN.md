@@ -767,7 +767,7 @@ means, stated plainly so nobody rediscovers it later:
 | Funnel page delivery + function execution | request data, IP | Art. 6(1)(b)/(f) | **Vercel Inc., `dub1` Ireland — US processor, SCCs** |
 | `POST /api/lead` → Postgres | lead record | Art. 6(1)(b) | **Supabase Inc., `eu-west-1` Ireland — US processor, SCCs** |
 | `POST /api/events` → Postgres | step/drop-off events, session id | Art. 6(1)(f) — first-party, no profiling | Supabase, Ireland |
-| Supabase Storage | funnel assets only — **never lead data** | n/a | Supabase, Ireland |
+| Supabase Storage | funnel assets only — **never lead data**. Live since 2026-08-13 (PHASE-2-PLAN.md §1): a **public** bucket, so an uploaded image is readable by anyone with the URL, and a photo of an identifiable person is personal data on Art. 6(1)(f)/the client's own basis. Deleting an object leaves it in Supabase's CDN cache for a while, so §8.7 cannot call a deletion complete at the delete call | n/a for the asset itself; the client's basis for any person depicted | Supabase, Ireland |
 | Email delivery target | lead notification to the client | Art. 28 processing | **Brevo SAS, France/Germany (OVHcloud)** — see 8.3 |
 | Webhook delivery target | lead to the client's own system | Art. 28, then the client's own responsibility | client's choice; disclosed in their notice |
 | Google Sheets delivery target | lead row | Art. 28 | **Google Ireland/LLC — US transfer, opt-in only, see 8.3** |
@@ -1065,7 +1065,7 @@ just carrying a tick.
 **Done means:** a lead submitted on a real phone reaches every configured target in under 5 seconds; killing a target for an hour loses nothing and the drain delivers it on recovery; the console is unreachable logged-out; a PITR restore produces a working database; and **a funnel page on a cold cache makes zero third-party requests** — verified in devtools, not by reading the code.
 
 ### Phase 2 — Client-ready (2–3 weeks)
-- [ ] Asset upload to Supabase Storage; responsive sizes and WebP via Storage transformations (no image library needed)
+- [x] Asset upload to Supabase Storage — done 2026-08-13, PHASE-2-PLAN.md §1. **Not via Storage transformations:** those are Pro-only, so the console downscales to a 1920px WebP in a `<canvas>` before uploading, which is better here anyway — the bytes stored are the bytes served. One size, not a `srcset`; the 4G measurement item below decides whether a second one is worth it. The bytes never pass through the server (signed upload URL), and the bucket is public-read with no write policy
 - [ ] Custom domains via the Vercel Domains API + the `domain` table; wildcard `*.f.enno.de` for subdomain clients
 - [ ] Client report link `/r/:token`
 - [ ] Weekly client summary email

@@ -23,6 +23,8 @@ import { syncAllFunnelTargets } from "../lib/targets.js";
 import { dbConfigured, rpc, select } from "../lib/db.js";
 import { drainOnce } from "../lib/delivery.js";
 import { errSummary } from "../lib/log.js";
+import { SLUG_RE } from "../lib/config.js";
+import { ASSET_TYPES, MAX_ASSET_BYTES, assetPath, deleteAsset, signAssetUpload } from "../lib/storage.js";
 
 /** The five states in the schema's own check constraint. */
 const DELIVERY_STATUSES = new Set(["pending", "delivering", "done", "dead", "cancelled"]);
@@ -207,6 +209,79 @@ export async function handleAdmin(req, ctx) {
     } catch (err) {
       console.warn(`[admin] re-send of delivery ${id} failed: ${errSummary(err)}`);
       return json({ error: "db_unavailable" }, 503);
+    }
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  Assets — PHASE-2-PLAN.md §1
+   *
+   *  The bytes never come through here. This mints a token scoped to one
+   *  object path and the console PUTs the file straight to Supabase, which is
+   *  what keeps `MAX_BODY` at 64KB for public ingest and sidesteps Vercel's
+   *  4.5MB body cap. Everything this route decides is about the PATH.
+   * ------------------------------------------------------------------ */
+  if (path === "/api/admin/assets/sign" && req.method === "POST") {
+    if (!dbConfigured()) return json({ error: "storage_not_configured" }, 503);
+    const body = await readJson(req);
+
+    // The slug is a path segment in a public URL, so it gets the same check
+    // every file-touching route in this repo uses. `assetPath` builds the rest
+    // from a random value, so there is nothing else here a caller controls.
+    const slug = String(body?.slug || "").trim();
+    if (!SLUG_RE.test(slug)) return json({ error: "invalid_slug" }, 400);
+
+    const contentType = String(body?.contentType || "").toLowerCase();
+    if (!ASSET_TYPES[contentType]) return json({ error: "unsupported_type" }, 400);
+
+    // Advisory: the browser declares this and could lie. The bucket's own
+    // `file_size_limit` is the check that actually binds, and it is on the side
+    // the browser cannot reach. This one exists so an operator picking a 40MB
+    // RAW file is told now rather than after the upload.
+    const size = Number(body?.size);
+    if (!Number.isFinite(size) || size <= 0 || size > MAX_ASSET_BYTES) return json({ error: "too_large" }, 413);
+
+    // A leaked token minting unbounded upload URLs would be a way to fill the
+    // operator's bucket. Same reasoning as the re-send and test-email ceilings.
+    if (!(await rateLimit(`assets-sign:${clientIp(req, server) || "unknown"}`, 120, 60 * 60 * 1000))) return tooMany();
+
+    try {
+      return json(await signAssetUpload(assetPath(slug, contentType)));
+    } catch (err) {
+      // `errSummary`, never the error: a signed-upload URL carries its token in
+      // the query string and Bun puts the whole URL on `err.path`.
+      console.warn(`[admin] could not sign an upload for "${slug}": ${errSummary(err)}`);
+      return json({ error: "storage_unavailable" }, 503);
+    }
+  }
+
+  if (path === "/api/admin/assets" && req.method === "DELETE") {
+    if (!dbConfigured()) return json({ error: "storage_not_configured" }, 503);
+    const body = await readJson(req);
+    const target = String(body?.path || "");
+
+    // Shape-checked rather than sanitised. This is the same rule as `isInside`
+    // one layer up: `..` in an object path would let a delete reach outside the
+    // prefix this console is allowed to manage, and a regex that ACCEPTS a known
+    // good shape cannot be talked around the way a blocklist can.
+    if (!/^funnel\/[a-z0-9][a-z0-9-]{0,63}\/[0-9a-f]{32}\.[a-z]{3,4}$/i.test(target)) {
+      return json({ error: "invalid_path" }, 400);
+    }
+
+    // Same ceiling as its siblings, for the same reason: authenticated is not
+    // unbounded, and this one deletes. Note the path is not scoped to the funnel
+    // the console has open — an admin session may delete any asset, which is the
+    // single-ADMIN_TOKEN trust model this whole surface already has.
+    if (!(await rateLimit(`assets-delete:${clientIp(req, server) || "unknown"}`, 120, 60 * 60 * 1000))) return tooMany();
+
+    try {
+      await deleteAsset(target);
+      return json({ ok: true });
+    } catch (err) {
+      // A missing object is the operator's intent already satisfied, not a
+      // failure — the button says "remove" and it is gone.
+      if (/** @type {any} */ (err)?.status === 404) return json({ ok: true, missing: true });
+      console.warn(`[admin] could not delete an asset: ${errSummary(err)}`);
+      return json({ error: "storage_unavailable" }, 503);
     }
   }
 
