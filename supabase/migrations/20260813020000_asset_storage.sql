@@ -30,30 +30,56 @@
 --   -- otherwise refuse the delete, which is the safe direction.
 -- ===========================================================================
 
--- `on conflict do nothing`, not `do update`: re-running a migration must never
--- silently flip an existing bucket's visibility or limits underneath the objects
--- already in it.
-insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-values (
-  'funnel-assets',
-  'funnel-assets',
-  true,
-  -- 8MB. The console downscales to a 1920px WebP before uploading (~400KB in
-  -- practice), so this is the ceiling for the untouched cases — an SVG logo, a
-  -- pre-optimised PNG — and a second line of defence behind the route's own
-  -- declared-size check, on the side the browser cannot talk its way around.
-  8388608,
-  array['image/webp', 'image/jpeg', 'image/png', 'image/gif', 'image/svg+xml']
-)
-on conflict (id) do nothing;
+-- WHY THIS WHOLE MIGRATION IS CONDITIONAL
+-- `storage.buckets` and `storage.objects` are Supabase's, not Postgres's. Every
+-- other migration in this directory runs on a bare Postgres, which is what
+-- `scripts/db-test.sh` and the CI job give it — so this file, written straight,
+-- aborted the entire SQL suite at `relation "storage.buckets" does not exist`
+-- and took CI red with it. Guarded here rather than skipped in the runner: a
+-- skip list is a second place to remember, and it would hide the real fact,
+-- which is that this migration is the only one that needs more than Postgres.
+-- The NOTICE is not decoration — a Supabase project that somehow reached this
+-- point without the Storage schema would otherwise get a silent no-op and then
+-- an upload that fails with `storage_400` and no explanation anywhere.
+do $$
+begin
+  if to_regclass('storage.buckets') is null then
+    raise notice 'skipping funnel-assets bucket: no storage schema (not a Supabase database)';
+    return;
+  end if;
 
--- Read, and only read. `storage.objects` has RLS enabled by Supabase; without a
--- select policy the public URL 400s, which looks exactly like a broken upload.
-drop policy if exists "funnel assets are publicly readable" on storage.objects;
-create policy "funnel assets are publicly readable"
-  on storage.objects for select
-  to public
-  using (bucket_id = 'funnel-assets');
+  -- `on conflict do nothing`, not `do update`: re-running a migration must never
+  -- silently flip an existing bucket's visibility or limits underneath the
+  -- objects already in it.
+  insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+  values (
+    'funnel-assets',
+    'funnel-assets',
+    true,
+    -- 8MB. The console downscales to a 1920px WebP before uploading (~400KB in
+    -- practice), so this is the ceiling for the untouched cases — an SVG logo, a
+    -- pre-optimised PNG — and a second line of defence behind the route's own
+    -- declared-size check, on the side the browser cannot talk its way around.
+    8388608,
+    array['image/webp', 'image/jpeg', 'image/png', 'image/gif', 'image/svg+xml']
+  )
+  on conflict (id) do nothing;
+
+  -- Read, and only read. `storage.objects` has RLS enabled by Supabase; without
+  -- a select policy the public URL 400s, which looks exactly like a broken
+  -- upload. Executed dynamically because the parser resolves a policy's table at
+  -- parse time, so a literal `create policy … on storage.objects` inside this
+  -- block would still fail on a database that has no such table — the exact
+  -- failure the guard above exists to prevent.
+  execute 'drop policy if exists "funnel assets are publicly readable" on storage.objects';
+  execute $p$
+    create policy "funnel assets are publicly readable"
+      on storage.objects for select
+      to public
+      using (bucket_id = 'funnel-assets')
+  $p$;
+end
+$$;
 
 -- No insert/update/delete policy is created on purpose. See the header: the
 -- signed upload URL carries its own authorisation, and deletes go through the
