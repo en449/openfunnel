@@ -402,6 +402,41 @@ must not be inside this repo).
 
 ## Session Log
 
+### 2026-08-13 (session 9b) — Phase 2 starts: images, and the delete that was too eager
+
+Asset upload to Supabase Storage, designed in [PHASE-2-PLAN.md](PHASE-2-PLAN.md) §1 and confirmed
+before any code. `ff4d827`.
+
+Three decisions carried the design. **The bytes never touch the server** — the admin route mints a
+signed upload URL and the console PUTs straight to Supabase, because `Bun.serve`'s
+`maxRequestBodySize` is process-wide and an upload route would have raised the 64KB ceiling on
+public `/api/lead` by 60×, then still hit Vercel's 4.5MB body cap. **The image is downscaled in a
+canvas**, not by Storage — image transformations are Pro-only, so the plan's own line would have
+degraded to serving the original 4MB photo. **The object path is never a filename**: the browser
+owns that string, it is often a person's name, and the bucket is world-readable.
+
+The reviewer's Major is the one worth remembering. "Remove" fired the `DELETE` on the click, while
+every other edit in this builder is in-memory and discardable by reloading. So an operator removing
+an image from a LIVE funnel and then changing their mind had already destroyed the object the
+published document still pointed at — a broken page they never saved a change to. Deletion is now a
+consequence of saving, re-checked against the saved document, and it errs toward keeping the file:
+an orphan is a cleanup job, a broken live page is not. **The general rule: a builder edit that
+reaches outside the document is not an edit, it is a side effect, and it has to wait for the save
+that makes it true.**
+
+Two things measured rather than assumed. A deleted object is still served from Supabase's CDN for a
+while — the origin is clean, the edge is not, so §8.7 cannot call an Art. 17 deletion complete at
+the delete call. And **`bun run typecheck` does not cover `apps/` at all**: `tsconfig.base.json` has
+no `include` and no `allowJs`, so `tsc --listFiles` returns one `.d.ts`. Every JSDoc annotation in
+the runtime and the console is documentation, not a checked contract, and every green typecheck this
+project has ever reported said less than it looked like. Turning it on needs `@types/node` and ~200
+fixes — its own work order, recorded in CLAUDE.md so the signal is not over-read again.
+
+Self-tested by driving the real console in a browser against the live project: a 2400×1200 PNG
+arrived as a 1920×960 WebP of 4KB, Remove left the object fetchable, and the save deleted it. The
+test funnel was pointed at a scratch `FUNNELS_DIR` first — the builder writes where it is told, and
+the default is the tracked `examples/`.
+
 ### 2026-08-13 (session 9) — the checklist told the truth, and two gates closed behind it
 
 Two pieces of work, in that order, both inside Free tier.
