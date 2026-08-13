@@ -41,29 +41,27 @@ async function tmpParent() {
   return dir;
 }
 
-/* Loopback trust also validates the `Host` header (DNS rebinding, see auth.js),
- * and the admin assertions below need a request whose host is NOT loopback — the
- * lockout guard's whole subject is a real hostname. `auth.js` reads this once at
- * import, hence before the dynamic import. */
-process.env.ALLOWED_HOSTS = "console.example.test";
-
 const { handleRequest } = await import("../handler.js");
 const { invalidateDomains, normalizeHost } = await import("../lib/domains.js");
 const { ADMIN_TOKEN } = await import("../lib/config.js");
 
-/* Removed again the moment `auth.js` has read it: `bun test` shares one process
- * across files, so leaving it set would hand the next file's loopback checks a
- * host allowance it never asked for. Unset, never restored — same rule as the
- * credentials above. */
-delete process.env.ALLOWED_HOSTS;
-
 /** `lead-gen` is in `examples/`, which is the default FUNNELS_DIR. */
 const SLUG = "lead-gen";
 const HOST = "angebot.client-firma.test";
+/** The console's own hostname — allowed loopback trust, never mappable. */
+const CONSOLE_HOST = "console.example.test";
 
 beforeEach(() => {
   process.env.DATA_DIR = scratch;
   process.env.FUNNEL_DOMAINS = `${HOST}=${SLUG}`;
+  // Loopback trust also validates the `Host` header (DNS rebinding, see
+  // auth.js), and the admin assertions below need a request whose host is NOT
+  // loopback — the lockout guard's whole subject is a real hostname. Set per
+  // test rather than once before the import: `bun test` runs every file in one
+  // process, so whether `auth.js` had already been loaded by another file
+  // decided whether this file's console host was trusted. It passed locally and
+  // 401'd in CI purely on file order.
+  process.env.ALLOWED_HOSTS = CONSOLE_HOST;
   // Per test, and not only once at import: `bun test` shares one process across
   // files, `dbConfigured()` reads the environment per call, and a file that runs
   // before this one sets these for its own fixtures. Without this, the
@@ -76,6 +74,9 @@ beforeEach(() => {
 
 afterEach(() => {
   delete process.env.FUNNEL_DOMAINS;
+  // Unset, never restored — leaving it would hand the next file's loopback
+  // checks a host allowance it never asked for.
+  delete process.env.ALLOWED_HOSTS;
   invalidateDomains();
 });
 
@@ -265,7 +266,7 @@ test("the console can read the mapping, including the env one it cannot delete",
 test("mapping the console's own host is refused, before anything else is checked", async () => {
   // The one mistake that cannot be undone from the console: every admin route
   // is 404 on a mapped host, so this would need a row deleted in the database.
-  const res = await postDomain({ host: "console.example.test", slug: SLUG }, "console.example.test");
+  const res = await postDomain({ host: CONSOLE_HOST, slug: SLUG }, CONSOLE_HOST);
   expect(res.status).toBe(409);
   expect(await res.json()).toMatchObject({ error: "would_lock_out_console" });
 });

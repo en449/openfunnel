@@ -93,14 +93,27 @@ export function requireInternal(req) {
  */
 const LOOPBACK_HOST_RE = /^(localhost|127\.0\.0\.1|\[::1\]|::1)(:\d+)?$/i;
 
-/** Extra hostnames allowed to use loopback trust, for reaching the console by
- *  name without a token. Comma-separated, e.g. ALLOWED_HOSTS=dev.myhost.test */
-const ALLOWED_HOSTS = new Set(
-  (process.env.ALLOWED_HOSTS || "")
-    .split(",")
-    .map((h) => h.trim().toLowerCase())
-    .filter(Boolean)
-);
+/**
+ * Extra hostnames allowed to use loopback trust, for reaching the console by
+ * name without a token. Comma-separated, e.g. ALLOWED_HOSTS=dev.myhost.test
+ *
+ * Read per call, not once at import — the same rule `lib/domains.js` follows for
+ * `FUNNEL_DOMAINS`: on serverless the environment belongs to the invocation. It
+ * also removes an order dependency from the suite, where one process runs every
+ * test file and a variable set by one file after this module loaded would
+ * otherwise be read as unset. Widening what loopback trust accepts is never
+ * caller-controlled, so re-reading it costs nothing but a split per privileged
+ * request that did not arrive on a loopback hostname.
+ *
+ * @returns {Set<string>}
+ */
+const allowedHosts = () =>
+  new Set(
+    (process.env.ALLOWED_HOSTS || "")
+      .split(",")
+      .map((h) => h.trim().toLowerCase())
+      .filter(Boolean)
+  );
 
 /**
  * @param {Request} req
@@ -132,7 +145,8 @@ export function isLoopbackRequest(req, server) {
   // A browser always writes `name:port` on a non-default port, and the default
   // here is 3000 — so comparing the raw header alone meant the documented
   // ALLOWED_HOSTS example could never match. Accept either form.
-  return ALLOWED_HOSTS.has(host) || ALLOWED_HOSTS.has(host.replace(/:\d+$/, ""));
+  const allowed = allowedHosts();
+  return allowed.has(host) || allowed.has(host.replace(/:\d+$/, ""));
 }
 
 /**

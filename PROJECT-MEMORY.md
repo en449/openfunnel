@@ -487,6 +487,16 @@ areas myself rather than claim a second PASS.
 Final state: `6e6bcac` (typecheck), `a6a2fd7` (CI fix), `26aaa50` (custom domains), pushed, CI
 green. 268 pass / 1 known Bun-version failure, typecheck 0 errors, all three check scripts 0.
 
+**Then a docs-only push went red — and the cause was in the domains change.** The lockout-guard
+test wanted 409 and got 401 on the runner while passing here. `lib/auth.js` read `ALLOWED_HOSTS`
+once into a module-level `Set` at import; the test set the variable and then dynamically imported
+the handler, which only works if that file is the first to load the module. `bun test` caches
+modules across files, so file order decided the answer — and a commit touching nothing but Markdown
+was enough to change it. `ALLOWED_HOSTS` is now read per call, which is the rule this runtime
+already follows for `FUNNEL_DOMAINS` and the right one on serverless anyway: the environment belongs
+to the invocation. Red-checked by restoring the import-time read and reproducing the runner's exact
+409-vs-401 locally with `bun test test/server.test.js test/domains.test.js`. `2b6e1a5`.
+
 ### 2026-08-13 (session 9b) — Phase 2 starts: images, and the delete that was too eager
 
 Asset upload to Supabase Storage, designed in [PHASE-2-PLAN.md](PHASE-2-PLAN.md) §1 and confirmed
