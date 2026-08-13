@@ -42,9 +42,23 @@ import { errSummary } from "./lib/log.js";
  *  Listener
  * ========================================================================== */
 
+// `Bun` is a global the runtime injects, with no ambient type here: this repo
+// has no `@types/bun` devDependency (adding one is out of scope for a typing
+// pass — see jsconfig.json's own note on `types: ["node"]` only). Read through
+// `globalThis` and cast once at this boundary; every downstream use below
+// (`server`, `server.port`) is typed by the object literals in this same call,
+// not by this cast.
+//
+// Deliberately NOT named `Bun`: a module-scope `const Bun` shadows the global
+// for the whole file, so a `Bun.file()` added ABOVE this line would throw a
+// temporal-dead-zone ReferenceError while reading exactly like the global it
+// isn't. The object is passed whole rather than destructuring `.serve`, which
+// would detach the method from its receiver.
+const bunRuntime = /** @type {any} */ (globalThis).Bun;
+
 // Only listen when this file is the entrypoint. Importing it (the egress-guard
 // unit tests do) must not bind a port or print a banner.
-const server = import.meta.main ? Bun.serve({
+const server = import.meta.main ? bunRuntime.serve({
   port: PORT,
 
   // Loopback unless HOST says otherwise. Omitting this bound every interface,
@@ -71,6 +85,11 @@ const server = import.meta.main ? Bun.serve({
   // entry points actually share.
   maxRequestBodySize: MAX_BODY,
 
+  /**
+   * @param {Request} req
+   * @param {any} server  Bun's server object — see the `Bun` cast note above;
+   *   `handler.js`'s own `ctx.server` is typed `any` for the same reason.
+   */
   fetch(req, server) {
     // Work that outlives the response just runs: this process is not going
     // anywhere between requests, which is the assumption the Vercel entry
@@ -86,6 +105,7 @@ const server = import.meta.main ? Bun.serve({
 
   // The router has its own net around the whole dispatch; this catches what
   // escapes outside it. Never the error object — see lib/log.js.
+  /** @param {unknown} err */
   error(err) {
     console.error(`[runtime] unhandled: ${errSummary(err)}`);
     return json({ error: "internal" }, 500);

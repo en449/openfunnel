@@ -690,15 +690,19 @@ instead of returning silently. Don't re-hardcode them.
 
 - JSDoc types throughout, `strict: true`. No `.ts` files in runtime code;
   `packages/engine/types/index.d.ts` is the published surface.
-- **`bun run typecheck` does not cover `apps/`.** Measured 2026-08-13 with
-  `tsc --listFiles`: `packages/engine/jsconfig.json` checks the engine (`checkJs`
-  on), and `tsconfig.base.json` has no `include` and no `allowJs`, so its only
-  file is that one `.d.ts`. Every JSDoc annotation under `apps/runtime` and
-  `apps/app` is documentation, not a checked contract. Turning it on costs
-  ~200 errors, most of them `Cannot find name 'process'` — it needs a
-  `@types/node` devDependency first (a devDependency is fine;
-  `check-no-deps.mjs` only forbids runtime ones). Until then, do not read a
-  green typecheck as evidence about anything in `apps/`.
+- **`bun run typecheck` covers the engine and `apps/runtime`, not `apps/app`.**
+  It runs three projects: `packages/engine/jsconfig.json`,
+  `apps/runtime/jsconfig.json` (added 2026-08-13, `allowJs` + `checkJs`, and it
+  pulls in `api/index.js` because the Vercel entry point imports straight into
+  that directory), and `tsconfig.base.json`, whose only file is the published
+  `.d.ts`. Until the runtime project existed every JSDoc annotation under
+  `apps/` was decoration — measured with `tsc --listFiles`, 101 errors the day
+  it was switched on — so a green typecheck in this repo's history says nothing
+  about the runtime before that date.
+  Still uncovered: `apps/runtime/test/**` (excluded: `bun:test` has no types
+  here, and the suite is exercised by running it) and all of `apps/app`, which
+  is browser code with its own globals. `@types/node` is a devDependency;
+  `check-no-deps.mjs` only forbids runtime ones.
 - Every module opens with a `@file` block explaining *why* it exists, not just
   what it does. Section banners (`/* ===== *`) separate concerns in long files.
   Match this density.

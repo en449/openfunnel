@@ -22,11 +22,16 @@ const BLOCKED_NAME_RE = /^(localhost|.*\.localhost|.*\.internal|.*\.local|.*\.ho
  * Reserved IPv4 ranges we refuse to POST to, as `[firstOctet, test]` predicates.
  * Deliberately spelled out rather than crammed into one regex — the previous
  * single-regex version silently missed several of these.
+ *
+ * @param {string} host
  */
 function isBlockedIpv4(host) {
   const parts = host.split(".");
   if (parts.length !== 4) return false;
-  const [a, b] = parts.map(Number);
+  // Defaulted rather than asserted: `parts.length !== 4` already returned above,
+  // and a NaN octet fails every comparison below exactly as the explicit
+  // `Number.isNaN` guard does — so the default cannot widen what this accepts.
+  const [a = NaN, b = NaN] = parts.map(Number);
   if (parts.some((p) => !/^\d{1,3}$/.test(p)) || [a, b].some((n) => Number.isNaN(n))) return false;
   if (a === 0 || a === 127) return true;                    // this-host, loopback
   if (a === 10) return true;                                // private
@@ -63,6 +68,8 @@ function isBlockedIpv6(host) {
  * a private IP (DNS rebinding), which needs resolution-time filtering to close
  * properly. The destination is operator-owned, so that residual gap is a
  * misconfiguration risk rather than something a visitor can reach.
+ *
+ * @param {unknown} raw
  */
 export function isSafeWebhookTarget(raw) {
   let url;
@@ -79,7 +86,11 @@ export function isSafeWebhookTarget(raw) {
   return !isBlockedIpv4(host);
 }
 
-/** Host of a URL, for log lines that must not carry the path or query. */
+/**
+ * Host of a URL, for log lines that must not carry the path or query.
+ *
+ * @param {unknown} raw
+ */
 function hostOf(raw) {
   try {
     return new URL(String(raw)).host;
@@ -208,7 +219,9 @@ export async function resolveSafeTarget(raw) {
 
   if (url.protocol !== "http:") return { url: url.toString(), headers: {} };
 
-  const { address, family } = answers[0];
+  const first = answers[0];
+  if (!first) return null;
+  const { address, family } = first;
   const pinned = new URL(url);
   pinned.hostname = family === 6 ? `[${address}]` : address;
   // `url.host` keeps any non-default port, so the origin server still routes it.

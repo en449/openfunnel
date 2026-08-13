@@ -140,6 +140,9 @@ async function appendJsonl(kind, record) {
  * than aborting the whole read. That last part was a live bug independent of the
  * cap — one bad line made `JSON.parse` throw and the inbox came back empty with
  * nothing logged.
+ *
+ * @param {string} filename
+ * @returns {Promise<Record<string, unknown>[]>}
  */
 export async function readJsonlRecords(filename) {
   let fh;

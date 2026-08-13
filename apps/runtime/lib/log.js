@@ -14,7 +14,11 @@
  * the next outbound call to write its own.
  */
 
-/** Collapse to a single line — a CR/LF in a subject is a header-injection try. */
+/**
+ * Collapse to a single line — a CR/LF in a subject is a header-injection try.
+ * @param {unknown} value
+ * @param {number} [max]
+ */
 export function oneLine(value, max = 200) {
   return String(value ?? "").replace(/[\r\n]+/g, " ").trim().slice(0, max);
 }

@@ -34,6 +34,11 @@ async function readOrNull(target) {
   }
 }
 
+// Typed as a lookup table rather than left as an object literal: `extname()`
+// returns a plain `string`, and indexing the literal's inferred type with that
+// (rather than one of its five literal keys) is what the falls-through
+// `|| "application/octet-stream"` below exists to handle in the first place.
+/** @type {Record<string, string>} */
 const MIME = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -77,7 +82,11 @@ export async function serveStaticFile(rootDir, prefix, pathname) {
   const body = await readOrNull(target);
   if (!body) return new Response("Not found", { status: 404 });
 
-  return new Response(body, {
+  // Node's `Buffer` is generic over `ArrayBufferLike`, which does not
+  // structurally match DOM's `BodyInit` in this lib combination — a Buffer is
+  // a valid Response body at runtime (it is a Uint8Array subclass); this is a
+  // types-only mismatch between the `node` and `DOM` libs, not a real one.
+  return new Response(/** @type {BodyInit} */ (body), {
     headers: {
       ...CONSOLE_HEADERS,
       "content-type": MIME[extname(target)] || "application/octet-stream",
@@ -116,7 +125,9 @@ export async function serveEngine(pathname) {
   const body = await readOrNull(target);
   if (!body) return new Response("Not found", { status: 404 });
 
-  return new Response(body, {
+  // Same Buffer/BodyInit lib mismatch as `serveStaticFile` above — see the
+  // comment there.
+  return new Response(/** @type {BodyInit} */ (body), {
     headers: {
       "content-type": MIME[extname(target)] || "application/octet-stream",
       "cache-control":

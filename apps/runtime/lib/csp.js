@@ -145,6 +145,7 @@ const CUSTOM_SCRIPT_ORIGINS = (process.env.CUSTOM_SCRIPT_ORIGINS || "")
 // Non-greedy body, mirroring how the HTML parser ends a script at the first
 // `</script>` — so the captured text is what the browser hashes.
 const SCRIPT_TAG_RE = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
+/** @param {string} name */
 const ATTR_RE = (name) => new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i");
 const TYPE_ATTR = ATTR_RE("type");
 const SRC_ATTR = ATTR_RE("src");
@@ -208,7 +209,7 @@ function collectCustomScriptSources(markup) {
       }
       continue; // `src` wins over any inline body, so no hash for this one.
     }
-    hashes.push(`'sha256-${createHash("sha256").update(match[2], "utf8").digest("base64")}'`);
+    hashes.push(`'sha256-${createHash("sha256").update(match[2] || "", "utf8").digest("base64")}'`);
   }
   return { hashes, origins, executable };
 }

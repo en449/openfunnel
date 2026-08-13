@@ -15,9 +15,10 @@
     "dev": "bun run --filter @openfunnel/runtime dev",
     "start": "bun run --filter @openfunnel/runtime start",
     "test": "bun test",
-    "typecheck": "bunx tsc -p packages/engine/jsconfig.json && bunx tsc -p tsconfig.base.json --noEmit"
+    "typecheck": "bunx tsc -p packages/engine/jsconfig.json && bunx tsc -p apps/runtime/jsconfig.json && bunx tsc -p tsconfig.base.json --noEmit"
   },
   "devDependencies": {
+    "@types/node": "^26.2.0",
     "happy-dom": "^20.11.0",
     "typescript": "^5.6.0"
   },

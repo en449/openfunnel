@@ -16,7 +16,12 @@ import { timingSafeEqual } from "node:crypto";
 import { ADMIN_TOKEN, INTERNAL_SECRET } from "./config.js";
 import { json } from "./http.js";
 
-/** Constant-time string compare, so a wrong token leaks no timing signal. */
+/**
+ * Constant-time string compare, so a wrong token leaks no timing signal.
+ *
+ * @param {unknown} a
+ * @param {unknown} b
+ */
 export function safeEqual(a, b) {
   const ab = Buffer.from(String(a ?? ""), "utf8");
   const bb = Buffer.from(String(b ?? ""), "utf8");
@@ -97,6 +102,10 @@ const ALLOWED_HOSTS = new Set(
     .filter(Boolean)
 );
 
+/**
+ * @param {Request} req
+ * @param {{ requestIP?: (req: Request) => { address?: string }|null }|undefined} [server]
+ */
 export function isLoopbackRequest(req, server) {
   // No server object means no socket to inspect, which is the serverless entry
   // point (`api/index.js`). The honest answer there is "not local", and it is
@@ -134,6 +143,8 @@ export function isLoopbackRequest(req, server) {
  * development needs no setup, but the same binary exposed on a public
  * interface refuses to hand out leads or credentials.
  *
+ * @param {Request} req
+ * @param {{ requestIP?: (req: Request) => { address?: string }|null }|undefined} [server]
  * @returns {Response|null} null when the caller may proceed.
  */
 export function requireAdmin(req, server) {

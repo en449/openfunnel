@@ -19,12 +19,17 @@ import { errSummary } from "./log.js";
  * Pull a JSON object out of a model's reply, which may be fenced, prefixed with
  * prose, or carry a trailing comma. Returns null rather than throwing — every
  * caller has a non-AI fallback path.
+ * @param {unknown} text
+ * @returns {any|null}
  */
 export function parseJsonFromAiText(text) {
   if (!text) return null;
   let cleaned = String(text).trim();
   const fenceMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-  if (fenceMatch) cleaned = fenceMatch[1].trim();
+  // Group 1 is not optional in the pattern above, so a successful match always
+  // carries it (possibly empty) — the undefined case is unreachable, but
+  // `noUncheckedIndexedAccess` cannot see that from the regex shape.
+  if (fenceMatch && fenceMatch[1] !== undefined) cleaned = fenceMatch[1].trim();
   const match = cleaned.match(/\{[\s\S]*\}/);
   if (!match) return null;
   try {
@@ -46,6 +51,10 @@ export function parseJsonFromAiText(text) {
  * the caller falls through to its offline generator rather than surfacing an
  * error. A "success" response from `/api/ai/generate` therefore does not prove a
  * model ran.
+ *
+ * @param {{ provider: string, model: string, apiKey: string, systemPrompt: string, userPrompt: string }} params
+ *   Every caller (`routes/ai.js`) resolves these with an `||` fallback before
+ *   calling in, so they arrive as plain strings — `apiKey` may still be `""`.
  */
 export async function executeAiRequest({ provider, model, apiKey, systemPrompt, userPrompt }) {
   if (!apiKey) return null;

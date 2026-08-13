@@ -78,7 +78,11 @@ function inMemoryRateLimit(key, max, windowMs) {
   // Each bucket is judged against its OWN window, never the caller's.
   if (rateBuckets.size > 5000) {
     for (const [k, v] of rateBuckets) {
-      if (!v.hits.length || now - v.hits[v.hits.length - 1] > v.windowMs) rateBuckets.delete(k);
+      const last = v.hits[v.hits.length - 1];
+      // `last` is only ever undefined when `v.hits.length` is 0, which the
+      // first condition already catches — the explicit check is for
+      // `noUncheckedIndexedAccess`, not because this can happen in practice.
+      if (!v.hits.length || last === undefined || now - last > v.windowMs) rateBuckets.delete(k);
     }
   }
   return true;

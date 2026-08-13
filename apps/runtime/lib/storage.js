@@ -40,6 +40,8 @@ export const ASSET_BUCKET = "funnel-assets";
  * different kind of object than an image. The bucket declares the same list
  * (`allowed_mime_types`), so a caller that bypassed this check still meets it
  * one layer down — two locks, one key each.
+ *
+ * @type {Record<string, string>}
  */
 export const ASSET_TYPES = {
   "image/webp": "webp",
@@ -84,7 +86,11 @@ export function assetPath(slug, contentType) {
   return `funnel/${slug}/${randomBytes(16).toString("hex")}.${ext}`;
 }
 
-/** The public URL an object is served from once uploaded. */
+/**
+ * The public URL an object is served from once uploaded.
+ *
+ * @param {string} path
+ */
 export function publicAssetUrl(path) {
   const { url } = supabaseConn();
   return `${url}/storage/v1/object/public/${ASSET_BUCKET}/${path}`;

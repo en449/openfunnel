@@ -14,6 +14,11 @@ import { TRUST_PROXY } from "./config.js";
  *  Response constructors
  * ========================================================================== */
 
+/**
+ * @param {unknown} body      JSON-serialisable payload.
+ * @param {number} [status]
+ * @param {Record<string, string>} [headers]
+ */
 export const json = (body, status = 200, headers = {}) =>
   new Response(JSON.stringify(body), {
     status,
@@ -39,6 +44,11 @@ export const BASE_HTML_HEADERS = {
   "referrer-policy": "strict-origin-when-cross-origin",
 };
 
+/**
+ * @param {string} body
+ * @param {number} [status]
+ * @param {Record<string, string>} [extra]
+ */
 export const html = (body, status = 200, extra = {}) =>
   new Response(body, {
     status,
@@ -117,6 +127,7 @@ export const MAX_BODY = 64 * 1024;
 
 /**
  * Parse a JSON request body with a hard size cap.
+ * @param {Request} req
  * @returns {Promise<any|null>} null when the body is missing, oversized, or invalid.
  */
 export async function readJson(req) {
@@ -154,10 +165,19 @@ let warnedNoSocket = false;
  *
  * Anything keyed on a client address must come through here rather than reading
  * the header itself.
+ *
+ * @param {Request} req
+ * @param {any} server  Bun's server object, or undefined off the Vercel entry
+ *   point — untyped here the same way `handler.js`'s `ctx.server` is, since no
+ *   `@types/bun` is installed (see server.js).
+ * @returns {string|null}
  */
 export function clientIp(req, server) {
   const fwd = req.headers.get("x-forwarded-for");
-  if (fwd && TRUST_PROXY) return fwd.split(",")[0].trim();
+  // `fwd` is checked truthy (so non-empty) just above, and splitting a
+  // non-empty string always yields at least one element — the `?? fwd`
+  // fallback is for `noUncheckedIndexedAccess`, not a real empty-split case.
+  if (fwd && TRUST_PROXY) return (fwd.split(",")[0] ?? fwd).trim();
   if (fwd && !warnedAboutProxy) {
     warnedAboutProxy = true;
     console.warn(

@@ -49,7 +49,12 @@ import { syncFunnelTargets } from "./targets.js";
 const cache = new Map();
 const CACHE_MS = DEV ? 0 : 60_000;
 
-/** A document is only usable if it has steps to render. Same rule for both stores. */
+/**
+ * A document is only usable if it has steps to render. Same rule for both stores.
+ * @param {any} funnel
+ * @param {string} slug
+ * @param {string} where
+ */
 function usable(funnel, slug, where) {
   if (!Array.isArray(funnel?.steps) || funnel.steps.length === 0) {
     console.warn(`[runtime] funnel "${slug}" in ${where} has no steps — ignoring.`);
@@ -89,6 +94,10 @@ export async function loadFunnel(slug) {
 /** Distinguishes "archived on purpose" from "not in the database". */
 const ARCHIVED = Symbol("archived");
 
+/**
+ * @param {string} slug
+ * @returns {Promise<any>}
+ */
 async function loadFromDb(slug) {
   try {
     const rows = await select(
@@ -112,6 +121,10 @@ async function loadFromDb(slug) {
   }
 }
 
+/**
+ * @param {string} slug
+ * @returns {Promise<any>}
+ */
 async function loadFromDisk(slug) {
   const file = join(FUNNELS_DIR, `${slug}.json`);
   if (!isInside(file, FUNNELS_DIR)) return null; // defence in depth
@@ -324,12 +337,19 @@ export async function removeFunnel(slug) {
   invalidateFunnel(slug);
 }
 
-/** Drop a slug from the cache after a write or delete. */
+/**
+ * Drop a slug from the cache after a write or delete.
+ * @param {string} slug
+ */
 export function invalidateFunnel(slug) {
   cache.delete(slug);
 }
 
-/** Seed the cache with a document just written to disk. */
+/**
+ * Seed the cache with a document just written to disk.
+ * @param {string} slug
+ * @param {any} funnel
+ */
 export function cacheFunnel(slug, funnel) {
   cache.set(slug, { funnel, at: Date.now() });
 }

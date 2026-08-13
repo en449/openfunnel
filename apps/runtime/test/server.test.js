@@ -655,6 +655,29 @@ describe("builder & admin", () => {
     expect(loaded.name).toBe("Test Funnel");
   });
 
+  test("counts one visitor once, whatever JSON type the session id arrived as", async () => {
+    // `/api/events` is public, so `sessionId` and `stepId` are whatever the
+    // caller sent — a number here, a string there. Drop-off is counted with a
+    // Set, which dedupes by identity, so 7 and "7" used to be two visitors on
+    // the same step and every drop-off number was inflatable by anyone with the
+    // endpoint. `computeStats` coerces before counting.
+    const step = `dedupe-${Date.now()}`;
+    for (const sessionId of ["77", 77]) {
+      const res = await fetch(`${base}/api/events`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ type: "step_view", stepId: step, sessionId, ts: Date.now() }),
+      });
+      expect(res.status).toBe(202);
+    }
+    await Bun.sleep(80);
+
+    const stats = await fetch(`${base}/api/admin/stats`).then((r) => r.json());
+    const row = stats.steps.find((/** @type {any} */ s) => s.stepId === step);
+    expect(row).toBeDefined();
+    expect(row.sessions).toBe(1);
+  });
+
   test("returns admin leads and stats", async () => {
     const leadsRes = await fetch(`${base}/api/admin/leads`);
     expect(leadsRes.status).toBe(200);

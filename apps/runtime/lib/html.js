@@ -16,7 +16,10 @@ import { ENGINE_BASE } from "./config.js";
 import { FUNNEL_BOOT_SCRIPT, customCode } from "./csp.js";
 import { publicFunnel } from "./funnels.js";
 
-/** Escape a string for safe interpolation into HTML text/attributes. */
+/**
+ * Escape a string for safe interpolation into HTML text/attributes.
+ * @param {unknown} value
+ */
 export function esc(value) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -33,6 +36,7 @@ export function esc(value) {
 /**
  * Serialise JSON for embedding in a <script> tag. Escaping `<` is what stops a
  * funnel's own copy from being able to close the script element.
+ * @param {unknown} value
  */
 export function jsonScript(value) {
   return JSON.stringify(value)
@@ -45,6 +49,12 @@ export function jsonScript(value) {
  * Inline the funnel's theme as CSS custom properties on <html>. The engine
  * re-applies these on mount; doing it server-side too means the very first
  * paint is already branded — no white flash, no layout shift.
+ *
+ * @param {{ primary?: string, primaryText?: string, bg?: string, surface?: string,
+ *   text?: string, muted?: string, border?: string, radius?: string, font?: string }} [theme]
+ *   Mirrors the relevant slice of `FunnelTheme` (packages/engine/src/types.js) —
+ *   kept as a local shape rather than imported across the workspace boundary,
+ *   since only these nine fields are ever read here.
  */
 export function themeVars(theme = {}) {
   const map = {

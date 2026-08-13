@@ -335,15 +335,20 @@ async function computeStats(scope) {
     if (ev.type === "funnel_start") starts++;
     if (ev.type === "step_view") stepViews++;
     if (ev.type === "complete") completes++;
-    if (ev.sessionId) sessions.add(ev.sessionId);
+    if (ev.sessionId) sessions.add(String(ev.sessionId));
 
     if (ev.type !== "step_view" || !ev.stepId) return;
-    let entry = perStep.get(ev.stepId);
+    // Coerced, not asserted: these records come from the public /api/events
+    // body, so `stepId` and `sessionId` are whatever JSON the caller sent. A
+    // non-string session id in a Set dedupes by identity, so two objects that
+    // look identical would count as two visitors and inflate the step.
+    const stepId = String(ev.stepId);
+    let entry = perStep.get(stepId);
     if (!entry) {
       entry = { order: typeof ev.stepIndex === "number" ? ev.stepIndex : i, sessions: new Set() };
-      perStep.set(ev.stepId, entry);
+      perStep.set(stepId, entry);
     }
-    entry.sessions.add(ev.sessionId || `anon-${i}`);
+    entry.sessions.add(String(ev.sessionId || `anon-${i}`));
   });
 
   const steps = [...perStep.entries()]
@@ -358,14 +363,15 @@ async function computeStats(scope) {
   // truthy, so `||=` never creates an own key and the increments land on the
   // prototype instead.
   const perFunnel = Object.create(null);
+  /** @param {string} id */
   const bucket = (id) => (perFunnel[id] ||= { starts: 0, leads: 0, completes: 0 });
   allEvents.forEach((ev) => {
     if (!ev.funnelId) return;
-    if (ev.type === "funnel_start") bucket(ev.funnelId).starts++;
-    if (ev.type === "complete") bucket(ev.funnelId).completes++;
+    if (ev.type === "funnel_start") bucket(String(ev.funnelId)).starts++;
+    if (ev.type === "complete") bucket(String(ev.funnelId)).completes++;
   });
   allLeads.forEach((l) => {
-    if (l.funnelId) bucket(l.funnelId).leads++;
+    if (l.funnelId) bucket(String(l.funnelId)).leads++;
   });
 
   return {

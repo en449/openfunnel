@@ -83,6 +83,8 @@ const WRITABLE_EMAIL_KEYS = new Set([
  * ternary was two-way, so the third secret would silently have been compared
  * against the wrong variable and copied out of the environment into `DATA_DIR`
  * — the exact failure the comment there exists to prevent.
+ *
+ * @type {Record<string, string>}
  */
 const SECRET_ENV = {
   resendApiKey: "RESEND_API_KEY",
@@ -123,10 +125,15 @@ export const emailTransportNames = () => Object.keys(API_TRANSPORTS);
  *
  * @param {string} name
  */
-export const emailTransportEnvVar = (name) => SECRET_ENV[API_TRANSPORTS[name]?.keyField] || "";
+export const emailTransportEnvVar = (name) => {
+  const keyField = API_TRANSPORTS[name]?.keyField;
+  return (keyField && SECRET_ENV[keyField]) || "";
+};
 
+/** @returns {Promise<Record<string, any>>} */
 export async function getEmailSettings() {
   const settingsFile = join(dataDir(), "email_settings.json");
+  /** @type {Record<string, any>} */
   let stored = {};
   try {
     const parsed = JSON.parse(await readFile(settingsFile, "utf8"));
@@ -170,8 +177,13 @@ export async function getEmailSettings() {
   return cfg;
 }
 
-/** Strip secrets before the settings ever leave the process. */
+/**
+ * Strip secrets before the settings ever leave the process.
+ *
+ * @param {Record<string, any>} cfg
+ */
 export function redactEmailSettings(cfg) {
+  /** @type {Record<string, any>} */
   const safe = { ...cfg };
   for (const key of SECRET_EMAIL_KEYS) {
     safe[`${key}Set`] = Boolean(safe[key]);
@@ -188,9 +200,12 @@ export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  * Unknown keys are dropped, blank secrets keep the existing value (so the
  * redacted GET can be round-tripped without wiping the key), and every field
  * is range-checked before it reaches disk.
+ *
+ * @param {Record<string, any>} patch
  */
 export async function saveEmailSettings(patch) {
   const existing = await getEmailSettings();
+  /** @type {Record<string, any>} */
   const next = { ...existing };
 
   // `getEmailSettings()` resolves secrets from the environment when nothing is
@@ -268,8 +283,8 @@ function splitAddress(value) {
   const raw = String(value || "").trim();
   const match = raw.match(/^(.*?)\s*<([^<>]+)>$/);
   if (!match) return { email: raw };
-  const name = match[1].trim().replace(/^"(.*)"$/, "$1").trim();
-  const email = match[2].trim();
+  const name = String(match[1] || "").trim().replace(/^"(.*)"$/, "$1").trim();
+  const email = String(match[2] || "").trim();
   return name ? { name, email } : { email };
 }
 
@@ -348,9 +363,15 @@ const API_TRANSPORTS = {
   },
 };
 
-/** Which transports have a key, in table order. The first is what wins. */
+/**
+ * Which transports have a key, in table order. The first is what wins.
+ *
+ * @param {Record<string, any>} cfg
+ */
 function configuredTransports(cfg) {
-  return Object.keys(API_TRANSPORTS).filter((name) => cfg[API_TRANSPORTS[name].keyField]);
+  return Object.entries(API_TRANSPORTS)
+    .filter(([, transport]) => cfg[transport.keyField])
+    .map(([name]) => name);
 }
 
 let warnedAmbiguousProvider = false;
@@ -405,6 +426,20 @@ function pickTransport(cfg) {
   return configuredTransports(cfg)[0] || null;
 }
 
+/**
+ * Send one message through whichever transport `pickTransport` selects.
+ *
+ * `text` and `signal` are optional: most callers have neither, and a plain-text
+ * part is derived from the HTML when none is given.
+ *
+ * @param {object} msg
+ * @param {string|string[]} msg.to
+ * @param {string} msg.subject
+ * @param {string} msg.html
+ * @param {string} [msg.text]
+ * @param {AbortSignal} [msg.signal]
+ * @returns {Promise<{ ok: boolean, provider?: string, error?: string }>}
+ */
 export async function sendEmail({ to, subject, html, text, signal }) {
   if (!to) return { ok: false, error: "missing_recipient" };
   const cfg = await getEmailSettings();
@@ -418,11 +453,12 @@ export async function sendEmail({ to, subject, html, text, signal }) {
   const abort = signal ? AbortSignal.any([deadline, signal]) : deadline;
 
   const name = pickTransport(cfg);
-  if (name) {
+  const transport = name ? API_TRANSPORTS[name] : undefined;
+  if (name && transport) {
     const recipients = (Array.isArray(to) ? to : [to]).map((one) => String(one || "").trim()).filter(Boolean);
     if (!recipients.length) return { ok: false, error: "missing_recipient" };
 
-    const { url, headers, body } = API_TRANSPORTS[name].request(cfg, {
+    const { url, headers, body } = transport.request(cfg, {
       recipients,
       subject,
       html,
@@ -574,6 +610,7 @@ function otpEmailHtml(code) {
   `;
 }
 
+/** @param {string} email */
 export async function sendOtpCode(email) {
   if (!email || !EMAIL_RE.test(String(email).trim())) return { ok: false, error: "invalid_email" };
   const normalized = String(email).toLowerCase().trim();
@@ -976,7 +1013,7 @@ function deadLetterEmail(dead) {
   return {
     subject: oneLine(
       dead.length === 1
-        ? `⚠️ Lead delivery failed permanently (${dead[0].funnelSlug})`
+        ? `⚠️ Lead delivery failed permanently (${dead[0]?.funnelSlug})`
         : `⚠️ ${dead.length} lead deliveries failed permanently`,
     ),
     html,

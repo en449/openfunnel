@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // The runtime is JS with JSDoc types, like the engine — so the annotations
+    // have to be CHECKED, not merely present. They were not: `tsconfig.base.json`
+    // has no `include` and no `allowJs`, so `bun run typecheck` covered exactly
+    // one `.d.ts` and every type in this directory was decoration (measured
+    // 2026-08-13 with `tsc --listFiles`).
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "declaration": false,
+    // Node's types, for `process`, `Buffer` and `node:*`. A devDependency —
+    // `check-no-deps.mjs` guards runtime dependencies, and nothing here reaches
+    // a browser.
+    "types": ["node"]
+  },
+  // `api/index.js` is the Vercel entry point and imports straight into this
+  // directory, so it is checked here rather than in a project of its own.
+  "include": ["**/*.js", "../../api/**/*.js"],
+  // The tests are Bun's, not Node's: `bun:test` has no types here and the suite
+  // is exercised by running it. Checking them would mean pulling in a second
+  // set of ambient types to type-check code that already fails loudly.
+  "exclude": ["test/**"]
+}
