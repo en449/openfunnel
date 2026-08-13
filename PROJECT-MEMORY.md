@@ -495,7 +495,7 @@ modules across files, so file order decided the answer — and a commit touching
 was enough to change it. `ALLOWED_HOSTS` is now read per call, which is the rule this runtime
 already follows for `FUNNEL_DOMAINS` and the right one on serverless anyway: the environment belongs
 to the invocation. Red-checked by restoring the import-time read and reproducing the runner's exact
-409-vs-401 locally with `bun test test/server.test.js test/domains.test.js`. `2b6e1a5`.
+409-vs-401 locally with `bun test test/server.test.js test/domains.test.js`. `e74515a`.
 
 ### 2026-08-13 (session 9b) — Phase 2 starts: images, and the delete that was too eager
 
