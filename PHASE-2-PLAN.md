@@ -458,3 +458,130 @@ shown succeeding somewhere.
 - A per-client PIN on top of the token (PLAN.md §5.3's option). It is a second credential to
   distribute and support, and no client's data has yet warranted it. The seam is one column.
 - CSV/PDF export, date-range pickers, charts. The client's question is "did anything come in".
+
+---
+
+## 4. The DSGVO gates
+
+PLAN.md §10 Phase 2 carries six items marked **DSGVO GATE** plus three supporting ones. They are
+phase-blocking by §8's own terms: Phase 2's "Done means" says a deletion request for one named
+person must be executable end to end, and that no funnel can go live with a missing Impressum or an
+unsigned AVV.
+
+Recon against the code first, because two of the six gates turned out to describe machinery that
+does not exist:
+
+| Gate | PLAN.md | What is actually there today |
+| --- | --- | --- |
+| Deletion path per subject | §8.7 | `lead.deleted_at` column, `event` rows, Storage objects. **No path** — nothing deletes, and nothing walks the three stores together |
+| Retention purge running + logged | §8.7 | Nothing. `pg_cron` runs the drain and the sweeper only |
+| Subject search by email/phone | §8.6 | Nothing. The `lead_payload_idx` GIN index exists for exactly this and has no reader |
+| Publish refused without Impressum/Datenschutz | §8.5 | **Neither half exists.** No `legal` field in `types.js`, nothing renders it, and — see Decision 1 — **there is no publish step to refuse** |
+| Publish refused when `avv_signed_at` is null | §8.9 | `client.avv_signed_at` column exists, nothing reads it. Same missing publish step |
+| Consent bar audited | §8.4 | The bar exists with Accept + Decline. **`.of-consent-accept` gets `--of-primary`; `.of-consent-decline` gets the bare button style** — unequal prominence, which is the dark pattern the gate names |
+| Consent evidence (text version) | §8.4 | `lead.consent` is stored as-is from the client. No `text_version` |
+| Art. 15/16/18/20 mechanisms | §8.6 | `restricted` (18) is enforced end to end. Export (15/20) and edit-with-audit (16) do not exist |
+| Datenschutzerklärung module | §8.5 | Nothing |
+
+### Decision 1 — there is no publish step, and inventing one is the wrong answer
+
+Two gates are written as "**publish** is refused when …". There is no publish action in this
+codebase. `saveFunnel` writes a document; `funnel.status` has four values and nothing ever
+transitions one to `live` — `loadFunnel` serves a funnel at `/f/:slug` whatever its status says,
+and deliberately so, because `status` was added for archiving and ingest must not refuse a
+visitor who loaded the page a second before someone paused it.
+
+So "refuse at publish" would mean building a state machine, a transition endpoint, a console
+affordance, and then making `/f/:slug` honour `status` — which changes how every existing funnel
+and every self-hoster's `examples/*.json` is served, to gate a field none of them have.
+
+**Recommendation: the gate binds at SERVE time, not at publish time.** `/f/:slug` refuses to render
+a funnel whose `legal.impressumUrl` or `legal.privacyUrl` is empty, or whose client has no
+`avv_signed_at`. Three reasons it is the better place:
+
+- **It cannot be routed around.** A publish-time check is a check on one code path; an operator
+  editing the row, importing a template, or restoring a backup walks past it. The obligation is
+  about what the *visitor* sees, and serve time is the only place that is the same question.
+- **It is smaller.** One check, in one function, next to the archived-status check already there.
+  No new state, no new endpoint, no new console concept.
+- **It fails in the safe direction.** Clearing an Impressum URL takes the funnel down rather than
+  quietly publishing an Abmahnung. That is unpleasant and it is the entire point of a gate.
+
+The cost, stated: a funnel that is live can be taken offline by an edit. Mitigations — the console
+shows the refusal reason on the funnel card before it can happen, and the refusal page is a plain
+"this page is not available" rather than an error.
+
+**Scope of the refusal.** It binds only when `dbConfigured()`. A self-hoster running from
+`examples/` is their own controller, the README says so, and refusing to serve this repo's own demo
+funnels would make the project undemonstrable. The gate is about *Enno's clients*, and a client is
+a row in `client`.
+
+### Decision 2 — deletion is one SQL function, and it is the only thing that deletes
+
+Art. 17 across `lead`, `event` and Storage (§8.7). One RPC, `erase_subject(p_client_id, p_needle)`,
+that soft-deletes matching leads, deletes their `event` rows, and returns the Storage object paths
+for the caller to delete — because Storage is not reachable from SQL and a function that silently
+skipped it would report a complete deletion that was not one.
+
+Two things the plan already knows and the code must say out loud:
+
+- **A deleted Storage object still serves from the CDN for a while** (measured 2026-08-13, §1). So
+  the deletion receipt reports Storage separately and as "purge requested", not "gone".
+- **PITR/backups are out of scope by §8.7's own decision** — the Löschkonzept states the window.
+  The receipt names it rather than pretending.
+
+The soft delete stays a soft delete for the sweeper's 24h window, which means **the receipt is
+issued before the hard delete happens**. That is the honest shape: the subject is told what was
+found and that it is gone from every reachable store, with the backup window named.
+
+### Decision 3 — search and delete are the same query
+
+The subject-access gate (§8.6) and the deletion gate (§8.7) are one mechanism used twice: find every
+lead for a person within one client. Built once, as `find_subject(p_client_id, p_needle)` over the
+existing `lead_payload_idx` GIN index, matching email or phone anywhere in `payload`. The console
+gets one Subjects view: search → see what is held → export JSON → delete, with the deletion calling
+`erase_subject` on the same needle the search ran on.
+
+Building them separately is how the two come to disagree about what "everything held" means, which
+is the failure that makes a one-month deadline unmeetable.
+
+### Decision 4 — the consent bar audit is a CSS and copy change, not a feature
+
+`.of-consent-decline` currently renders as a secondary button next to a primary Accept. Equal
+prominence means the same size, weight, contrast and position — not a styled Accept beside a plain
+Decline. Also required by §8.4: nothing pre-ticked (the bar has no checkboxes today, so this holds
+by construction), granular per purpose (today it is one binary marketing gate — **stating that as
+one purpose is honest and sufficient while only pixels are gated**), withdrawable as easily as
+given (**missing — there is no way back once decided**), and no non-essential load before the
+choice (holds: `_pixel()` gates every call site).
+
+So the audit produces: a CSS change, a withdrawal affordance, and `consent.textVersion` on the
+document written onto `lead.consent` as evidence.
+
+### Work orders
+
+| # | Work order | Tier | Depends on |
+| --- | --- | --- | --- |
+| D1 | `legal` on the funnel document — typedef, engine footer links beside the AGPL source link, console fields | Sonnet | — |
+| D2 | The serve-time gate in `loadFunnel`/`/f/:slug`: refuse on missing `legal` or null `avv_signed_at`, only when `dbConfigured()`; console shows the reason per funnel | **Opus** (it decides what is public) | D1 |
+| D3 | `find_subject` + `erase_subject` migration, and the Storage half of the walk | **Opus** (Art. 17 completeness) | — |
+| D4 | `GET /api/admin/subjects` + `DELETE`, and the console's Subjects view (search, export JSON, delete with a typed confirmation) | Sonnet | D3 |
+| D5 | Retention purge: `pg_cron` entry, events 90d, leads per `client.retention_months`, hard-delete of soft-deleted rows past 24h, and a logged run | **Opus** (it deletes on a schedule) | D3 |
+| D6 | Consent bar: equal prominence, a withdrawal affordance, `consent.textVersion` through to `lead.consent` | Sonnet | — |
+| D7 | Datenschutzerklärung module generated from the funnel's actual configuration (§8.5) | Sonnet | D1 |
+| D8 | Docs: CLAUDE.md invariants, PLAN.md §10 checklist lines, the Löschkonzept and breach runbook one-pagers (§8.7, §8.8) | Sonnet | D1–D7 |
+
+**Acceptance criteria.** A named person's email is searched across one client, returns every lead
+held, exports as JSON, and a delete removes them from `lead` and `event` and requests the Storage
+purge — verified by re-running the search and getting nothing, and by the SQL assertions. A funnel
+with no `legal.impressumUrl` does not render, and the console says why. A funnel whose client has no
+`avv_signed_at` does not render. The purge job runs on schedule and leaves a log row. Accept and
+Decline are the same button in different words, and a visitor can change their mind. Reviewer + qa
+PASS, live self-test on the applied database.
+
+### Not in scope
+
+- Art. 16 edit-with-audit-entry. It needs an audit log, which is a Phase 3 line, and correction
+  requests are rare enough to do by hand in the meantime — stated so it is a decision.
+- PDF export for Art. 15. JSON satisfies the right; a PDF is a nicety.
+- Backup/PITR surgical deletion, per §8.7's own accepted position.
