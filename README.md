@@ -200,6 +200,24 @@ Optionally enable **email verification** on a form step (`"verifyEmail": true`).
 ### Step 7: Publish & Collect Leads
 Share your live funnel link (`/f/your-funnel-slug`). Review submitted leads in your **Lead Inbox** (`/leads`) or download them via **Export CSV**.
 
+### Share Results With Your Client
+A client wants to know one thing — did anything come in — and the answer
+shouldn't require giving them console access. **Reports** (`/reports`) issues a
+private, read-only link for one client: their leads, their numbers (last 7
+days, last 30 days, total, per funnel), no login and nothing for them to set
+up. Requires Supabase to be configured — there's one client (you) on the
+JSONL-only path, so a link has nothing to scope itself to.
+
+Click **Issue link** and copy it from the panel — the console shows the full
+URL exactly once, at creation, and never again. A link expires on its own
+(180 days by default, configurable) and you can revoke it any time from the
+same screen; a revoked link stays in the list so you can see who had access
+and when, it just stops opening.
+
+> **The link is the only credential.** Anyone holding it can read that
+> client's leads — there's no password behind it. Send it the way you'd send
+> anything private, and don't post it anywhere public.
+
 ---
 
 ## 💻 For Developers & Self-Hosters

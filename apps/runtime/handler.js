@@ -9,6 +9,7 @@
  *   POST /api/lead           → lead capture   (see packages/engine/src/leads.js)
  *   POST /api/events         → analytics ingest
  *   GET  /_of/[v-<hash>/]*   → the engine's ES modules + stylesheet, served raw
+ *   GET  /r/:token           → one client's read-only report (the token is the credential)
  *   GET  /healthz            → liveness probe
  *
  * ROUTE ORDER IS THE SECURITY MODEL
@@ -50,6 +51,7 @@ import { handleFunnels } from "./routes/funnels.js";
 import { handleIngest } from "./routes/ingest.js";
 import { handleInternal } from "./routes/internal.js";
 import { handleOtp } from "./routes/otp.js";
+import { handleReport } from "./routes/report.js";
 
 /**
  * @param {Request} req
@@ -95,6 +97,13 @@ export async function handleRequest(req, opts = {}) {
 
     const funnels = await handleFunnels(req, ctx);
     if (funnels) return funnels;
+
+    // The client's read-only report. Public in the sense that it carries no
+    // Authorization header — the token in its path IS the credential, and
+    // `routes/report.js` treats every failure to resolve one as the same 404.
+    // Deliberately NOT in `handleFunnelHost`'s allowlist: see that file's header.
+    const report = await handleReport(req, ctx);
+    if (report) return report;
 
     // --- Privileged surface -------------------------------------------------
     // One gate, and the handlers it guards are dispatched inside it. A route

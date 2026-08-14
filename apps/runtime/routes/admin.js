@@ -20,7 +20,8 @@ import { isPreviewRecord } from "../lib/preview.js";
 import { rateLimit, tooMany } from "../lib/ratelimit.js";
 import { readJsonlRecords } from "../lib/store.js";
 import { syncAllFunnelTargets } from "../lib/targets.js";
-import { dbConfigured, insert, remove, rpc, select } from "../lib/db.js";
+import { dbConfigured, insert, remove, rpc, select, update } from "../lib/db.js";
+import { REPORT_TTL_DAYS, listReportTokens, mintReportToken } from "../lib/report.js";
 import { drainOnce } from "../lib/delivery.js";
 import { errSummary } from "../lib/log.js";
 import { SLUG_RE } from "../lib/config.js";
@@ -29,6 +30,15 @@ import { ASSET_TYPES, MAX_ASSET_BYTES, assetPath, deleteAsset, signAssetUpload }
 
 /** The five states in the schema's own check constraint. */
 const DELIVERY_STATUSES = new Set(["pending", "delivering", "done", "dead", "cancelled"]);
+
+/**
+ * Shape check for an id that goes into a PostgREST filter.
+ *
+ * The value is encoded before it is interpolated either way; this is the same
+ * belt-and-braces the file-touching routes apply with `SLUG_RE`, and it turns a
+ * malformed id into a 400 rather than a 503 the operator reads as an outage.
+ */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * States `resend_delivery` accepts. `delivering` is excluded because a lease is
@@ -372,6 +382,121 @@ export async function handleAdmin(req, ctx) {
       return json({ ok: true, host, stillMappedBy: remaining });
     } catch (err) {
       console.warn(`[admin] could not unmap a domain: ${errSummary(err)}`);
+      return json({ error: "db_unavailable" }, 503);
+    }
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  Clients
+   *
+   *  A read, and only the columns the console draws with. The table also holds
+   *  `contact_email` and `retention_months`; neither is on this list, because a
+   *  picker needs a name and an id and nothing here yet edits a client.
+   * ------------------------------------------------------------------ */
+  if (path === "/api/admin/clients" && req.method === "GET") {
+    if (!dbConfigured()) return json({ error: "db_not_configured" }, 503);
+    try {
+      const rows = await select("client", "select=id,name,slug,avv_signed_at&deleted_at=is.null&order=name.asc&limit=200");
+      return json({
+        clients: rows.map((c) => ({ id: c.id, name: c.name, slug: c.slug, avvSignedAt: c.avv_signed_at ?? null })),
+      });
+    } catch (err) {
+      console.warn(`[admin] client list unavailable: ${errSummary(err)}`);
+      return json({ error: "db_unavailable" }, 503);
+    }
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  Report tokens — PHASE-2-PLAN.md §3
+   *
+   *  Each row is a credential that reads one client's leads with no login, so
+   *  this surface has one rule above all others: the token exists in exactly one
+   *  response, the one that mints it. Nothing else ever returns it, and the
+   *  digest does not travel either.
+   * ------------------------------------------------------------------ */
+  if (path === "/api/admin/report-tokens" && req.method === "GET") {
+    if (!dbConfigured()) return json({ error: "db_not_configured" }, 503);
+    try {
+      return json({ tokens: await listReportTokens() });
+    } catch (err) {
+      console.warn(`[admin] report token list unavailable: ${errSummary(err)}`);
+      return json({ error: "db_unavailable" }, 503);
+    }
+  }
+
+  if (path === "/api/admin/report-tokens" && req.method === "POST") {
+    if (!dbConfigured()) return json({ error: "db_not_configured" }, 503);
+    const body = await readJson(req);
+
+    // The client is named explicitly and never inferred. `saveFunnel` may guess
+    // when there is exactly one client, because the cost of guessing wrong there
+    // is a funnel filed under the wrong AVV — recoverable. Guessing wrong here
+    // hands one client a working link to another client's leads.
+    const clientId = String(body?.clientId || "").trim();
+    if (!UUID_RE.test(clientId)) return json({ error: "invalid_client" }, 400);
+
+    const label = String(body?.label || "").trim().slice(0, 120) || null;
+
+    const askedDays = Number(body?.ttlDays);
+    const ttlDays = Number.isFinite(askedDays) ? Math.min(Math.max(Math.trunc(askedDays), 1), 3650) : REPORT_TTL_DAYS;
+    const expiresAt = new Date(Date.now() + ttlDays * 24 * 60 * 60 * 1000).toISOString();
+
+    // This route mints credentials, so it gets the same ceiling its siblings do
+    // — and here it also bounds how many live links a leaked admin token could
+    // scatter before anyone notices.
+    if (!(await rateLimit(`report-mint:${clientIp(req, server) || "unknown"}`, 30, 60 * 60 * 1000))) return tooMany();
+
+    const { token, hash } = mintReportToken();
+
+    try {
+      // The client is checked by the foreign key, not by a select-then-insert:
+      // one round trip, and no window between the two in which it could be
+      // deleted. A violation is a 400 about the client, not a 503 about the
+      // database, because the operator's input is what was wrong.
+      const [row] = await insert(
+        "report_token",
+        { client_id: clientId, token_hash: hash, label, expires_at: expiresAt },
+        { returning: true },
+      );
+
+      // The only response that will ever carry it. `path` rather than a full
+      // URL: this process cannot know its own public scheme behind a TLS-
+      // terminating proxy, and the console composes the link from its own
+      // `location.origin`, which is the same deployment.
+      return json({ ok: true, id: row?.id ?? null, token, path: `/r/${token}`, expiresAt });
+    } catch (err) {
+      if (/** @type {any} */ (err)?.code === "23503") return json({ error: "unknown_client" }, 400);
+      console.warn(`[admin] could not issue a report token: ${errSummary(err)}`);
+      return json({ error: "db_unavailable" }, 503);
+    }
+  }
+
+  if (path === "/api/admin/report-tokens" && req.method === "DELETE") {
+    if (!dbConfigured()) return json({ error: "db_not_configured" }, 503);
+    const id = String(url.searchParams.get("id") || "");
+    if (!UUID_RE.test(id)) return json({ error: "invalid_id" }, 400);
+
+    if (!(await rateLimit(`report-mint:${clientIp(req, server) || "unknown"}`, 30, 60 * 60 * 1000))) return tooMany();
+
+    try {
+      // Revoked, not deleted: who could read a client's personal data and until
+      // when is what Art. 30/32 asks about, and a removed row cannot answer it.
+      //
+      // `returning: true` and then counting, because a PostgREST write that
+      // matches no row still SUCCEEDS — the same failure the domain Remove
+      // button shipped with, where the console reported a client's domain
+      // disconnected while it went on serving. Here it would report a link dead
+      // while it still opened.
+      const rows = await update(
+        "report_token",
+        `id=eq.${encodeURIComponent(id)}&revoked_at=is.null`,
+        { revoked_at: new Date().toISOString() },
+        { returning: true },
+      );
+      if (!rows.length) return json({ error: "not_found_or_already_revoked" }, 404);
+      return json({ ok: true, id });
+    } catch (err) {
+      console.warn(`[admin] could not revoke a report token: ${errSummary(err)}`);
       return json({ error: "db_unavailable" }, 503);
     }
   }

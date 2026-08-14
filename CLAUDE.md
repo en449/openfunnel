@@ -151,6 +151,7 @@ Routes:
 | `GET /_of/[v-<hash>/]*` | public | engine source served raw, mirroring `packages/engine/src`; the optional version segment decides the cache header |
 | `GET /_app/*`, `/`, `/builder`, `/leads`, … | public | console shell (see `APP_ROUTES`) |
 | `GET /api/funnels`, `/api/funnels/:slug` | public | funnel list / document |
+| `GET /r/:token` | public | one client's read-only report; the token in the path is the credential |
 | `POST /api/lead`, `/api/events` | public, rate-limited | ingest → JSONL + the Postgres delivery queue (or the direct fan-out) |
 | `POST /api/otp/send`, `/api/otp/verify` | public, rate-limited | email verification challenge |
 | `POST /api/internal/drain` | **INTERNAL_SECRET** | delivery-queue drain, called by pg_cron via pg_net |
@@ -164,11 +165,16 @@ Routes:
 | `GET\|POST\|DELETE /api/admin/domains` | **admin** | the host → funnel mapping; refuses to map the console's own host |
 | `POST /api/admin/assets/sign` | **admin** | mint a signed Storage upload URL; the bytes never come here |
 | `DELETE /api/admin/assets` | **admin** | delete one uploaded object |
+| `GET /api/admin/clients` | **admin** | the client list, for the report-link picker |
+| `GET\|POST\|DELETE /api/admin/report-tokens` | **admin** | issue / list / revoke a client's report link; the token is returned once, at creation |
 | `POST /api/admin/test-email` | **admin** | send a test message |
 | `POST /api/ai/generate`, `/api/ai/improve-copy` | **admin** | copilot (OpenAI optional) |
 
-Only the console shell is public; every API behind it is not. The `/f/:slug`
-page and the ingest endpoints are the entire public API surface.
+Only the console shell is public; every API behind it is not — with one
+narrow exception. The `/f/:slug` page, the ingest endpoints and `GET /r/:token`
+are the entire public API surface, and the third of those is public in name
+only: it carries no `Authorization` header, but the 256-bit token in its own
+path is the credential, checked the same way a bearer token would be.
 
 **Meta Conversions API.** `persist()` also forwards to Meta server-side via
 `forwardMetaCapi`, opt-in through `META_PIXEL_ID` + `META_CAPI_TOKEN` (env only,
@@ -469,6 +475,73 @@ the socket check passes, `Sec-Fetch-Site` reads `same-origin`, and being
 same-origin the page can read the response. `Host` is the only signal left that
 separates the operator's console from a rebound attacker origin.
 
+**The client report link is a credential in a URL, and everything about
+`/r/:token` follows from that (PHASE-2-PLAN.md §3).** There is no
+`Authorization` header and no session — the 256 bits after `/r/` are the whole
+access control, minted by `crypto.getRandomValues`, and the database stores
+only `sha256(token)`, looked up **by that digest**. That is deliberate rather
+than an oversight of PLAN.md §5.3's "constant-time comparison" requirement: an
+equality test on an indexed digest column is not a timing side-channel an
+attacker can use without already holding a preimage, so the constant-time
+requirement is satisfied by having no comparison to time, not by writing a
+careful one.
+
+**Every refusal is the same 404 with the same body.** Expired, revoked, never
+existed, one character off a real token — a report link that answers any of
+those differently tells a prober which half of a guess was right. `routes/report.js`
+builds the 404 once (`notFound()`) and every failure path returns that same
+value; do not add a message, a status code or a header that varies by reason.
+
+**Validity is decided by `resolve_report_token` in SQL, in one place.** It
+checks the digest, the expiry, the revocation and the client's own
+`deleted_at`, and stamps `last_seen_at`, all in one round trip — so the route's
+entire authorisation logic is "did a row come back". A second check written in
+JavaScript on top of that would be a second answer to the same question, and
+the day they disagree is the day one of them is wrong silently.
+
+**The page is server-rendered with no JavaScript and no report API, on
+purpose.** The obvious build is a console-SPA view fetching `/api/report/...`
+with the token — but the token IS the credential, so a client-side page would
+have to hold it and send it on every subrequest, putting it in `history`, in
+every `Referer` its subresources generate, and in whatever the browser syncs.
+One route that reads the token out of its own path and renders the answer
+means the token appears in exactly one request. It also means there is no
+second surface (`/api/report/*`) needing its own auth, its own rate limits and
+its own place in the route order.
+
+`Referrer-Policy: no-referrer` on this route **overrides** the shared
+`strict-origin-when-cross-origin` every other page sends, because the secret is
+in the PATH here — a `strict-origin` policy still leaks the origin on a
+click-out, but on `/r/:token` the path *is* what must never leave, so even that
+much is too much.
+
+**The report is 404 on a mapped custom domain because `handleFunnelHost` is an
+allowlist and nothing added it — do not add `/r/` to that allowlist.** The
+report is the operator's surface for reading about ONE client; published on
+that client's own ad domain it would be one wrong mapping away from serving
+one client's leads on another client's brand, which is exactly what the
+funnel-host allowlist exists to make impossible. This is pinned by
+`apps/runtime/test/report.test.js`'s "the report is absent on a mapped funnel
+host, and present on the console host" test, which renders the SAME token on
+the console host in the same assertion — so the 404 on the mapped host proves
+the gate is doing the refusing, not a fixture that was never going to render
+anywhere.
+
+**The token never reaches a log line.** A database failure between resolving
+the token and building the report is logged (`console.warn`), but only with
+the client id — never the token, never a URL built from it. Same rule the rest
+of the runtime applies to `err.path`.
+
+**The deletion/restriction/spam exclusions live in ONE CTE inside
+`client_report`, shared by the counter and the list.** `deleted_at is not
+null`, `restricted` (Art. 18 blocks export, and a report is an export) and
+`is_spam` are each excluded for a different reason, but they are excluded ONCE,
+in the `visible` CTE the SQL function builds — both the `total`/`d7`/`d30`
+counters and the `leads` array read from it. Two separate queries carrying two
+copies of that predicate is how a client ends up reading "14 Anfragen" above a
+table of 11: the day the counter's copy and the list's copy drift is invisible
+until someone counts.
+
 **Privileged routes also refuse cross-site browser requests.** Authentication is
 not enough on its own: with no `ADMIN_TOKEN` the gate trusts loopback, so a page
 the operator merely *visits* was able to drive the console. `readJson` ignores
@@ -674,6 +747,22 @@ all three tests and still arrived as `https://evil.tld/x`. That defeated the
 `leadEndpoint` guard and the `href` filter in `richText` with the same character.
 Any new check on an operator-supplied URL parses it; a textual test will lose
 this race again in a way the test suite reads as correct.
+
+It lost it again in `routes/report.js`, and the second loss is worth keeping
+because it looked nothing like a URL check. The client report links a lead's
+email as `mailto:<value>`, and the value was validated with `EMAIL_RE` — no
+whitespace, one `@`, a dot. `mailto:` takes header parameters after a `?`, so
+`victim@example.com?cc=attacker%40evil.invalid` satisfies that pattern (the
+second address is percent-encoded, so the regex never sees an `@`) while the
+browser resolves it to a link that silently CCs a stranger on the client's reply
+to their own customer — planted by any anonymous visitor typing it into the
+public lead form. `mailtoHref()` now builds the URL and requires `search` and
+`hash` to be empty and `pathname` to equal the input. The rule is not "check
+URLs with a parser"; it is **anything a parser will later interpret must be
+checked by that parser**, and a scheme with its own grammar (`mailto:`, `tel:`,
+`data:`) counts. Where rebuilding the value from scratch is possible — the phone
+number is reassembled from its digits — that is stronger still, because nothing
+of the input survives to carry a parameter.
 
 **Escaping.** Server-rendered HTML goes through `esc()`; funnel JSON embedded in
 a `<script>` goes through `jsonScript()` (which escapes `<`, U+2028, U+2029).

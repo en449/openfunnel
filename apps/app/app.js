@@ -47,9 +47,23 @@ const state = {
   domainsWritable: false,
   /** "ready" | "unauthorized" | "error", same shape as `deliveryState`. */
   domainsState: "ready",
+  /** @type {{id:string,clientId:string,clientName:string|null,label:string|null,expiresAt:string,revokedAt:string|null,lastSeenAt:string|null,createdAt:string,expired:boolean}[]} */
+  reports: [],
+  /** Client picker for the issue form — `GET /api/admin/clients`, the same
+   *  list a token's `clientId` must name (PHASE-2-PLAN.md §3 Decision 3: never
+   *  guessed, because guessing wrong hands one client a link to another's leads). */
+  reportClients: /** @type {{id:string,name:string,slug:string,avvSignedAt:string|null}[]} */ ([]),
+  /** "ready" | "unconfigured" (no database — §3 Decision 8, `/r/:token` 404s and
+   *  issuing 503s) | "unauthorized" | "error". */
+  reportsState: "ready",
+  /** The just-minted `{ url }` this view is showing exactly once (§3 Decision
+   *  9). Cleared ONLY by the operator dismissing the panel — never by a
+   *  re-render, a toast, or a list refresh, or the operator has issued a
+   *  credential nobody has (work order C5, requirement 1). */
+  reportIssuedUrl: /** @type {string|null} */ (null),
 };
 
-const VIEWS = ["dashboard", "builder", "leads", "delivery", "analytics", "templates", "domains", "settings"];
+const VIEWS = ["dashboard", "builder", "leads", "delivery", "analytics", "templates", "domains", "reports", "settings"];
 const ROUTES = {
   dashboard: "/",
   builder: "/builder",
@@ -58,6 +72,7 @@ const ROUTES = {
   analytics: "/analytics",
   templates: "/templates",
   domains: "/domains",
+  reports: "/reports",
   settings: "/settings",
 };
 
@@ -582,6 +597,7 @@ function showView(view, push = true) {
   // polling — a fresh read only when the operator actually opens the panel.
   if (view === "delivery") loadDeliveries();
   if (view === "domains") loadDomains();
+  if (view === "reports") loadReports();
 }
 
 /* ========================================================================== *
@@ -3512,6 +3528,307 @@ function bindDomains() {
 }
 
 /* ========================================================================== *
+ *  Reports — a signed `/r/:token` link a client opens to see their own leads,
+ *  with no login (PHASE-2-PLAN.md §3). This view is the entire admin surface
+ *  for that credential: `POST` mints one, `GET` lists metadata about it and
+ *  `DELETE` revokes it — the token itself travels in exactly one response,
+ *  the mint, and never again (Decision 9). Modeled on the Domains section
+ *  immediately above: same load/render/bind shape, same `writable`-style
+ *  "can't do anything here" state, same delegated row-button pattern.
+ * ========================================================================== */
+
+/**
+ * One line per `{ error }` body the issue/revoke routes can send back — same
+ * reasoning as `DOMAIN_ERRORS`: a generic failure message would send the
+ * operator retrying a request that cannot succeed differently next time.
+ */
+const REPORT_ERRORS = {
+  invalid_client: "Pick a client first.",
+  unknown_client: "That client no longer exists — refresh and try again.",
+  db_not_configured: "No database configured — reports are unavailable.",
+  db_unavailable: "The database didn't answer — try again.",
+  rate_limited: "Too many report links issued in the last hour — try again later.",
+  invalid_id: "That link no longer exists.",
+  not_found_or_already_revoked: "That link was already revoked.",
+};
+
+function reportErrorToast(res, body) {
+  toast(REPORT_ERRORS[body?.error] || `Could not save that (status ${res.status})`, "error");
+}
+
+/** Classifies one fetch outcome into the same states `renderReports()` reads. */
+function reportFetchState(res) {
+  if (res.status === 503) return "unconfigured";
+  if (res.status === 401) return "unauthorized";
+  if (!res.ok) return "error";
+  return "ready";
+}
+
+/**
+ * Loads both the token list and the client picker's options in one round
+ * trip each. They are gated identically server-side (same `dbConfigured()`,
+ * same admin check), so in practice they succeed or fail together — the
+ * token response's state wins when it doesn't, since the list is this view's
+ * primary content and the picker is only ever secondary to it.
+ */
+async function loadReports() {
+  try {
+    const [tokensRes, clientsRes] = await Promise.all([
+      apiFetch("/api/admin/report-tokens"),
+      apiFetch("/api/admin/clients"),
+    ]);
+    const tState = reportFetchState(tokensRes);
+    const overall = tState !== "ready" ? tState : reportFetchState(clientsRes);
+    if (overall !== "ready") {
+      state.reportsState = overall;
+      state.reports = [];
+      state.reportClients = [];
+    } else {
+      const [tokensData, clientsData] = await Promise.all([tokensRes.json(), clientsRes.json()]);
+      state.reports = tokensData.tokens || [];
+      state.reportClients = clientsData.clients || [];
+      state.reportsState = "ready";
+    }
+  } catch {
+    state.reportsState = "error";
+    state.reports = [];
+    state.reportClients = [];
+  }
+  renderReports();
+}
+
+/**
+ * Never touches `#reportIssuedPanel`. That panel is the one place in this
+ * view a token's full URL ever appears, it exists for exactly one reason —
+ * so the operator can copy it before it is gone forever — and this function
+ * runs after every load, every revoke and every issue. If it cleared the
+ * panel, the panel would not have survived long enough to be read.
+ */
+function renderReports() {
+  const unconfigured = $("reportsUnconfigured");
+  const issueCard = $("reportIssueCard");
+  const wrap = $("reportsTableWrap");
+  const body = $("reportsBody");
+  const sub = $("reportsSub");
+  const clientSelect = $("reportClientSelect");
+  const labelInput = $("reportLabelInput");
+  const issueBtn = $("reportIssueBtn");
+  const noClients = $("reportsNoClients");
+
+  // No database, no per-client store to scope a report to (§3 Decision 8) —
+  // the issue form is hidden outright rather than left clickable and failing
+  // on submit, same posture as the Domains view's own unwritable state.
+  if (state.reportsState === "unconfigured") {
+    if (unconfigured) unconfigured.hidden = false;
+    if (issueCard) issueCard.hidden = true;
+    if (wrap) wrap.hidden = true;
+    if (sub) sub.textContent = "No database configured — reports are unavailable.";
+    return;
+  }
+  if (unconfigured) unconfigured.hidden = true;
+  if (issueCard) issueCard.hidden = false;
+  if (wrap) wrap.hidden = false;
+
+  const ready = state.reportsState === "ready";
+  const hasClients = ready && state.reportClients.length > 0;
+
+  if (clientSelect) {
+    const current = clientSelect.value;
+    // The server refuses a mint with no `clientId` and never guesses one
+    // (§3 Decision 3), so an empty picker cannot fall back to "the only
+    // client" the way `saveFunnel` may — it has to say there is nothing to
+    // pick, which `#reportsNoClients` below does.
+    clientSelect.innerHTML = hasClients
+      ? `<option value="">Select a client…</option>${state.reportClients
+          .map((c) => `<option value="${esc(c.id)}">${esc(c.name || c.slug)}</option>`)
+          .join("")}`
+      : `<option value="">No clients yet</option>`;
+    if (hasClients && state.reportClients.some((c) => c.id === current)) clientSelect.value = current;
+    clientSelect.disabled = !hasClients;
+  }
+  if (labelInput) labelInput.disabled = !hasClients;
+  if (issueBtn) issueBtn.disabled = !hasClients;
+  if (noClients) noClients.hidden = !(ready && state.reportClients.length === 0);
+
+  if (sub) {
+    sub.textContent =
+      state.reportsState === "unauthorized"
+        ? "Not authorised — paste the admin token in Settings."
+        : state.reportsState === "error"
+          ? "Could not load report links."
+          : state.reports.length
+            ? `${count(state.reports.length, "link")} issued.`
+            : "No report links issued yet.";
+  }
+
+  if (!body) return;
+
+  if (state.reportsState !== "ready") {
+    const EMPTY = {
+      unauthorized: ["Not authorised", "This browser has no admin token for this hostname. Settings → Admin API token."],
+      error: ["Could not load report links", "The server did not answer — try Refresh."],
+    };
+    const [title, hint] = EMPTY[state.reportsState] || EMPTY.error;
+    body.innerHTML = `<tr><td colspan="7"><div class="empty">
+      <div class="empty-title">${esc(title)}</div>
+      <p class="empty-body">${esc(hint)}</p>
+    </div></td></tr>`;
+    return;
+  }
+
+  if (!state.reports.length) {
+    body.innerHTML = `<tr><td colspan="7"><div class="empty">
+      <div class="empty-title">No report links yet</div>
+      <p class="empty-body">Issue one above once a client is set up.</p>
+    </div></td></tr>`;
+    return;
+  }
+
+  // `clientName` and `label` are operator-authored strings the server passes
+  // through unmodified — esc()'d like any other value this console renders
+  // as markup (CLAUDE.md's Escaping rule). The token itself is never in this
+  // list: `listReportTokens()` never selects it, so there is nothing here to
+  // leak even if this table's HTML were somehow read back.
+  body.innerHTML = state.reports
+    .map((t, i) => {
+      const status = t.revokedAt
+        ? `<span class="trend-badge trend-neg">Revoked</span>`
+        // Read off the server's own `expired` boolean, never recomputed from
+        // the browser's clock — a wrong local clock must not draw a dead
+        // link as live, or a live one as dead (work order C5, requirement 2).
+        : t.expired
+          ? `<span class="trend-badge trend-neg">Expired</span>`
+          : `<span class="trend-badge trend-pos">Active</span>`;
+      return `<tr>
+        <td>${esc(t.clientName || "—")}</td>
+        <td>${t.label ? esc(t.label) : `<span style="color:var(--text-3)">—</span>`}</td>
+        <td class="cell-mono" title="${esc(t.createdAt || "")}">${esc(relativeTime(t.createdAt))}</td>
+        <td class="cell-mono" title="${esc(t.expiresAt || "")}">${esc(
+          new Date(t.expiresAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }),
+        )}</td>
+        <td class="cell-mono">${t.lastSeenAt ? esc(relativeTime(t.lastSeenAt)) : "Never opened"}</td>
+        <td>${status}</td>
+        <td>${!t.revokedAt ? `<button class="btn btn-sm" data-revoke-report="${i}">Revoke</button>` : ""}</td>
+      </tr>`;
+    })
+    .join("");
+}
+
+/** Fills and reveals the one-time reveal panel. See its doc on `renderReports`. */
+function showIssuedReportUrl(url) {
+  state.reportIssuedUrl = url;
+  const panel = $("reportIssuedPanel");
+  const input = $("reportIssuedUrl");
+  if (input) input.value = url;
+  if (panel) panel.hidden = false;
+}
+
+/** The only thing allowed to hide `#reportIssuedPanel` — an explicit click. */
+function dismissIssuedReportUrl() {
+  state.reportIssuedUrl = null;
+  const panel = $("reportIssuedPanel");
+  if (panel) panel.hidden = true;
+}
+
+async function issueReportToken() {
+  const clientSelect = $("reportClientSelect");
+  const labelInput = $("reportLabelInput");
+  const btn = $("reportIssueBtn");
+  const clientId = clientSelect?.value || "";
+  const label = labelInput?.value.trim().slice(0, 120) || "";
+  if (!clientId) return toast("Pick a client", "error");
+
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Issuing…";
+  }
+  try {
+    const res = await apiFetch("/api/admin/report-tokens", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ clientId, label: label || undefined }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.ok) {
+      // `location.origin` because the mint response deliberately sends only a
+      // path — the server behind a TLS-terminating proxy cannot know its own
+      // public scheme, and the console already knows the origin it is on.
+      showIssuedReportUrl(location.origin + data.path);
+      if (labelInput) labelInput.value = "";
+      await loadReports();
+    } else {
+      reportErrorToast(res, data);
+    }
+  } catch {
+    toast("Could not reach the server", "error");
+  } finally {
+    if (btn) {
+      btn.disabled = !(state.reportsState === "ready" && state.reportClients.length > 0);
+      btn.textContent = "Issue link";
+    }
+  }
+}
+
+async function revokeReportToken(id, btn) {
+  // Says what revoking means, not just "are you sure" — the client's link
+  // stops working immediately and there is no undo (work order C5,
+  // requirement 3).
+  if (!confirm("Revoke this report link? The client's link stops working immediately and this cannot be undone.")) return;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Revoking…";
+  }
+  try {
+    const res = await apiFetch(`/api/admin/report-tokens?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      toast("Report link revoked");
+      // Reload from the server rather than marking the row revoked locally —
+      // a DELETE the server refused (already revoked, unknown id) must not
+      // leave the row drawn as revoked when it is not (requirement 3).
+      await loadReports();
+      return;
+    }
+    reportErrorToast(res, data);
+  } catch {
+    toast("Could not reach the server", "error");
+  }
+  if (btn) {
+    btn.disabled = false;
+    btn.textContent = "Revoke";
+  }
+}
+
+function bindReports() {
+  $("reportsRefreshBtn")?.addEventListener("click", loadReports);
+  $("reportIssueBtn")?.addEventListener("click", issueReportToken);
+  $("reportLabelInput")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      issueReportToken();
+    }
+  });
+  $("reportIssuedCopyBtn")?.addEventListener("click", () => {
+    const url = $("reportIssuedUrl")?.value || "";
+    if (!url) return;
+    navigator.clipboard
+      .writeText(url)
+      .then(() => toast("Report link copied — this is the only time it will be shown", "info"))
+      .catch(() => toast(url, "info"));
+  });
+  $("reportIssuedDismissBtn")?.addEventListener("click", dismissIssuedReportUrl);
+  // Delegated, like the delivery log's resend button and the domains list's
+  // remove button: rows are rendered, not authored, so a listener bound to
+  // one button would not survive the next innerHTML swap.
+  $("reportsBody")?.addEventListener("click", (e) => {
+    const trigger = e.target.closest("[data-revoke-report]");
+    if (!trigger) return;
+    const row = state.reports[+trigger.dataset.revokeReport];
+    if (row) revokeReportToken(row.id, trigger);
+  });
+}
+
+/* ========================================================================== *
  *  Templates
  * ========================================================================== */
 
@@ -3682,6 +3999,7 @@ const PALETTE_ACTIONS = [
   { label: "Analytics", icon: "chart", hint: viewHint("analytics"), category: "Navigation", run: () => showView("analytics") },
   { label: "Templates", icon: "grid", hint: viewHint("templates"), category: "Navigation", run: () => showView("templates") },
   { label: "Domains", icon: "external", hint: viewHint("domains"), category: "Navigation", run: () => showView("domains") },
+  { label: "Reports", icon: "copy", hint: viewHint("reports"), category: "Navigation", run: () => showView("reports") },
   { label: "Settings", icon: "settings", hint: viewHint("settings"), category: "Navigation", run: () => showView("settings") },
 
   { label: "Funnel theme", icon: "palette", category: "Funnel Settings & Config", run: () => openModal("themeOverlay") },
@@ -4770,6 +5088,7 @@ async function init() {
   bindLeads();
   bindDelivery();
   bindDomains();
+  bindReports();
   bindModals();
   bindKeys();
   initSymbolPicker();

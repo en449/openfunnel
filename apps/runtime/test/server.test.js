@@ -530,6 +530,12 @@ describe("privileged route protection", () => {
     ["GET", "/api/admin/email-settings"],
     ["POST", "/api/admin/email-settings"],
     ["POST", "/api/admin/test-email"],
+    ["GET", "/api/admin/clients"],
+    // Issues and revokes a credential that reads one client's leads with no
+    // login, so it is the last route in this file that may ever escape the gate.
+    ["GET", "/api/admin/report-tokens"],
+    ["POST", "/api/admin/report-tokens"],
+    ["DELETE", "/api/admin/report-tokens"],
     ["GET", "/api/builder/funnel/lead-gen"],
     ["POST", "/api/builder/save"],
     ["POST", "/api/builder/delete"],

@@ -170,6 +170,7 @@
       <button class="tab" role="tab" data-view="analytics" aria-selected="false">Analytics</button>
       <button class="tab" role="tab" data-view="templates" aria-selected="false">Templates</button>
       <button class="tab" role="tab" data-view="domains" aria-selected="false">Domains</button>
+      <button class="tab" role="tab" data-view="reports" aria-selected="false">Reports</button>
       <button class="tab" role="tab" data-view="settings" aria-selected="false">Settings</button>
       <a id="liveLink" class="live-link" href="/f/lead-gen" target="_blank" rel="noopener">
         <span id="liveLinkText">/f/lead-gen</span>
@@ -621,6 +622,102 @@
               <li>Have the client point DNS at it: an <strong>A record</strong> for an apex domain (e.g. <code>client-firma.de</code>), or a <strong>CNAME</strong> for a subdomain (e.g. <code>angebot.client-firma.de</code>).</li>
               <li>Use the exact value Vercel's own domain card shows for THAT domain — those values are per-project and change over time, so copy them fresh from Vercel, never from a document like this one.</li>
             </ol>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── Reports ──────────────────────────────────────────────────────── -->
+      <!-- A signed `/r/:token` link a client opens to see their own leads with
+           no login (PHASE-2-PLAN.md §3). This console never sees a token again
+           after the moment it mints one (`#reportIssuedPanel`, below) — the
+           list and the row markup never carry one, only metadata about it. -->
+      <section id="view-reports" class="view" role="tabpanel">
+        <div class="view-pad">
+          <div class="page-head">
+            <div>
+              <h1 class="page-title">Reports</h1>
+              <p class="page-sub" id="reportsSub">Give a client a link to their own leads — no login required.</p>
+            </div>
+            <div class="page-actions">
+              <button id="reportsRefreshBtn" class="btn">
+                <svg width="14" height="14"><use href="#i-refresh" /></svg>
+                Refresh
+              </button>
+            </div>
+          </div>
+
+          <!-- Shown when no database is configured — §3 Decision 8: `/r/:token`
+               404s and issuing 503s, because the JSONL sink has no `client_id`
+               to scope a report to. The issue form below is hidden, not left
+               clickable and failing on submit. -->
+          <div id="reportsUnconfigured" class="card empty" hidden style="margin-bottom: 16px">
+            <div class="empty-title">Reports need a database</div>
+            <p class="empty-body">No database is configured, so there is no per-client store to scope a report to. A self-hosted install with no database has one operator, and the console is that operator's report.</p>
+          </div>
+
+          <!-- The ENTIRE lifetime this token's bytes exist outside the database:
+               one HTTP response, held here until the operator dismisses it.
+               Nothing in this file may set `hidden = true` on this panel except
+               the dismiss button — not a re-render, not a toast, not a refresh
+               (work order C5, requirement 1). -->
+          <div id="reportIssuedPanel" class="card" hidden style="margin-bottom: 16px; border-color: var(--neg)">
+            <div class="card-head"><span class="card-title">Report link issued</span></div>
+            <div class="card-pad">
+              <p class="field-hint" style="color: var(--neg); font-weight: 600; margin: 0 0 10px">
+                This is the only time this link will be shown. Copy it now — the server will never display it again, and there is no way to recover it later.
+              </p>
+              <div style="display: flex; gap: 8px">
+                <input id="reportIssuedUrl" class="input input-mono" type="text" readonly style="flex: 1" onclick="this.select()" />
+                <button id="reportIssuedCopyBtn" class="btn btn-primary">
+                  <svg width="13" height="13"><use href="#i-copy" /></svg>
+                  Copy
+                </button>
+              </div>
+              <button id="reportIssuedDismissBtn" class="btn btn-ghost btn-sm" style="margin-top: 12px">I've saved this link</button>
+            </div>
+          </div>
+
+          <div id="reportIssueCard" class="card" style="margin-bottom: 16px">
+            <div class="card-head"><span class="card-title">Issue a report link</span></div>
+            <div class="card-pad">
+              <div style="display: grid; grid-template-columns: 1fr 1fr auto; gap: 12px; align-items: end">
+                <div class="field" style="margin: 0">
+                  <label for="reportClientSelect">Client</label>
+                  <span class="select-wrap">
+                    <select id="reportClientSelect" class="select"></select>
+                    <span class="select-caret"><svg width="14" height="14"><use href="#i-chevron" /></svg></span>
+                  </span>
+                </div>
+                <div class="field" style="margin: 0">
+                  <label for="reportLabelInput">Label <span class="field-hint">— your own note, never shown to the client</span></label>
+                  <input id="reportLabelInput" class="input" type="text" maxlength="120" placeholder="e.g. sent 14 Aug" autocomplete="off" />
+                </div>
+                <button id="reportIssueBtn" class="btn btn-primary">
+                  <svg width="14" height="14"><use href="#i-plus" /></svg>
+                  Issue link
+                </button>
+              </div>
+              <p id="reportsNoClients" class="field-hint" hidden style="margin: 10px 0 0">No clients yet — a report link is issued to a client, and this workspace has none on record.</p>
+            </div>
+          </div>
+
+          <div id="reportsTableWrap" class="card">
+            <div class="table-wrap">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th>Client</th>
+                    <th>Label</th>
+                    <th>Created</th>
+                    <th>Expires</th>
+                    <th>Last seen</th>
+                    <th>Status</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="reportsBody"></tbody>
+              </table>
+            </div>
           </div>
         </div>
       </section>

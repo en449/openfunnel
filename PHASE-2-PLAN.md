@@ -248,3 +248,213 @@ screenshot of the funnel page rendering on a mapped host.
 - Wildcard subdomains (`*.f.enno.de`) — nameserver delegation of a zone the operator owns.
 - Per-domain TLS, redirects, `www` handling, apex→subdomain rules: all of that is Vercel's, and
   none of it is code in this repo.
+
+---
+
+## 3. Client report link `/r/:token`
+
+**The problem it solves.** A client whose funnel is running has exactly one question — *did
+anything come in?* — and today the only way to answer it is to ask Enno. PLAN.md §3.3 calls the
+signed report the DFY differentiator and §5.3 specifies it; it is also what removes the case for
+ever building client accounts, because the alternative to a link is a login page, a password reset
+flow and a session store for people who will use it twice a month.
+
+### Decision 1 — the page is server-rendered HTML, and there is no report API
+
+The obvious build is another view in the console SPA, fetching `/api/report/...` with the token.
+Do not: the token **is** the credential, so a client-side page has to hold it and send it on every
+request, which puts it in `history`, in every `Referer` this page's subresources generate, and in
+whatever the browser syncs. One route that reads the token out of its own path, renders the answer
+and returns it means the token appears in exactly one request and one server log line that never
+records it.
+
+It also means there is no second surface to gate. `/api/report/*` would be a public API needing its
+own auth, its own rate limits and its own place in the route order — three things to get right for
+a page with no interactivity in it. The report is a table, a few numbers, and `tel:`/`mailto:`
+links a phone can act on. No JavaScript at all.
+
+### Decision 2 — the token is looked up BY its hash, so there is no comparison left to time
+
+PLAN.md §5.3 asks for a constant-time comparison against the stored hash. Storing
+`sha256(token)` and *selecting on that digest* is strictly better and simpler: the secret is never
+loaded into the process to be compared, and an index equality test on a digest is not a signal an
+attacker can use without already holding a preimage. So the constant-time requirement is satisfied
+by not having a comparison, not by writing one.
+
+256 bits from `crypto.getRandomValues`, base64url, 43 characters. The digest is `bytea`, matching
+the way `otp.code_hash` and `lead.ip_hash` are already stored.
+
+### Decision 3 — the scope is the token's own `client_id`, and it is never a parameter
+
+Every query the page runs filters on the `client_id` that came back with the token row. Nothing in
+the URL, the query string or a header names a client, a funnel or a lead — so there is no
+parameter to tamper with, and the isolation is a property of the shape rather than of a check
+someone remembers to write. This is the same posture as `ingest_lead` setting `client_id` from the
+funnel rather than from the request body.
+
+Three classes of row are excluded, and each for its own reason:
+
+- `deleted_at is not null` — a soft-deleted lead is deleted (§8.7); the sweeper has just not run yet.
+- `restricted` — Art. 18 says restricted processing blocks delivery **and export**. A report is an
+  export. `cancel_pending_on_restrict` already stops the queue; this is the same rule on the read side.
+- `is_spam` — not a legal requirement, a product one: the report is what makes a client trust the
+  funnel, and three casino bots at the top of the list do the opposite.
+
+### Decision 4 — a token in a URL is a credential in the leakiest place there is
+
+Everything that follows is one control each, and none of them is optional:
+
+- `noindex, nofollow` and `Referrer-Policy: no-referrer` — the shared `BASE_HTML_HEADERS` sends
+  `strict-origin-when-cross-origin`, which is right for a funnel page and not enough here, because
+  the secret is in the *path* and a click-out would carry it. `no-referrer` on this route only.
+- A CSP allowing nothing off-origin. The page has no script, no font, no image and no third party;
+  there is nothing to allow, so nothing is.
+- Expiry (default 180 days), revocation, and `last_seen_at` stamped on every view — so a link
+  nobody has opened in three months is visible as such before it is renewed.
+- Rate limited. Token entropy is the whole access control, which makes it a TOM commitment under
+  Art. 32, and an endpoint that can be walked defeats the entropy. The per-IP ceiling is on
+  **misses**: a client refreshing their own report is not the thing to limit, and a caller
+  producing 404s at that path is doing exactly one thing. The limiter hashes its own key
+  (`lib/ratelimit.js`), so keying a bucket on a token does not write the token into `rate_bucket`.
+- The token is never logged. A warn on this route names the reason, never the path.
+
+Accepted and stated in PLAN.md §5.3: a leaked link exposes that client's leads. The mitigations are
+expiry, revocation and one link per client, and the alternative — account management for people who
+will not use it — is worse at this scale.
+
+### Decision 5 — the report is 404 on a mapped funnel host, and that is already true
+
+`handleFunnelHost` is an allowlist, so a new route is refused on client domains by default and
+nothing needs to be added for this one. Recorded here so nobody "fixes" it later: the report is the
+*operator's* surface for one client. Published on a client's own ad domain it would be one wrong
+mapping away from serving one client's leads on another client's brand, and the funnel host exists
+to make exactly that impossible.
+
+### Decision 6 — validity is decided in SQL, in one function
+
+`resolve_report_token(p_hash bytea)` checks the digest, the expiry, the revocation and the client's
+own `deleted_at`, stamps `last_seen_at`, and returns the client — or nothing. One round trip, and
+the rules live in the same place as the delivery state machine rather than as four `&&` in a route
+handler that a later edit can reorder. The route's whole authorisation logic becomes *did this
+return a row*.
+
+**Every refusal is the same 404 with the same body.** Expired, revoked, never existed, off by one
+character — a report link that distinguishes them tells a prober which half of the guess was right.
+
+### Decision 7 — leads and numbers, not delivery state
+
+PLAN.md §3.3 lists "leads, delivery state, funnel performance". Delivery state is deliberately left
+out: `attempts: 3, last_error: ECONNREFUSED` is the operator's plumbing, the client can do nothing
+with it, and a red row in a client's report generates a phone call about a lead that arrived. What
+ships is the count this week / 30 days / total, a per-funnel breakdown, and the leads themselves
+newest first with their contact fields and answers.
+
+`ponytail: 200 most recent leads, no paging, no CSV. Add paging when a client's report actually
+runs past it — at 200 leads a month this is a different conversation about the whole product.`
+
+### Decision 8 — Postgres only
+
+No database, no report: `/r/:token` 404s and the issuing route answers 503. The JSONL sink has no
+`client_id` and never will — it is the operator's own buffer (CLAUDE.md), not a per-client store —
+so there is nothing to scope a report to on that path. A self-hoster with no Supabase has one
+client, themselves, and the console.
+
+### Decision 9 — the token is shown exactly once, and revoking keeps the row
+
+`POST /api/admin/report-tokens` returns the token and the full URL in that one response and never
+again; the list route returns label, expiry, last seen and revoked state, never the digest and
+never the token. `DELETE` sets `revoked_at` rather than removing the row — who had access to a
+client's personal data, and until when, is the kind of thing Art. 30/32 asks about, and a deleted
+row cannot answer it.
+
+### Work orders
+
+| # | Work order | Tier | Depends on |
+| --- | --- | --- | --- |
+| C1 | Migration: `report_token` + `resolve_report_token()` + RLS, matching the sibling tables | **Opus** (it defines what "authorised" means) | — |
+| C2 | `lib/report.js` — mint/hash a token, resolve one to a client, load that client's leads and counts | **Opus** (the whole access control) | C1 |
+| C3 | `routes/report.js` + the dispatch line in `handler.js` — the public page, its headers, its rate limits | **Opus** (new public surface) | C2 |
+| C4 | `GET\|POST\|DELETE /api/admin/report-tokens` | Sonnet | C2 |
+| C5 | Console: a Reports section — issue a link, copy it once, list and revoke | Sonnet | C4 |
+| C6 | Docs: CLAUDE.md invariant + route table, README, PLAN.md §10 checklist line | Sonnet | C1–C5 |
+
+**Acceptance criteria.** A token issued for client A opens a page listing A's leads and A's numbers;
+a token issued for client B shows only B's, verified with two clients in one database. An expired
+token, a revoked token, a token that never existed and a correct token with one character changed
+all return byte-identical 404s. A restricted, soft-deleted or spam-flagged lead does not appear.
+The page loads with zero third-party requests and no JavaScript. The token appears in no log line.
+`/r/<token>` answers 404 on a mapped funnel host. Reviewer + qa PASS, and the live self-test is a
+real token opened against the branch alias with a screenshot.
+
+### Decided while building this, and not in the design above
+
+- **The page speaks one language, chosen by `REPORT_LANG`.** The repo's default is English, matching
+  `funnel.lang || "en"`; Enno's deployment sets `de`. Eleven strings in a table, not a locale
+  framework — but the alternative (English only) was a report that could not be sent to the client
+  it was built for.
+- **`REPORT_TZ` matters more than it looks.** Vercel runs UTC, so an unset timezone shows a German
+  client every lead one or two hours before it arrived. That reads as a broken report, not as a
+  timezone. Defaults to `TZ`, then `UTC`.
+- **The wide rate limit answers 429; only the miss bucket answers the silent 404.** The wide one
+  fires *before* the token is resolved, so it says the same thing to a valid link and an invented
+  one and leaks nothing — while a 404 there would tell a client behind an office NAT that their
+  link is dead when it is merely busy, which is the one support call this feature exists to prevent.
+- **A contact value is only linked when the URL PARSER says it is only an address.** `mailto:` takes
+  header parameters after a `?`, so an "email" of `a@b.c?cc=attacker@evil.invalid` would silently
+  copy a stranger on the client's reply to their own customer, and any anonymous visitor can type
+  it into the public lead form. The first fix tested the value against `EMAIL_RE` — and **review
+  found that green over a live bypass**: percent-encode the second address
+  (`victim@example.com?cc=attacker%40evil.invalid`) and the pattern sees no second `@`, no
+  whitespace and a dot, while the browser resolves the `%40` back when the link is clicked. The
+  working check builds the URL and asks what came out (`url.search`, `url.hash`, `url.pathname`
+  must equal the input) — the rule CLAUDE.md already states for every other URL check in this repo,
+  arrived at here the expensive way. The phone number is *rebuilt* from its digits rather than
+  checked, which reaches the same place by a different route: nothing of the input survives to
+  carry a parameter.
+- **An archived funnel is hidden from the breakdown only while it has nothing to show.** The
+  obvious `status <> 'archived'` filter broke the rule the single-CTE design exists to keep:
+  archiving a funnel does not unmake the enquiries it produced, so its leads still count towards
+  the total and the breakdown stopped adding up to the number printed above it. Pinned in both
+  directions by `supabase/tests/report.sql`.
+
+### Reviewer findings, and what happened to them
+
+Round 1 was a **FAIL** with two Majors, both fixed in the same change:
+
+- The `mailto:` bypass above. The lesson generalises past this route: a check written as a pattern
+  over a string that a parser will later interpret is a check on a different value than the one
+  that matters.
+- **The migration created two functions without re-running the `revoke execute on all functions`
+  block** that every other function-adding migration here carries. RLS-with-no-policies on the
+  tables would still have refused, so nothing leaked — which is exactly the argument for two
+  layers, not a reason to ship one. `client_report` takes a client id as an argument, so callable
+  with the (deliberately public) anon key it is a lead reader needing no token at all.
+
+Two Minors accepted rather than fixed, both stated here so they are decisions rather than misses:
+
+- With no resolvable client address (serverless without `TRUST_PROXY`), both rate-limit buckets
+  collapse to one shared `unknown` key, so a burst of guesses could 429 every client's report for
+  the hour. That is `clientIp`'s documented systemic behaviour, not this route's, it warns once
+  naming the fix, and the deployment sets `TRUST_PROXY=1`. A special case here would only make
+  this one route disagree with every other ceiling in the runtime.
+- The "token resolved but the database then failed" path skips the miss bucket, so it does one
+  fewer async write than a genuinely invalid token — a timing differential under a 30/hour ceiling
+  and network jitter. Not worth a compensating write on an error path.
+
+### Found while building this, and not fixed here
+
+The mapped-host assertion was **vacuous in its first version** and passed with the gate
+deliberately broken: with no database configured the route answers 404 on every host, so
+"the report is 404 on a funnel host" was true no matter what the code did. It now renders the
+report on the console host in the same test, with a stubbed database, so the two halves are one
+assertion. Worth generalising: a refusal-shaped assertion proves nothing until the same fixture is
+shown succeeding somewhere.
+
+### Not in scope, deliberately
+
+- The weekly summary email (PLAN.md §10, the next line). It is a different job — a scheduled sender
+  — and it shares only the query this work order writes. Doing it here would mean building a
+  scheduler inside a page route.
+- A per-client PIN on top of the token (PLAN.md §5.3's option). It is a second credential to
+  distribute and support, and no client's data has yet warranted it. The seam is one column.
+- CSV/PDF export, date-range pickers, charts. The client's question is "did anything come in".
