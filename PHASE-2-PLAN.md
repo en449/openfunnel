@@ -516,34 +516,69 @@ shows the refusal reason on the funnel card before it can happen, and the refusa
 funnels would make the project undemonstrable. The gate is about *Enno's clients*, and a client is
 a row in `client`.
 
-### Decision 2 — deletion is one SQL function, and it is the only thing that deletes
+### Decision 2 — deletion is one SQL function, and Storage is not part of the walk
 
-Art. 17 across `lead`, `event` and Storage (§8.7). One RPC, `erase_subject(p_client_id, p_needle)`,
-that soft-deletes matching leads, deletes their `event` rows, and returns the Storage object paths
-for the caller to delete — because Storage is not reachable from SQL and a function that silently
-skipped it would report a complete deletion that was not one.
+Art. 17 across `lead` and `event` (§8.7). One RPC, `erase_subject(p_client_id, p_needle)`, that
+soft-deletes matching leads and deletes their `event` rows in the same transaction.
 
-Two things the plan already knows and the code must say out loud:
+**Corrected 2026-08-17, while designing D3.** An earlier version of this decision said the RPC
+"returns the Storage object paths for the caller to delete". That is wrong, and it would have sent
+D3 looking for a join that does not exist: **nothing links a Storage object to a data subject.**
+The ingest path stores no uploads at all — `file` is absent from `FIELD_TYPES` and CLAUDE.md
+records that nothing in ingest stores one — so every object under `funnel/<slug>/` is the
+*operator's* marketing photography, put there by the console (§1), not something a lead uploaded.
+Walking Storage per subject is therefore not merely hard, it has no meaning. The §1 note that
+"Storage joins the Löschkonzept" still stands, but it lands in the *client*-level deletion
+(delete the funnel, delete its assets), not in the subject-level one.
 
-- **A deleted Storage object still serves from the CDN for a while** (measured 2026-08-13, §1). So
-  the deletion receipt reports Storage separately and as "purge requested", not "gone".
+If a funnel ever gains a real upload field, this decision has to be reopened in the same change —
+that is the moment a Storage object becomes subject data.
+
+What the receipt must still say out loud:
+
 - **PITR/backups are out of scope by §8.7's own decision** — the Löschkonzept states the window.
   The receipt names it rather than pretending.
+- The soft delete stays a soft delete for the sweeper's 24h window, so **the receipt is issued
+  before the hard delete happens**. Honest shape: the subject is told what was found and that it is
+  gone from every reachable store, with the backup window named.
 
-The soft delete stays a soft delete for the sweeper's 24h window, which means **the receipt is
-issued before the hard delete happens**. That is the honest shape: the subject is told what was
-found and that it is gone from every reachable store, with the backup window named.
+Two facts found in the code that D3 gets for free, both worth stating so nobody re-derives them:
 
-### Decision 3 — search and delete are the same query
+- **`event` is reachable from `lead`, but only through the payload.** `event` has `session_id text`
+  and no lead FK, and `storeLead()` strips only `ip` / `user_agent` / `utm` / `referer` before the
+  `ingest_lead` RPC — so `payload->>'sessionId'` survives on the lead row and is the join.
+  A lead whose payload has no `sessionId` (an older row, a direct API post) leaves its events
+  behind; the receipt counts what it deleted rather than claiming completeness.
+- **Cancelling the outbound queue is already handled.** The `lead_restrict_cancels_pending` trigger
+  (`20260811120100`) fires on `after update of restricted, deleted_at` and cancels every `pending`
+  delivery — its header says explicitly that it covers "the ones Phase 2 has not written yet". So
+  `erase_subject`'s soft delete stops the queue without touching `delivery`. Rows already
+  `delivering` are deliberately not cancelled; a lease is in flight and the receipt should not
+  claim otherwise.
+
+### Decision 3 — search and delete are the same query, and it matches exactly, never by substring
 
 The subject-access gate (§8.6) and the deletion gate (§8.7) are one mechanism used twice: find every
-lead for a person within one client. Built once, as `find_subject(p_client_id, p_needle)` over the
-existing `lead_payload_idx` GIN index, matching email or phone anywhere in `payload`. The console
-gets one Subjects view: search → see what is held → export JSON → delete, with the deletion calling
-`erase_subject` on the same needle the search ran on.
+lead for a person within one client. Built once, as `find_subject(p_client_id, p_needle)`, and
+`erase_subject` runs the same matcher on the same needle. The console gets one Subjects view:
+search → see what is held → export JSON → delete.
 
 Building them separately is how the two come to disagree about what "everything held" means, which
 is the failure that makes a one-month deadline unmeetable.
+
+**Two corrections to the sentence this decision used to carry ("over the existing `lead_payload_idx`
+GIN index, matching email or phone anywhere in `payload`"), both found 2026-08-17:**
+
+- **The index cannot serve this.** `lead_payload_idx` is `gin (payload jsonb_path_ops)`, which
+  supports containment (`@>`) and nothing else — no substring, no case-insensitive comparison. A
+  match-anywhere search is a sequential scan over one client's leads whatever we write. At Free-tier
+  volumes that is fine and is the lazy answer; say so rather than implying an index that will not be
+  used. `jsonb_path_query(payload, '$.**')` is the walk.
+- **"Anywhere in `payload`" must mean exact-value matching, not substring.** This same function
+  deletes. A substring needle of `%`, or `@`, or a single common digit, would match every lead the
+  client has — a subject-rights tool that erases the whole inbox on a sloppy search. Match on
+  normalised equality: case-folded string equality for an email, digits-only comparison for a phone
+  with a minimum of 6 digits so a short number cannot sweep. Refuse an empty or one-character needle.
 
 ### Decision 4 — the consent bar audit is a CSS and copy change, not a feature
 
@@ -564,7 +599,7 @@ document written onto `lead.consent` as evidence.
 | --- | --- | --- | --- |
 | D1 | `legal` on the funnel document — typedef, engine footer links beside the AGPL source link, console fields | Sonnet | — |
 | D2 | The serve-time gate in `loadFunnel`/`/f/:slug`: refuse on missing `legal` or null `avv_signed_at`, only when `dbConfigured()`; console shows the reason per funnel | **Opus** (it decides what is public) | D1 |
-| D3 | `find_subject` + `erase_subject` migration, and the Storage half of the walk | **Opus** (Art. 17 completeness) | — |
+| D3 | `find_subject` + `erase_subject` migration over `lead` + `event` (not Storage — Decision 2) | **Opus** (Art. 17 completeness) | — |
 | D4 | `GET /api/admin/subjects` + `DELETE`, and the console's Subjects view (search, export JSON, delete with a typed confirmation) | Sonnet | D3 |
 | D5 | Retention purge: `pg_cron` entry, events 90d, leads per `client.retention_months`, hard-delete of soft-deleted rows past 24h, and a logged run | **Opus** (it deletes on a schedule) | D3 |
 | D6 | Consent bar: equal prominence, a withdrawal affordance, `consent.textVersion` through to `lead.consent` | Sonnet | — |
@@ -572,8 +607,8 @@ document written onto `lead.consent` as evidence.
 | D8 | Docs: CLAUDE.md invariants, PLAN.md §10 checklist lines, the Löschkonzept and breach runbook one-pagers (§8.7, §8.8) | Sonnet | D1–D7 |
 
 **Acceptance criteria.** A named person's email is searched across one client, returns every lead
-held, exports as JSON, and a delete removes them from `lead` and `event` and requests the Storage
-purge — verified by re-running the search and getting nothing, and by the SQL assertions. A funnel
+held, exports as JSON, and a delete removes them from `lead` and `event` — verified by re-running
+the search and getting nothing, and by the SQL assertions. A funnel
 with no `legal.impressumUrl` does not render, and the console says why. A funnel whose client has no
 `avv_signed_at` does not render. The purge job runs on schedule and leaves a log row. Accept and
 Decline are the same button in different words, and a visitor can change their mind. Reviewer + qa
