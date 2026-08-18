@@ -4146,6 +4146,14 @@ function loadSettings() {
     $("setGdpr").checked = Boolean(state.funnel?.consent?.enabled);
     $("setGdpr").disabled = !state.funnel;
   }
+  if ($("legalImpressumUrl")) {
+    $("legalImpressumUrl").value = state.funnel?.legal?.impressumUrl || "";
+    $("legalImpressumUrl").disabled = !state.funnel;
+  }
+  if ($("legalPrivacyUrl")) {
+    $("legalPrivacyUrl").value = state.funnel?.legal?.privacyUrl || "";
+    $("legalPrivacyUrl").disabled = !state.funnel;
+  }
   if ($("setAllowBack")) {
     $("setAllowBack").checked = Boolean(state.funnel?.settings?.allowBack ?? true);
     $("setAllowBack").disabled = !state.funnel;
@@ -4177,6 +4185,16 @@ function saveSettings() {
     if ($("setGdpr")) {
       const enabled = $("setGdpr").checked;
       state.funnel.consent = { ...(state.funnel.consent || {}), enabled };
+    }
+    if ($("legalImpressumUrl") || $("legalPrivacyUrl")) {
+      const legal = { ...(state.funnel.legal || {}) };
+      const impressumUrl = $("legalImpressumUrl")?.value.trim();
+      const privacyUrl = $("legalPrivacyUrl")?.value.trim();
+      if (impressumUrl) legal.impressumUrl = impressumUrl;
+      else delete legal.impressumUrl;
+      if (privacyUrl) legal.privacyUrl = privacyUrl;
+      else delete legal.privacyUrl;
+      state.funnel.legal = legal;
     }
     state.funnel.settings = {
       ...(state.funnel.settings || {}),

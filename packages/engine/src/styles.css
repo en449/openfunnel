@@ -1059,12 +1059,12 @@ textarea.of-input { min-height: 96px; resize: vertical; }
 /* The AGPL §13 source offer. Always rendered — see SOURCE_URL in controller.js.
    Styled like the legal footer links a German funnel needs anyway (Impressum,
    Datenschutz), not like a badge, so it reads as what it is. */
-.of-source-link {
+.of-source-link, .of-legal-link {
   color: var(--of-text-secondary, #64748b);
   text-decoration: underline;
   font-weight: 500;
 }
-.of-source-link:hover {
+.of-source-link:hover, .of-legal-link:hover {
   color: var(--of-primary, inherit);
 }
 

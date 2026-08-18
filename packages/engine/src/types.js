@@ -453,6 +453,7 @@
  * @property {FunnelIntegrations} [integrations]
  * @property {FunnelConsent} [consent]
  * @property {FunnelBranding} [branding]
+ * @property {FunnelLegal} [legal]
  * @property {Step[]} steps
  */
 
@@ -482,7 +483,24 @@
  * @property {string} [text]           Bar copy. A sensible default is used if unset.
  * @property {string} [acceptLabel]
  * @property {string} [declineLabel]
- * @property {string} [policyUrl]      Optional link to your privacy policy.
+ * @property {string} [policyUrl]      Optional link to your privacy policy. Wins
+ *                                     over `legal.privacyUrl` when both are set
+ *                                     (self-hoster back-compat); falls back to it
+ *                                     when unset. See `consent.js`.
+ */
+
+/**
+ * Impressum / Datenschutz links for the funnel footer. On the funnel document
+ * rather than a console setting — same reason as `FunnelBranding`: a per-browser
+ * localStorage value cannot reach a visitor, and §5 TMG / DSGVO obligations are
+ * about what the visitor sees.
+ *
+ * @typedef {Object} FunnelLegal
+ * @property {string} [impressumUrl]    Legal notice (§5 TMG).
+ * @property {string} [privacyUrl]      Canonical privacy-policy URL. See
+ *                                      `FunnelConsent.policyUrl` for precedence.
+ * @property {string} [impressumLabel]  Defaults to "Impressum".
+ * @property {string} [privacyLabel]    Defaults to "Datenschutz".
  */
 
 /* ========================================================================== *

@@ -233,6 +233,7 @@ export interface FunnelConsent {
   text?: string;
   acceptLabel?: string;
   declineLabel?: string;
+  /** Wins over `legal.privacyUrl` when both are set; falls back to it otherwise. */
   policyUrl?: string;
 }
 
@@ -240,6 +241,14 @@ export interface FunnelConsent {
 export interface FunnelBranding {
   hidden?: boolean;
   sourceLabel?: string;
+}
+
+/** Impressum / Datenschutz links for the funnel footer (§5 TMG / DSGVO). */
+export interface FunnelLegal {
+  impressumUrl?: string;
+  privacyUrl?: string;
+  impressumLabel?: string;
+  privacyLabel?: string;
 }
 
 export interface Funnel {
@@ -251,6 +260,7 @@ export interface Funnel {
   integrations?: FunnelIntegrations;
   consent?: FunnelConsent;
   branding?: FunnelBranding;
+  legal?: FunnelLegal;
   steps: Step[];
 }
 

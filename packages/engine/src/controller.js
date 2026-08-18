@@ -131,6 +131,11 @@ export class Controller {
       this.options.hideBranding ||
       (typeof localStorage !== "undefined" && localStorage.getItem("of.branding.hidden") === "true")
     );
+    // Legal links are not suppressed by `branding.hidden` — same reasoning as the
+    // AGPL source link above: an obligation must not sit behind a flag every
+    // operator will switch off. D2 (a later change) decides what to refuse when
+    // a URL is missing; here a missing or unparseable one just renders no link.
+    const legal = this.funnel.legal || {};
     this.container.appendChild(
       el("div", { class: "of-branding-footer" }, [
         hideBranding
@@ -139,6 +144,24 @@ export class Controller {
               class: "of-branding-link",
               html: "⚡ Powered by <strong>OpenFunnel</strong>",
             }),
+        isNavigableUrl(legal.impressumUrl)
+          ? el("a", {
+              class: "of-legal-link",
+              href: legal.impressumUrl,
+              target: "_blank",
+              rel: "noopener",
+              text: legal.impressumLabel || "Impressum",
+            })
+          : null,
+        isNavigableUrl(legal.privacyUrl)
+          ? el("a", {
+              class: "of-legal-link",
+              href: legal.privacyUrl,
+              target: "_blank",
+              rel: "noopener",
+              text: legal.privacyLabel || "Datenschutz",
+            })
+          : null,
         el("a", {
           class: "of-source-link",
           href: SOURCE_URL,

@@ -117,7 +117,10 @@ export function buildConsentBar(funnel, onDecide) {
   ]);
   // Same reasoning as `Controller.redirect`: operator-written, but a link target
   // is never a reason to allow `javascript:` or a protocol-relative hop.
-  const policyUrl = isNavigableUrl(cfg.policyUrl) ? cfg.policyUrl : "";
+  // `consent.policyUrl` wins when set (self-hoster back-compat); `legal.privacyUrl`
+  // is the canonical field and is the fallback.
+  const rawPolicyUrl = cfg.policyUrl || funnel.legal?.privacyUrl;
+  const policyUrl = isNavigableUrl(rawPolicyUrl) ? rawPolicyUrl : "";
   if (policyUrl) {
     copy.appendChild(
       el("a", {
