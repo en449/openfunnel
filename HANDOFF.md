@@ -5,36 +5,40 @@
 > `PROJECT-MEMORY.md` (history + decision log) and `PLAN.md` (architecture, DSGVO §8, phases).
 > Replace this file's "State" and "Next" sections when they stop being true — do not stack entries.
 
-## State (2026-08-19)
+## State (2026-08-20)
 
-Branch `phase-1-delivery-queue`, head `075a1a8`, pushed, clean tree, CI green. `main` untouched —
-merging is Enno's call. All **seven** migrations are applied to the live Supabase project
-(`supabase migration list --linked` agrees local == remote).
+Branch `phase-1-delivery-queue`, head `7dc3bb9`, pushed, clean tree. `main` untouched —
+merging is Enno's call. All **seven** migrations are applied to the live Supabase project.
 
 Done: Phase 1 complete. Phase 2 §1 asset upload, §2 custom domains, §3 the client report link
-`/r/:token` (`739189b`, live self-tested, screenshots in `screenshots/`).
+`/r/:token`. Phase 2 §4: **D1 and D2 are done** (`fa009da`, `7dc3bb9`).
 
-Not started: Phase 2 §4, the six DSGVO gates — work orders **D1–D8**, designed in
-`PHASE-2-PLAN.md` §4 (`075a1a8`). **Enno said "go" on 2026-08-17; the scope is authorised, no
-code was written.** The one D1 agent that was spawned died on an API weekly limit before doing
-anything. That limit has since reset — delegation to Sonnet agents works again.
+- **D1** — `legal` on the funnel document (`impressumUrl`, `privacyUrl`, optional label
+  overrides); the engine renders both as footer links on every step, before the AGPL source
+  link, not suppressed by `branding.hidden`. `consent.policyUrl` still wins when set but now
+  falls back to `legal.privacyUrl`, so there is one canonical privacy URL rather than two that
+  can disagree. Console fields in Settings. Live self-tested, `screenshots/d1-legal-footer-*.png`.
+- **D2** — the serve-time gate. `/f/:slug` and `GET /api/funnels/:slug` answer **503** when
+  `legal.impressumUrl`/`legal.privacyUrl` is missing or unparseable, or the owning client's
+  `avv_signed_at` is null. Binds only when `dbConfigured()`; the AVV half binds only for a
+  document that came from the `funnel` table. The 503 names no reason — the console does, on
+  the funnel card and in a banner over the builder, fed by `GET /api/admin/funnel-gates`.
 
-## Next: D1–D8, in this order
+**Two D2 decisions a next session will otherwise re-litigate.** The funnel LIST
+(`GET /api/funnels`) is deliberately NOT gated: it returns a directory and never a document,
+and the console's grid is drawn from it, so filtering would hide the very funnel the operator
+has to go fix. And `examples/lead-gen.json` gained a `legal` block because a disk funnel on a
+db-configured deployment is still gated on the legal half — the other three examples will 503
+on Enno's deployment until they get one.
 
-| # | Work order | Tier | Notes |
-| --- | --- | --- | --- |
-| D1 | `legal` field on the funnel document — typedef in `packages/engine/src/types.js`, engine footer links in `controller.js` beside the AGPL `SOURCE_URL` link, mirror into `packages/engine/types/index.d.ts`, console fields, one engine test | Sonnet | nothing depends on it being clever; it is the whole Impressum feature, not just a refusal |
-| D2 | Serve-time gate in `loadFunnel` / `/f/:slug`: refuse on missing `legal` or null `client.avv_signed_at`, **only when `dbConfigured()`**; console shows the reason per funnel | Opus | depends on D1 |
-| D3 | `find_subject` + `erase_subject` migration over `lead` + `event`, plus `supabase/tests/subject-rights.sql` | Opus | design below — mid-design when the last session ended, nothing written |
-| D4 | `GET\|DELETE /api/admin/subjects` + the console Subjects view | Sonnet | depends on D3 |
-| D5 | Retention purge via `pg_cron`: events 90d, leads per `client.retention_months`, hard-delete soft-deleted rows past 24h, logged run | Opus | depends on D3 |
-| D6 | Consent bar: equal prominence, a withdrawal affordance, `consent.textVersion` onto `lead.consent` | Sonnet | — |
-| D7 | Datenschutzerklärung module generated from the funnel's own configuration | Sonnet | depends on D1 |
-| D8 | Docs: CLAUDE.md invariants, PLAN.md §10 lines, Löschkonzept + breach runbook one-pagers | Sonnet | last |
+**One thing D2 could not verify:** the PostgREST embed that reads `avv_signed_at`
+(`select=…,client(avv_signed_at)` in `loadFromDb`). It is the same form as `report.js`'s
+`TOKEN_SELECT`, which is live and self-tested, but this change was only exercised against a
+stub — the `.env` read needed to run the runtime against live Supabase is denied to an agent
+by `~/.claude/settings.json`. Confirm it on the first live run: if the embed does not resolve,
+`loadFromDb` catches, returns null, and the funnel silently falls back to disk.
 
-Build Workflow applies per work order: write → `code-reviewer` + `qa` in parallel
-(`run_in_background: true`) → parent applies the fixes → re-run if non-trivial. Done means
-reviewer PASS, qa PASS, and for anything visitor-facing a live self-test with a screenshot.
+Not started: **D3–D8**. Enno authorised the whole D1–D8 scope on 2026-08-17.
 
 ## D3 — the design that was in progress, so it is not re-derived
 
