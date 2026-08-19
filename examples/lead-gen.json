@@ -16,6 +16,10 @@
   "integrations": {
     "leadEndpoint": "/api/lead"
   },
+  "legal": {
+    "impressumUrl": "https://example.com/impressum",
+    "privacyUrl": "https://example.com/datenschutz"
+  },
   "steps": [
     {
       "id": "intro",

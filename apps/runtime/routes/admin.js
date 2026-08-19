@@ -27,6 +27,7 @@ import { errSummary } from "../lib/log.js";
 import { SLUG_RE } from "../lib/config.js";
 import { domainSource, invalidateDomains, listDomains, normalizeHost } from "../lib/domains.js";
 import { ASSET_TYPES, MAX_ASSET_BYTES, assetPath, deleteAsset, signAssetUpload } from "../lib/storage.js";
+import { funnelGates } from "../lib/funnels.js";
 
 /** The five states in the schema's own check constraint. */
 const DELIVERY_STATUSES = new Set(["pending", "delivering", "done", "dead", "cancelled"]);
@@ -382,6 +383,27 @@ export async function handleAdmin(req, ctx) {
       return json({ ok: true, host, stillMappedBy: remaining });
     } catch (err) {
       console.warn(`[admin] could not unmap a domain: ${errSummary(err)}`);
+      return json({ error: "db_unavailable" }, 503);
+    }
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  The legal gate, per funnel — PHASE-2-PLAN.md §4
+   *
+   *  Which funnels the serve-time gate is currently refusing, and why. The
+   *  console needs it for two different moments: a badge on a funnel that is
+   *  already down, and a warning while the operator is editing one towards being
+   *  down. It answers from `funnelGates()`, the same function the public route
+   *  refuses with, rather than letting the browser re-derive the verdict from the
+   *  document it happens to be holding.
+   *
+   *  Admin-only, because the reason names a client's unsigned AVV.
+   * ------------------------------------------------------------------ */
+  if (path === "/api/admin/funnel-gates" && req.method === "GET") {
+    try {
+      return json({ gates: await funnelGates() });
+    } catch (err) {
+      console.warn(`[admin] funnel gates unavailable: ${errSummary(err)}`);
       return json({ error: "db_unavailable" }, 503);
     }
   }

@@ -17,7 +17,7 @@
 
 import { join, normalize } from "node:path";
 import { FUNNELS_DIR, SLUG_RE, isInside } from "../lib/config.js";
-import { cacheFunnel, loadFunnel, removeFunnel, saveFunnel } from "../lib/funnels.js";
+import { invalidateFunnel, loadFunnel, removeFunnel, saveFunnel } from "../lib/funnels.js";
 import { json, readJson } from "../lib/http.js";
 import { errSummary } from "../lib/log.js";
 
@@ -80,7 +80,10 @@ export async function handleBuilder(req, ctx) {
 
     const failed = await storeWrite(() => saveFunnel(newSlug, copyDoc), newSlug, { silent: true });
     if (failed) return failed;
-    cacheFunnel(newSlug, copyDoc);
+    // Drop any stale entry rather than seeding this one: only `readFunnel` may
+    // write the cache, because only it knows the copy's client — and the legal
+    // gate reads a cache entry with no client as a funnel that has none.
+    invalidateFunnel(newSlug);
     return json({ ok: true, funnel: copyDoc });
   }
 

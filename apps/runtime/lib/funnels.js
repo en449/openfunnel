@@ -30,9 +30,12 @@
  * visitor who loaded the page seconds before it was archived still submits, and
  * dropping that lead is the failure this phase exists to remove.
  *
- * The cache is invalidated through `invalidateFunnel`/`cacheFunnel` rather than
- * by exporting the Map, so the write routes cannot leave it holding a document
- * that no longer matches the store.
+ * The cache is invalidated through `invalidateFunnel` rather than by exporting
+ * the Map, so the write routes cannot leave it holding a document that no longer
+ * matches the store. Nothing else may WRITE to it: an entry seeded from outside
+ * `readFunnel` carries no client AVV, and the serve-time gate reads a missing one
+ * as "no client row backs this funnel" — so a hand-seeded entry switched half the
+ * gate off for as long as it lived. Invalidate and let the next read refill it.
  */
 
 import { mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
@@ -45,7 +48,14 @@ import { errSummary } from "./log.js";
 // still evaluating. Keep it that way, or the cycle stops being harmless.
 import { syncFunnelTargets } from "./targets.js";
 
-/** @type {Map<string, { funnel: any, at: number }>} */
+/**
+ * `avv` is the owning client's `avv_signed_at`, cached with the document because
+ * the serve-time gate needs both and they arrive in the same query. `undefined`
+ * means no client row backs this document at all — a funnel served from
+ * `FUNNELS_DIR`, which nobody has signed an AVV for because nobody is its client.
+ *
+ * @type {Map<string, { funnel: any, at: number, avv?: string|null }>}
+ */
 const cache = new Map();
 const CACHE_MS = DEV ? 0 : 60_000;
 
@@ -71,15 +81,38 @@ function usable(funnel, slug, where) {
  * @returns {Promise<any|null>}
  */
 export async function loadFunnel(slug) {
-  if (!SLUG_RE.test(slug)) return null;
+  return (await readFunnel(slug)).funnel;
+}
+
+/**
+ * The reader both callers share: the document AND the owning client's AVV state,
+ * from the same lookup.
+ *
+ * `loadFunnelForVisitor` used to call `loadFunnel` and then read the AVV back out
+ * of the cache entry it had just written. Two ways that went wrong, and the
+ * second one failed OPEN, which is the direction a gate must never fail:
+ * `invalidateFunnel` landing between the two lines left no entry at all, and an
+ * entry written by anything other than this function carried no `avv` — so the
+ * AVV half of the gate silently stopped binding for as long as that entry lived.
+ * Returning the pair from one call is what makes `undefined` mean exactly one
+ * thing: no client row backs this document.
+ *
+ * @param {string} slug
+ * @returns {Promise<{ funnel: any|null, avv: string|null|undefined }>}
+ */
+async function readFunnel(slug) {
+  if (!SLUG_RE.test(slug)) return { funnel: null, avv: undefined };
   const hit = cache.get(slug);
-  if (hit && Date.now() - hit.at < CACHE_MS) return hit.funnel;
+  if (hit && Date.now() - hit.at < CACHE_MS) return { funnel: hit.funnel, avv: hit.avv };
 
   let funnel = null;
+  /** @type {string|null|undefined} */
+  let avv;
   if (dbConfigured()) {
     const found = await loadFromDb(slug);
-    if (found === ARCHIVED) return null; // a decision, not an absence — never fall back
-    funnel = found;
+    // A decision, not an absence — never fall back to disk.
+    if (found === ARCHIVED) return { funnel: null, avv: undefined };
+    if (found) ({ funnel, avv } = found);
   }
   // Not in the database, or the database could not be reached. `examples/*.json`
   // is the funnel store for anyone who has not migrated, and it ships with this
@@ -87,8 +120,8 @@ export async function loadFunnel(slug) {
   // every funnel the operator already had.
   if (!funnel) funnel = await loadFromDisk(slug);
 
-  if (funnel) cache.set(slug, { funnel, at: Date.now() });
-  return funnel;
+  if (funnel) cache.set(slug, { funnel, at: Date.now(), avv });
+  return { funnel, avv };
 }
 
 /** Distinguishes "archived on purpose" from "not in the database". */
@@ -102,7 +135,7 @@ async function loadFromDb(slug) {
   try {
     const rows = await select(
       "funnel",
-      `slug=eq.${encodeURIComponent(slug)}&select=slug,doc,status&limit=1`,
+      `slug=eq.${encodeURIComponent(slug)}&select=slug,doc,status,client(avv_signed_at)&limit=1`,
     );
     const row = rows[0];
     if (!row) return null;
@@ -113,7 +146,17 @@ async function loadFromDb(slug) {
     const funnel = { ...row.doc };
     if (!usable(funnel, slug, "the database")) return null;
     funnel.slug ||= row.slug;
-    return funnel;
+    // Embedded by table name, the same shape `report.js`'s TOKEN_SELECT already
+    // uses against this project — `funnel` has exactly one foreign key to
+    // `client`, so the relationship needs no disambiguation.
+    //
+    // `funnel.client_id` is NOT NULL, so a missing embed is a query that changed
+    // under the gate rather than a funnel without a client. Read it as unsigned:
+    // the gate's whole value is failing in the direction that takes a page down.
+    if (!row.client) {
+      console.warn(`[runtime] funnel "${slug}" returned no client row — treating the AVV as unsigned.`);
+    }
+    return { funnel, avv: row.client ? row.client.avv_signed_at ?? null : null };
   } catch (err) {
     // Never the error object: it carries the request URL, which carries the key.
     console.warn(`[runtime] funnel "${slug}" load failed: ${errSummary(err)}`);
@@ -136,6 +179,111 @@ async function loadFromDisk(slug) {
   } catch {
     return null;
   }
+}
+
+/* ========================================================================== *
+ *  The serve-time legal gate — PHASE-2-PLAN.md §4, PLAN.md §8.5 + §8.9
+ *
+ *  §5 DDG requires an Impressum and Art. 13 DSGVO a privacy notice on every
+ *  page a visitor lands on, and Art. 28 requires a signed AVV before a processor
+ *  holds a client's personal data. PLAN.md writes both as "publish is refused" —
+ *  but there is no publish action in this codebase, and inventing one would gate
+ *  a single code path while an edit, an import or a restore walked past it.
+ *
+ *  So the gate binds where the visitor is: the page refuses to render. It cannot
+ *  be routed around, it is one check rather than a state machine, and it fails in
+ *  the direction that takes a page down rather than the one that quietly ships an
+ *  Abmahnung.
+ *
+ *  SCOPE. It binds only when `dbConfigured()`. A self-hoster running out of
+ *  `FUNNELS_DIR` is their own controller — the README says so — and refusing to
+ *  serve this repo's own examples would make the project undemonstrable. The AVV
+ *  half binds only for a document that came from the `funnel` table, because an
+ *  AVV is a contract with a client and a file on disk has none.
+ *
+ *  The ingest path deliberately does NOT consult this, exactly as it ignores
+ *  `status === "archived"`. A visitor who loaded the page a second before an
+ *  Impressum URL was cleared still presses submit, and dropping that lead would
+ *  destroy data rather than protect it — the collection already happened.
+ * ========================================================================== */
+
+/**
+ * The engine's `isNavigableUrl`, re-implemented here for the same reason
+ * `sameOriginPath` and `hasPreviewFlag` are: the runtime cannot import browser
+ * code onto the serverless path. It has to agree with the engine's check exactly,
+ * because the engine is what decides whether the link actually renders — a URL
+ * this accepts and the engine rejects is a gate that passed a page with no
+ * visible Impressum on it. `funnels-gate.test.js` pins the two against one table.
+ *
+ * @param {unknown} value
+ * @returns {boolean}
+ */
+function legalUrlOk(value) {
+  if (typeof value !== "string" || !value.trim()) return false;
+  let parsed;
+  try {
+    parsed = new URL(value, RELATIVE_BASE);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return false;
+  if (/^https?:/i.test(value.trim())) return true;
+  return parsed.origin === RELATIVE_BASE;
+}
+
+/**
+ * Why this funnel must not be rendered, or null when it may be.
+ *
+ * @param {any} funnel
+ * @param {string|null|undefined} avv  the client's `avv_signed_at`; undefined when no client row backs it
+ * @returns {"impressum_url_missing"|"privacy_url_missing"|"avv_unsigned"|null}
+ */
+function gateReason(funnel, avv) {
+  if (!dbConfigured()) return null;
+  if (!legalUrlOk(funnel?.legal?.impressumUrl)) return "impressum_url_missing";
+  if (!legalUrlOk(funnel?.legal?.privacyUrl)) return "privacy_url_missing";
+  if (avv === undefined) return null;
+  if (!avv) return "avv_unsigned";
+  return null;
+}
+
+/**
+ * Load a funnel for a visitor-facing surface, with the gate applied.
+ *
+ * `loadFunnel` stays the unguarded reader: ingest, the delivery fan-out, the CAPI
+ * forward and the builder all need the document of a funnel that must not be
+ * rendered. Only the two routes a visitor reaches go through this.
+ *
+ * @param {string} slug
+ * @returns {Promise<{ funnel: any|null, blocked: string|null }>}
+ */
+export async function loadFunnelForVisitor(slug) {
+  const { funnel, avv } = await readFunnel(slug);
+  if (!funnel) return { funnel: null, blocked: null };
+  return { funnel, blocked: gateReason(funnel, avv) };
+}
+
+/**
+ * Every funnel's gate reason, for the console — the operator has to be able to
+ * see why a page is down, and see it before an edit takes one down.
+ *
+ * Answered by the same `gateReason` the route uses rather than re-derived in the
+ * browser: a console that computes its own verdict is a second answer to the same
+ * question, and the day the two disagree it reports a healthy funnel that 503s.
+ *
+ * @returns {Promise<Record<string, string|null>>} slug → reason, null when servable
+ */
+export async function funnelGates() {
+  /** @type {Record<string, string|null>} */
+  const gates = {};
+  // ponytail: one query per funnel on a cold cache. Fine at a single operator's
+  // handful of client funnels; if this list ever gets long, select the documents
+  // and their clients in one round trip instead.
+  for (const slug of await listFunnels()) {
+    const { funnel, blocked } = await loadFunnelForVisitor(slug);
+    if (funnel) gates[slug] = blocked;
+  }
+  return gates;
 }
 
 /** @returns {Promise<string[]>} Every servable slug, for the dev index page. */
@@ -343,15 +491,6 @@ export async function removeFunnel(slug) {
  */
 export function invalidateFunnel(slug) {
   cache.delete(slug);
-}
-
-/**
- * Seed the cache with a document just written to disk.
- * @param {string} slug
- * @param {any} funnel
- */
-export function cacheFunnel(slug, funnel) {
-  cache.set(slug, { funnel, at: Date.now() });
 }
 
 /* ========================================================================== *

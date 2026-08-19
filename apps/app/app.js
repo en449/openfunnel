@@ -19,6 +19,16 @@ const state = {
   funnels: [],
   /** The document being edited. May not exist on disk yet. */
   funnel: null,
+  /**
+   * slug → the serve-time gate's reason, from `GET /api/admin/funnel-gates`
+   * (WO D2-console). `null` means servable; a slug absent from this object
+   * means "not asked yet" or the endpoint answered 503 (no database) — both
+   * degrade to showing no badge, never an error toast. Read the verdict from
+   * here, never re-derived from `state.funnel.legal` — see the endpoint's
+   * own header in `apps/runtime/lib/funnels.js`.
+   * @type {Record<string, string|null>}
+   */
+  gates: {},
   stepIndex: 0,
   /**
    * Storage objects the operator removed from a field, waiting for the save that
@@ -593,6 +603,9 @@ function showView(view, push = true) {
 
   if (view === "builder") mountPreview();
   if (view === "leads" || view === "analytics" || view === "dashboard") refreshData();
+  // The funnel grid's badges live only on this view; re-fetch each time the
+  // operator returns to it, since an AVV gets signed outside this console.
+  if (view === "dashboard") loadGates();
   // Own load, not folded into refreshData(): a separate endpoint, and no
   // polling — a fresh read only when the operator actually opens the panel.
   if (view === "delivery") loadDeliveries();
@@ -671,6 +684,7 @@ function setWorkingFunnel(funnel) {
   renderThemeModal();
   renderPixelsModal();
   renderDashboard();
+  renderGateBanner();
   loadSettings();
   mountPreview(true);
   renderAnalytics();
@@ -685,6 +699,33 @@ function syncFunnelChrome() {
   $("analyticsSub").textContent = state.funnel
     ? `Where visitors leave ${state.funnel.name || slug}, step by step.`
     : "Where visitors leave, step by step.";
+}
+
+/**
+ * Reason → what the operator sees. Shared by the funnel-card badge (`tag`)
+ * and the builder banner (`fix`) so the two surfaces never describe the same
+ * gate two different ways. `avv_unsigned`'s `fix` deliberately names no
+ * console action — signing an AVV happens outside this app entirely.
+ */
+const GATE_INFO = {
+  impressum_url_missing: { tag: "no Impressum URL", fix: "no Impressum URL is set (Settings → Legal)" },
+  privacy_url_missing: { tag: "no privacy URL", fix: "no privacy URL is set (Settings → Legal)" },
+  avv_unsigned: { tag: "AVV unsigned", fix: "the client has no signed AVV on record" },
+};
+
+/** One sentence naming the 503 and the fix, or "" for an unknown/absent reason. */
+function gateSentence(reason) {
+  const info = GATE_INFO[reason];
+  return info ? `This funnel returns 503 to visitors: ${info.fix}.` : "";
+}
+
+/** The banner atop the builder stage when the funnel now open is gated. */
+function renderGateBanner() {
+  const el = $("gateBanner");
+  if (!el) return;
+  const reason = state.funnel ? state.gates[state.funnel.slug] : null;
+  el.hidden = !reason;
+  if (reason) el.innerHTML = `${icon("alert", 14)}<span>${esc(gateSentence(reason))}</span>`;
 }
 
 function slugify(text, fallback = "funnel") {
@@ -803,6 +844,9 @@ async function saveFunnel() {
     void purgeRemovedAssets();
     toast(`${state.funnel.name || state.funnel.slug} saved`);
     await loadFunnelList();
+    // The save just wrote legal.impressumUrl/privacyUrl, the two fields the
+    // gate reads — refresh so the badge and banner reflect what's on disk now.
+    await loadGates();
     renderDashboard();
     setTimeout(() => (label.textContent = "Save"), 1600);
   } catch (err) {
@@ -842,6 +886,22 @@ async function refreshData() {
     state.globalStats = await globalRes.value.json();
   }
   renderDashboard();
+}
+
+/**
+ * Every funnel's serve-time gate reason (WO D2-console). A 503 means no
+ * database is configured — nothing to show, so it degrades to an empty
+ * object rather than an error toast; the badge and banner just don't appear.
+ */
+async function loadGates() {
+  try {
+    const res = await apiFetch("/api/admin/funnel-gates");
+    state.gates = res.ok ? (await res.json()).gates || {} : {};
+  } catch {
+    state.gates = {};
+  }
+  renderFunnelGrid();
+  renderGateBanner();
 }
 
 /* ========================================================================== *
@@ -956,13 +1016,23 @@ function renderFunnelGrid() {
       const color = normalizeHex(f.primary) || "#007aff";
       const s = perFunnel[f.slug] || {};
       const current = state.funnel?.slug === f.slug;
+      // From GET /api/admin/funnel-gates, not re-derived from f.legal — see
+      // the "gates" field comment on `state` for why.
+      const gateReason = state.gates[f.slug];
       return `<article class="funnel-card${current ? " is-current" : ""}" style="--accent:${esc(color)}" data-slug="${esc(f.slug)}" tabindex="0" role="button">
         <div class="funnel-card-head">
           <div class="funnel-card-title-group">
             <div class="funnel-name">${esc(f.name)}</div>
             <div class="funnel-slug">/f/${esc(f.slug)}</div>
           </div>
-          ${f.unsaved ? `<span class="tag tag-warning">unsaved</span>` : ""}
+          <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+            ${f.unsaved ? `<span class="tag tag-warning">unsaved</span>` : ""}
+            ${
+              gateReason
+                ? `<span class="tag tag-danger" title="${esc(gateSentence(gateReason))}">${esc(GATE_INFO[gateReason]?.tag || "gated")}</span>`
+                : ""
+            }
+          </div>
         </div>
         <div class="funnel-stats">
           <span class="funnel-stat"><b>${f.steps}</b> ${f.steps === 1 ? "step" : "steps"}</span>
@@ -5114,6 +5184,10 @@ async function init() {
   renderTemplates();
 
   await loadFunnelList();
+  // Fired here rather than awaited: a deep link straight into /builder never
+  // hits the "dashboard" branch in showView() that otherwise triggers this,
+  // and the banner is meant to be visible on first paint of an edit session.
+  void loadGates();
 
   const first = state.funnels[0];
   if (first) await openFunnel(first.slug);
