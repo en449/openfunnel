@@ -73,7 +73,12 @@ create table if not exists purge_run (
   leads_expired        int not null default 0,   -- step 2: past the client's horizon, soft-deleted
   leads_erased         int not null default 0,   -- step 3: soft-deleted over 24h ago, gone
   events_erased        int not null default 0,   -- step 3: their events, where the session emptied
-  sessions_kept        int not null default 0,   -- step 3: sessions left alone, a live lead shares them
+  -- step 3: sessions left alone because a lead OUTSIDE this run's victim set
+  -- sits on them. Not necessarily a live one — a lead soft-deleted less than
+  -- 24h ago, or a fellow victim that `p_limit` pushed into the next run, counts
+  -- too. Someone debugging why this does not match a count of live leads needs
+  -- that sentence, not the shorter one it used to carry.
+  sessions_kept        int not null default 0,
   -- True when any step hit `p_limit`. A capped run is not an error and not a
   -- failure — it means there was more to do than one run's ceiling, so the
   -- backlog clears a limit at a time. If this is true on consecutive runs, the

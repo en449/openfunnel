@@ -52,11 +52,21 @@ $job$);
 -- statement ran and nothing about what it removed.
 --
 -- REPLACES 'openfunnel-event-purge', which was this same 90-day delete inline.
--- On a database where that job already exists, unschedule it in the same sitting
--- or the events are deleted twice a night by two jobs — harmless, but the second
--- one makes `purge_run.events_expired` read 0 and look like a purge that stopped
--- working:
---   select cron.unschedule('openfunnel-event-purge');
+-- `cron.schedule` under a NEW name does not retire the old job, and Part A's own
+-- header says these are already running — so the retirement is done here rather
+-- than left to a comment somebody has to remember. Two jobs both deleting old
+-- events is harmless to the data, but the older one running first each night
+-- means `purge_expired()` finds nothing left to expire and `purge_run` reads 0
+-- expired events nightly: a purge that looks scheduled and healthy while its own
+-- log says it is not working. This project has shipped that failure once already
+-- (a protected preview answering 302 to a drain `pg_net` did not call a failure).
+do $$
+begin
+  if exists (select 1 from cron.job where jobname = 'openfunnel-event-purge') then
+    perform cron.unschedule('openfunnel-event-purge');
+  end if;
+end $$;
+
 select cron.schedule('openfunnel-purge', '40 3 * * *', $job$
   select purge_expired();
 $job$);

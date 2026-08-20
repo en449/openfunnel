@@ -59,6 +59,9 @@ declare
   v_lead_capped1                         uuid;
   v_lead_capped2                          uuid;
 
+  v_lead_twin_a                            uuid;
+  v_lead_twin_b                             uuid;
+
   -- scratch: the receipt from whichever purge_expired() call just ran
   v_events_expired int;
   v_leads_expired  int;
@@ -462,8 +465,104 @@ begin
   assert v_n = 2,
          format('after the second call both capped-fixture leads must be stamped, got %s', v_n);
 
+  /* ======================================================================
+   * SECTION D — the OTHER two thirds of `capped`.
+   *
+   * `capped` is the OR of three comparisons, one per step, and Section C only
+   * ever exercises step 2's. That is not a hypothetical gap: both other
+   * disjuncts could be deleted from the migration with the whole suite still
+   * green, which is precisely how the operator signal the header leans on
+   * ("if capped is true on consecutive runs, raise the limit") could stop
+   * working with nothing going red.
+   *
+   * Each half therefore runs against a DRAINED database, so the only step that
+   * can reach the limit is the one under test — and each block asserts the
+   * other two counts are 0, which is what makes `capped = true` attributable.
+   * ==================================================================== */
+
+  -- Drain everything the sections above left behind, so the next call starts
+  -- from a database with nothing eligible in any step.
+  perform purge_expired();
+
+  -- D1 — step 1 alone caps.
+  insert into event (funnel_id, session_id, type, created_at)
+       values (v_funnel_a, v_tag || '-cap-1', 'view', now() - interval '200 days'),
+              (v_funnel_a, v_tag || '-cap-2', 'view', now() - interval '200 days');
+
+  select events_expired, leads_expired, leads_erased, capped
+    into v_events_expired, v_leads_expired, v_leads_erased, v_capped
+    from purge_expired(1);
+
+  assert v_events_expired = 1,
+         format('p_limit = 1 against two expired events must delete exactly one, got events_expired=%s', v_events_expired);
+  assert v_leads_expired = 0 and v_leads_erased = 0,
+         format('the step-1 capping fixture must leave steps 2 and 3 with nothing to do, or `capped` cannot be attributed to step 1 — got leads_expired=%s leads_erased=%s', v_leads_expired, v_leads_erased);
+  assert v_capped = true,
+         format('hitting p_limit on step 1 (events) must set capped = true, got %s', v_capped);
+
+  -- D2 — step 3 alone caps. Drain first, again for attributability.
+  perform purge_expired();
+
+  insert into lead (funnel_id, client_id, payload, created_at, deleted_at)
+       values (v_funnel_a, v_client_a, '{}'::jsonb, now() - interval '1 day', now() - interval '25 hours')
+       returning id into v_lead_twin_a;
+  insert into lead (funnel_id, client_id, payload, created_at, deleted_at)
+       values (v_funnel_a, v_client_a, '{}'::jsonb, now() - interval '1 day', now() - interval '25 hours')
+       returning id into v_lead_twin_b;
+
+  select events_expired, leads_expired, leads_erased, capped
+    into v_events_expired, v_leads_expired, v_leads_erased, v_capped
+    from purge_expired(1);
+
+  assert v_leads_erased = 1,
+         format('p_limit = 1 against two hard-delete-eligible leads must erase exactly one, got leads_erased=%s', v_leads_erased);
+  assert v_events_expired = 0 and v_leads_expired = 0,
+         format('the step-3 capping fixture must leave steps 1 and 2 with nothing to do — got events_expired=%s leads_expired=%s', v_events_expired, v_leads_expired);
+  assert v_capped = true,
+         format('hitting p_limit on step 3 (the hard delete) must set capped = true, got %s', v_capped);
+
+  /* ======================================================================
+   * SECTION E — a shared session with NO survivor.
+   *
+   * Section B covers one victim beside one survivor, which is the case the
+   * `emptied` anti-join exists for. The other shape — every lead on the
+   * session is being erased in this same run — must go the other way: nothing
+   * survives to protect, so the events go and `sessions_kept` counts 0. An
+   * anti-join that regressed into "any other lead at all, including a fellow
+   * victim" would keep those events forever and read as conservative rather
+   * than broken.
+   * ==================================================================== */
+
+  insert into lead (funnel_id, client_id, payload, created_at, deleted_at)
+       values (v_funnel_a, v_client_a,
+               jsonb_build_object('sessionId', v_tag || '-twins'),
+               now() - interval '1 day', now() - interval '25 hours')
+       returning id into v_lead_twin_a;
+  insert into lead (funnel_id, client_id, payload, created_at, deleted_at)
+       values (v_funnel_a, v_client_a,
+               jsonb_build_object('sessionId', v_tag || '-twins'),
+               now() - interval '1 day', now() - interval '25 hours')
+       returning id into v_lead_twin_b;
+  insert into event (funnel_id, session_id, type)
+       values (v_funnel_a, v_tag || '-twins', 'view');
+
+  select leads_erased, events_erased, sessions_kept
+    into v_leads_erased, v_events_erased, v_sessions_kept
+    from purge_expired();
+
+  assert v_leads_erased >= 2,
+         format('both leads sharing the session must be erased in one run, got leads_erased=%s', v_leads_erased);
+  assert v_events_erased = 1,
+         format('with every lead on the session erased there is nobody left to protect, so its event must be deleted — got events_erased=%s', v_events_erased);
+  assert v_sessions_kept = 0,
+         format('a session shared only between fellow victims is emptied, not kept, got sessions_kept=%s', v_sessions_kept);
+
+  select count(*) into v_n from event
+   where funnel_id = v_funnel_a and session_id = v_tag || '-twins';
+  assert v_n = 0, format('the twins'' session must hold no events afterwards, got %s', v_n);
+
   select count(*) into v_n from purge_run;
-  assert v_n = 5, format('purge_run must have exactly 5 rows after 5 calls — one per call, no more, no fewer, got %s', v_n);
+  assert v_n = 10, format('purge_run must have exactly 10 rows after 10 calls — one per call, no more, no fewer, got %s', v_n);
 
   raise notice 'purge.sql: all assertions passed';
 end $$;
