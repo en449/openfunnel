@@ -3946,6 +3946,10 @@ function bindReports() {
 const SUBJECT_ERRORS = {
   invalid_client: "Pick a client first.",
   needle_too_short: "Type at least 3 characters.",
+  // Only a non-console caller can trigger this — the console always sends
+  // `client`/`q`/`confirm` as strings — but a bare status code in a toast is a
+  // worse thing to hand someone debugging their own API call.
+  invalid_body: "That request was malformed.",
   confirm_mismatch: "Retype the search term exactly to confirm.",
   db_not_configured: "No database configured — subject search is unavailable.",
   db_unavailable: "The database didn't answer — try again.",
@@ -3964,6 +3968,22 @@ function subjectFetchState(res) {
 }
 
 /**
+ * Which search the screen is currently about. Bumped by every reset and every
+ * new request; an in-flight response whose generation is stale is DISCARDED
+ * rather than painted.
+ *
+ * Needed because three async operations write the same state and the operator
+ * can move on while any of them is in flight. The one that matters is the
+ * erase: its `DELETE` can resolve after the client dropdown has been switched,
+ * and without this it would repaint the previous client's rows and its receipt
+ * under a picker naming somebody else. No wrong-client DELETE is reachable that
+ * way — `subjectsCanErase()` re-checks the dropdown at click time — but the
+ * receipt is what a statutory reply gets written from, so it must never
+ * describe a client the operator is not looking at.
+ */
+let subjectsGeneration = 0;
+
+/**
  * Throw away the last search — its rows, the query they belong to, the receipt
  * describing them and the typed confirmation that unlocked the Erase button.
  *
@@ -3978,6 +3998,7 @@ function subjectFetchState(res) {
  * @param {"idle"|"ready"|"error"|"unauthorized"|"unconfigured"} nextState
  */
 function resetSubjectSearch(nextState) {
+  subjectsGeneration += 1;
   state.subjects = [];
   state.subjectsQuery = null;
   state.subjectsReceipt = null;
@@ -4020,6 +4041,8 @@ async function loadSubjectClients() {
  * @param {string} needle
  */
 async function runSubjectSearch(clientId, needle) {
+  const generation = (subjectsGeneration += 1);
+  const stale = () => generation !== subjectsGeneration;
   const btn = $("subjectSearchBtn");
   if (btn) {
     btn.disabled = true;
@@ -4028,9 +4051,13 @@ async function runSubjectSearch(clientId, needle) {
   try {
     const res = await apiFetch(`/api/admin/subjects?client=${encodeURIComponent(clientId)}&q=${encodeURIComponent(needle)}`);
     const st = subjectFetchState(res);
+    const data = st === "ready" ? await res.json() : null;
+    // Checked AFTER the awaits, never before: two searches can overlap (a second
+    // Search click, or the automatic re-search after an erase), and the one that
+    // answers last is not necessarily the one the operator is waiting for.
+    if (stale()) return;
     if (st === "ready") {
-      const data = await res.json();
-      state.subjects = data.leads || [];
+      state.subjects = data?.leads || [];
       state.subjectsQuery = { client: clientId, q: needle };
       state.subjectsState = "ready";
     } else {
@@ -4039,13 +4066,18 @@ async function runSubjectSearch(clientId, needle) {
       state.subjectsState = st;
     }
   } catch {
+    if (stale()) return;
     state.subjects = [];
     state.subjectsQuery = null;
     state.subjectsState = "error";
-  }
-  if (btn) {
-    btn.disabled = false;
-    btn.textContent = "Search";
+  } finally {
+    // The button belongs to the screen, not to this request, so it is restored
+    // even when the answer was discarded — otherwise a superseded search leaves
+    // "Searching…" on a button nothing is going to finish.
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Search";
+    }
   }
   renderSubjects();
 }
@@ -4277,10 +4309,16 @@ async function eraseSubjects() {
     return;
   }
 
+  const generation = subjectsGeneration;
+  const select = $("subjectClientSelect");
   if (btn) {
     btn.disabled = true;
     btn.textContent = "Erasing…";
   }
+  // Locked for the duration, so the most likely way to walk away mid-request is
+  // simply not available. The generation check below is what actually makes a
+  // late answer safe; this only keeps the common case from arising at all.
+  if (select) select.disabled = true;
   try {
     const res = await apiFetch("/api/admin/subjects", {
       method: "DELETE",
@@ -4289,6 +4327,15 @@ async function eraseSubjects() {
     });
     const data = await res.json().catch(() => ({}));
     if (res.ok) {
+      // The erasure HAPPENED — the server has already done it — but if the view
+      // moved on while this was in flight, its receipt now describes a client
+      // the operator is not looking at. Say so in a toast that names the client
+      // instead of painting the panel; the receipt is recoverable by searching
+      // that client again, and a receipt over the wrong client's screen is not.
+      if (generation !== subjectsGeneration) {
+        toast(`Erased under ${clientLabel} — search that client again to see the receipt`);
+        return;
+      }
       state.subjectsReceipt = data;
       toast("Subject data erased");
       if (confirmInput) confirmInput.value = "";
@@ -4302,6 +4349,11 @@ async function eraseSubjects() {
     toast("Could not reach the server", "error");
   } finally {
     if (btn) btn.textContent = "Erase";
+    // Re-enabled unconditionally: `renderSubjects()` owns whether the picker is
+    // usable (it disables it only when there are no clients), and leaving it
+    // locked after a failed erase would strand the operator on one client.
+    if (select) select.disabled = false;
+    renderSubjects();
   }
 }
 
