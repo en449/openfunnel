@@ -45,13 +45,27 @@ select cron.schedule('openfunnel-otp-gc', '23 * * * *', $job$
   delete from otp where expires_at < now() - interval '1 day';
 $job$);
 
--- Drop-off events at 90 days (PLAN.md §8.7). Leads are NOT purged here — their
--- horizon is per-client (`client.retention_months`) and that job is Phase 2,
--- deliberately, because deleting a client's leads on the wrong schedule is not
--- a bug you can undo.
-select cron.schedule('openfunnel-event-purge', '40 3 * * *', $job$
-  delete from event where created_at < now() - interval '90 days';
+-- The retention purge (PLAN.md §8.7, WO D5): drop-off events at 90 days, leads
+-- at their own client's `retention_months` (soft), and soft-deleted leads older
+-- than 24 hours (hard). One function so the run is COUNTED and LOGGED — read it
+-- back from `purge_run`, not from cron.job_run_details, which records that a
+-- statement ran and nothing about what it removed.
+--
+-- REPLACES 'openfunnel-event-purge', which was this same 90-day delete inline.
+-- On a database where that job already exists, unschedule it in the same sitting
+-- or the events are deleted twice a night by two jobs — harmless, but the second
+-- one makes `purge_run.events_expired` read 0 and look like a purge that stopped
+-- working:
+--   select cron.unschedule('openfunnel-event-purge');
+select cron.schedule('openfunnel-purge', '40 3 * * *', $job$
+  select purge_expired();
 $job$);
+
+-- If `capped` is true on consecutive rows here, one run's ceiling is smaller
+-- than a day's backlog — raise it (`select purge_expired(100000);`) or schedule
+-- more often. Nothing self-corrects: a capped run clears one limit and stops.
+--   select started_at, events_expired, leads_expired, leads_erased, capped
+--     from purge_run order by started_at desc limit 14;
 
 /* ==========================================================================
  * PART B — the retry drain. Needs a URL pg_net can actually reach.
