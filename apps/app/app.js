@@ -4310,15 +4310,21 @@ async function eraseSubjects() {
   }
 
   const generation = subjectsGeneration;
-  const select = $("subjectClientSelect");
+  // Every control that can change what the screen is about, locked for the
+  // duration. The picker is the obvious one; the search box matters for a
+  // subtler reason the generation counter CANNOT cover: a search fired before
+  // this click already bumped the generation, so the erase captured that same
+  // number and a receipt arriving after that search resolves reads as current
+  // while the table underneath it shows a different needle's rows. A generation
+  // is only a guard against work started AFTER it was read.
+  const frozen = [$("subjectClientSelect"), $("subjectSearchBtn"), $("subjectSearchInput")];
   if (btn) {
     btn.disabled = true;
     btn.textContent = "Erasing…";
   }
-  // Locked for the duration, so the most likely way to walk away mid-request is
-  // simply not available. The generation check below is what actually makes a
-  // late answer safe; this only keeps the common case from arising at all.
-  if (select) select.disabled = true;
+  frozen.forEach((node) => {
+    if (node) node.disabled = true;
+  });
   try {
     const res = await apiFetch("/api/admin/subjects", {
       method: "DELETE",
@@ -4349,10 +4355,14 @@ async function eraseSubjects() {
     toast("Could not reach the server", "error");
   } finally {
     if (btn) btn.textContent = "Erase";
-    // Re-enabled unconditionally: `renderSubjects()` owns whether the picker is
-    // usable (it disables it only when there are no clients), and leaving it
-    // locked after a failed erase would strand the operator on one client.
-    if (select) select.disabled = false;
+    // Re-enabled unconditionally, then handed back to `renderSubjects()`, which
+    // owns whether each control is usable (the picker and Search are disabled
+    // when there are no clients; the Erase button's own `disabled` comes from
+    // `subjectsCanErase()`). Leaving any of them locked after a failed erase
+    // would strand the operator — which is why the render below is not optional.
+    frozen.forEach((node) => {
+      if (node) node.disabled = false;
+    });
     renderSubjects();
   }
 }

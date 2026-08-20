@@ -83,6 +83,13 @@ declare
   v_deleted_at  timestamptz;
   v_status      text;
 begin
+  -- The row count this file's last assertion checks is a DELTA, not an absolute:
+  -- the header says these assertions run against any database carrying this
+  -- schema, including a live one, and a live `purge_run` already holds a row per
+  -- nightly cron run. An absolute count would fail there for a reason that has
+  -- nothing to do with the code under test.
+  select count(*) into v_n2 from purge_run;
+
   /* ======================================================================
    * FIXTURES — clients and funnels shared by every scenario below. Four
    * clients because the horizon test needs two DIFFERENT retention_months
@@ -561,8 +568,14 @@ begin
    where funnel_id = v_funnel_a and session_id = v_tag || '-twins';
   assert v_n = 0, format('the twins'' session must hold no events afterwards, got %s', v_n);
 
+  -- One row per call, no more and no fewer — including the calls that deleted
+  -- nothing, which is the whole point of the table (an empty `purge_run` cannot
+  -- otherwise be told apart from a cron job nobody scheduled). The literal is
+  -- hand-counted against the `purge_expired(` call sites above; it fails loudly
+  -- rather than silently when someone adds one, which is the intended cost.
   select count(*) into v_n from purge_run;
-  assert v_n = 10, format('purge_run must have exactly 10 rows after 10 calls — one per call, no more, no fewer, got %s', v_n);
+  assert v_n - v_n2 = 10,
+         format('purge_run must have gained exactly 10 rows from this file''s 10 calls, gained %s', v_n - v_n2);
 
   raise notice 'purge.sql: all assertions passed';
 end $$;
