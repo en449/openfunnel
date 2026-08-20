@@ -171,6 +171,7 @@
       <button class="tab" role="tab" data-view="templates" aria-selected="false">Templates</button>
       <button class="tab" role="tab" data-view="domains" aria-selected="false">Domains</button>
       <button class="tab" role="tab" data-view="reports" aria-selected="false">Reports</button>
+      <button class="tab" role="tab" data-view="subjects" aria-selected="false">Subjects</button>
       <button class="tab" role="tab" data-view="settings" aria-selected="false">Settings</button>
       <a id="liveLink" class="live-link" href="/f/lead-gen" target="_blank" rel="noopener">
         <span id="liveLinkText">/f/lead-gen</span>
@@ -721,6 +722,103 @@
                   </tr>
                 </thead>
                 <tbody id="reportsBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── Subjects ─────────────────────────────────────────────────────── -->
+      <!-- Art. 15/17/20 (PHASE-2-PLAN.md §4): pick a client, search by the
+           email or phone number a person submitted, see what is held, export
+           the JSON client-side, erase with a typed confirmation. There is no
+           default listing — both endpoints refuse an empty client or needle
+           by design, so nothing loads until the operator searches. -->
+      <section id="view-subjects" class="view" role="tabpanel">
+        <div class="view-pad">
+          <div class="page-head">
+            <div>
+              <h1 class="page-title">Subjects</h1>
+              <p class="page-sub" id="subjectsSub">Pick a client, then search by the email or phone number a person submitted.</p>
+            </div>
+          </div>
+
+          <div class="card" style="margin-bottom: 16px">
+            <div class="card-head"><span class="card-title">Search</span></div>
+            <div class="card-pad">
+              <div style="display: grid; grid-template-columns: 1fr 1fr auto; gap: 12px; align-items: end">
+                <div class="field" style="margin: 0">
+                  <label for="subjectClientSelect">Client</label>
+                  <span class="select-wrap">
+                    <select id="subjectClientSelect" class="select"></select>
+                    <span class="select-caret"><svg width="14" height="14"><use href="#i-chevron" /></svg></span>
+                  </span>
+                </div>
+                <div class="field" style="margin: 0">
+                  <label for="subjectSearchInput">Email or phone number</label>
+                  <input id="subjectSearchInput" class="input input-mono" type="text" placeholder="jane@example.com" autocomplete="off" />
+                </div>
+                <button id="subjectSearchBtn" class="btn btn-primary">
+                  <svg width="14" height="14"><use href="#i-search" /></svg>
+                  Search
+                </button>
+              </div>
+              <p class="field-hint" style="margin: 10px 0 0">
+                Matches exactly, never a substring — this search is also what the delete button below runs. A phone number
+                only matches in the form the lead submitted it; a country code and a national zero do not reconcile.
+              </p>
+            </div>
+          </div>
+
+          <!-- The receipt from the last successful erase. Shown in full, and
+               nothing but the operator dismissing the panel or running a new
+               search may hide it — it is what a statutory reply gets written
+               from (WO-D4). -->
+          <div id="subjectsReceiptPanel" class="card" hidden style="margin-bottom: 16px; border-color: var(--neg)">
+            <div class="card-head"><span class="card-title">Erase receipt</span></div>
+            <div class="card-pad" id="subjectsReceiptBody"></div>
+          </div>
+
+          <div class="card" style="margin-bottom: 16px">
+            <div class="card-head" style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap">
+              <span class="card-title">Erase this person</span>
+            </div>
+            <div class="card-pad">
+              <p class="field-hint" style="margin: 0 0 10px">
+                Type the search term above again, exactly, to enable Erase. This soft-deletes every lead found and their
+                events; the hard delete follows within 24 hours, and backups sit outside that window.
+              </p>
+              <div style="display: flex; gap: 12px; align-items: end; flex-wrap: wrap">
+                <div class="field" style="margin: 0; flex: 1; min-width: 220px">
+                  <label for="subjectsConfirmInput">Retype the search term to confirm</label>
+                  <input id="subjectsConfirmInput" class="input input-mono" type="text" autocomplete="off" />
+                </div>
+                <button id="subjectsExportBtn" class="btn" disabled>
+                  <svg width="14" height="14"><use href="#i-download" /></svg>
+                  Export JSON
+                </button>
+                <button id="subjectsEraseBtn" class="btn btn-danger" disabled>
+                  <svg width="14" height="14"><use href="#i-trash" /></svg>
+                  Erase
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="table-wrap">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th>Funnel</th>
+                    <th>Created</th>
+                    <th>Flags</th>
+                    <th>Session</th>
+                    <th>Events</th>
+                    <th>Payload</th>
+                  </tr>
+                </thead>
+                <tbody id="subjectsBody"></tbody>
               </table>
             </div>
           </div>

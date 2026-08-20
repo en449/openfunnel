@@ -71,9 +71,33 @@ const state = {
    *  re-render, a toast, or a list refresh, or the operator has issued a
    *  credential nobody has (work order C5, requirement 1). */
   reportIssuedUrl: /** @type {string|null} */ (null),
+
+  /** Client picker for the Subjects search — same list `GET /api/admin/clients`
+   *  feeds the report-token picker with (PHASE-2-PLAN.md §4). */
+  subjectClients: /** @type {{id:string,name:string,slug:string,avvSignedAt:string|null}[]} */ ([]),
+  /** The `find_subject` rows as-is, from the most recent search. Exported to
+   *  JSON client-side from exactly this array — there is no second server
+   *  endpoint for the export. @type {any[]} */
+  subjects: [],
+  /** "idle" (no search run yet) | "ready" | "unconfigured" | "unauthorized" | "error". */
+  subjectsState: "idle",
+  /** The `client`/`q` a search was actually run with, so a stale result never
+   *  gets exported or erased under a client/needle the operator has since
+   *  changed in the pickers. @type {{client:string,q:string}|null} */
+  subjectsQuery: null,
+  /** The erase receipt from the last successful `DELETE`, shown in full until
+   *  the operator runs another search. @type {any|null} */
+  subjectsReceipt: null,
 };
 
-const VIEWS = ["dashboard", "builder", "leads", "delivery", "analytics", "templates", "domains", "reports", "settings"];
+// ORDER IS A KEYBOARD SHORTCUT. `bindKeys` opens `VIEWS[key - 1]`, and a keydown's
+// `e.key` is one character, so only positions 1–9 can ever be reached. A tenth view
+// is therefore a view with no number key, and WHICH view that is, is a decision:
+// `subjects` is appended last because an operator opens Settings often and answers a
+// subject-rights request a handful of times a year. Inserting it before `settings`
+// silently moved Settings to 10 and took its shortcut away — CLAUDE.md warns about
+// exactly this, and neither `bun test` nor `bun run typecheck` covers `apps/app`.
+const VIEWS = ["dashboard", "builder", "leads", "delivery", "analytics", "templates", "domains", "reports", "settings", "subjects"];
 const ROUTES = {
   dashboard: "/",
   builder: "/builder",
@@ -83,6 +107,7 @@ const ROUTES = {
   templates: "/templates",
   domains: "/domains",
   reports: "/reports",
+  subjects: "/subjects",
   settings: "/settings",
 };
 
@@ -611,6 +636,10 @@ function showView(view, push = true) {
   if (view === "delivery") loadDeliveries();
   if (view === "domains") loadDomains();
   if (view === "reports") loadReports();
+  // Only the client picker, not a search — the endpoints refuse an empty
+  // needle by design (PHASE-2-PLAN.md §4 Decision 3), so there is nothing to
+  // search until the operator picks a client and types one.
+  if (view === "subjects") loadSubjectClients();
 }
 
 /* ========================================================================== *
@@ -3899,6 +3928,409 @@ function bindReports() {
 }
 
 /* ========================================================================== *
+ *  Subjects — Art. 15/17/20, PHASE-2-PLAN.md §4. The operator's answer to
+ *  "someone asked what you hold about them, then asked you to delete it":
+ *  pick a client, search, see what is held, export the JSON client-side, erase
+ *  with a typed confirmation. Both endpoints are `apps/runtime/routes/admin.js`
+ *  — see that file's header comment on this block before changing either side,
+ *  since the console must not claim more than `find_subject`/`erase_subject`
+ *  guarantee (their own header, `supabase/migrations/20260819100000_subject_rights.sql`).
+ *
+ *  Modeled on Reports immediately above: same load/render/bind shape, same
+ *  fetch-state classification. Two differences: there is no default listing
+ *  (the endpoints refuse an empty client or needle by design, so nothing loads
+ *  until the operator searches), and Export has no server endpoint at all — it
+ *  downloads exactly the JSON the last search already returned.
+ * ========================================================================== */
+
+const SUBJECT_ERRORS = {
+  invalid_client: "Pick a client first.",
+  needle_too_short: "Type at least 3 characters.",
+  confirm_mismatch: "Retype the search term exactly to confirm.",
+  db_not_configured: "No database configured — subject search is unavailable.",
+  db_unavailable: "The database didn't answer — try again.",
+};
+
+function subjectErrorToast(res, body) {
+  toast(SUBJECT_ERRORS[body?.error] || `Could not complete that (status ${res.status})`, "error");
+}
+
+/** Classifies one fetch outcome the same way `reportFetchState` does. */
+function subjectFetchState(res) {
+  if (res.status === 503) return "unconfigured";
+  if (res.status === 401) return "unauthorized";
+  if (!res.ok) return "error";
+  return "ready";
+}
+
+/**
+ * Throw away the last search — its rows, the query they belong to, the receipt
+ * describing them and the typed confirmation that unlocked the Erase button.
+ *
+ * One function rather than the same four lines at each call site, because
+ * every path that invalidates a search has to clear ALL of it. The first
+ * version of this reset lived inline in `loadSubjectClients`'s success branch
+ * only, so a 500 or an expired token on the way back into the view left the
+ * previous client's rows in `state` while the screen rendered an error panel —
+ * and `subjectsCanErase()` reads that state, so Erase stayed clickable for a
+ * search the operator could no longer see.
+ *
+ * @param {"idle"|"ready"|"error"|"unauthorized"|"unconfigured"} nextState
+ */
+function resetSubjectSearch(nextState) {
+  state.subjects = [];
+  state.subjectsQuery = null;
+  state.subjectsReceipt = null;
+  state.subjectsState = nextState;
+  const confirmInput = $("subjectsConfirmInput");
+  if (confirmInput) confirmInput.value = "";
+}
+
+async function loadSubjectClients() {
+  try {
+    const res = await apiFetch("/api/admin/clients");
+    const st = subjectFetchState(res);
+    if (st === "ready") {
+      state.subjectClients = (await res.json()).clients || [];
+    } else {
+      // Told up front, before the operator even picks a client — the same
+      // reason `find_subject`'s own 503/401 would say once they searched.
+      state.subjectClients = [];
+    }
+    // Reset on EVERY branch, not only the happy one. This function runs on each
+    // entry to the view, so it is where a search from the last visit stops
+    // applying — and the branch where the client list failed to load is exactly
+    // the one where leaving rows behind is worst.
+    resetSubjectSearch(st === "ready" ? "idle" : st);
+  } catch {
+    state.subjectClients = [];
+    resetSubjectSearch("error");
+  }
+  renderSubjects();
+}
+
+/**
+ * The network call only. Deliberately does not touch `state.subjectsReceipt`
+ * or the confirm input, so `eraseSubjects()` can call this to refresh the
+ * table's flags after a delete WITHOUT wiping the receipt it just showed —
+ * see the requirement on `renderSubjects()`'s own doc comment below the
+ * `reportIssuedPanel` precedent this whole view is modeled on.
+ *
+ * @param {string} clientId
+ * @param {string} needle
+ */
+async function runSubjectSearch(clientId, needle) {
+  const btn = $("subjectSearchBtn");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Searching…";
+  }
+  try {
+    const res = await apiFetch(`/api/admin/subjects?client=${encodeURIComponent(clientId)}&q=${encodeURIComponent(needle)}`);
+    const st = subjectFetchState(res);
+    if (st === "ready") {
+      const data = await res.json();
+      state.subjects = data.leads || [];
+      state.subjectsQuery = { client: clientId, q: needle };
+      state.subjectsState = "ready";
+    } else {
+      state.subjects = [];
+      state.subjectsQuery = null;
+      state.subjectsState = st;
+    }
+  } catch {
+    state.subjects = [];
+    state.subjectsQuery = null;
+    state.subjectsState = "error";
+  }
+  if (btn) {
+    btn.disabled = false;
+    btn.textContent = "Search";
+  }
+  renderSubjects();
+}
+
+/** The operator pressing Search or Enter — a NEW query, so a receipt or a
+ *  typed confirmation from a previous one no longer describes what's on
+ *  screen and must not silently keep applying to it. */
+async function searchSubjects() {
+  const clientId = $("subjectClientSelect")?.value || "";
+  const needle = $("subjectSearchInput")?.value.trim() || "";
+  if (!clientId) return toast("Pick a client", "error");
+  // Mirrors the server's own floor (subject_rights.sql's defence in depth) so
+  // the operator sees why before a round trip, not after a 400.
+  if (needle.length < 3) return toast("Type at least 3 characters", "error");
+
+  state.subjectsReceipt = null;
+  const confirmInput = $("subjectsConfirmInput");
+  if (confirmInput) confirmInput.value = "";
+
+  await runSubjectSearch(clientId, needle);
+}
+
+/**
+ * Whether the Erase button may be clicked. Four conditions, and each one exists
+ * because without it the button destroys something other than what the screen
+ * is showing (WO-D4 Decision 2):
+ *
+ *  - a search has run and found something — there is nothing else to erase;
+ *  - the confirm field holds the EXACT needle that search ran with, the same
+ *    equality the server enforces, so a mis-wired click here can never do more
+ *    than the server would refuse anyway;
+ *  - the view is in its `ready` state, so an error or unauthorized panel cannot
+ *    sit on screen above a live Erase button;
+ *  - **the client dropdown still shows the client the search ran against.**
+ *    Changing it is not a search, so without this check the operator could pick
+ *    client B, retype the confirmation, and erase client A's data — with the
+ *    only client-identifying control on the page reading "B". Every other cue
+ *    (the rows, the receipt) belongs to A, which is precisely why the mismatch
+ *    is easy to miss.
+ */
+function subjectsCanErase() {
+  const confirmValue = $("subjectsConfirmInput")?.value || "";
+  const selectedClient = $("subjectClientSelect")?.value || "";
+  return (
+    state.subjectsState === "ready" &&
+    Boolean(state.subjectsQuery) &&
+    state.subjects.length > 0 &&
+    state.subjectsQuery.client === selectedClient &&
+    confirmValue === state.subjectsQuery.q
+  );
+}
+
+const SUBJECTS_EMPTY = {
+  unauthorized: ["Not authorised", "This browser has no admin token for this hostname. Settings → Admin API token."],
+  unconfigured: ["No database configured", "Subject search needs a database — there is nothing to search in a JSONL file."],
+  error: ["Could not search", "The server did not answer — try again."],
+  idle: ["Search for a person", "Pick a client, type the email or phone number they submitted, and press Search."],
+};
+
+/**
+ * One row of a search result. Every value is visitor-submitted content
+ * rendered on the console's own origin — `esc()` all of it (CLAUDE.md's
+ * Escaping rule).
+ *
+ * Flags are always shown, never filtered or sorted away: `find_subject`
+ * deliberately returns soft-deleted, restricted and spam rows, because the
+ * data subject is entitled to know a record exists and is restricted.
+ *
+ * `session_shared` gets its own explanatory line rather than just a tick — it
+ * means a lead THIS SEARCH DOES NOT MATCH used the same browsing session, so
+ * the event count beside it covers more than one person and the operator must
+ * not report someone else's activity as this subject's.
+ *
+ * @param {any} row
+ */
+function subjectRow(row) {
+  const flags =
+    [
+      row.deleted_at ? `<span class="tag tag-danger">Deleted</span>` : "",
+      row.restricted ? `<span class="tag tag-danger">Restricted</span>` : "",
+      row.is_spam ? `<span class="tag tag-danger">Spam</span>` : "",
+      row.email_verified ? `<span class="tag">Verified</span>` : "",
+    ]
+      .filter(Boolean)
+      .join(" ") || `<span style="color:var(--text-3)">—</span>`;
+
+  const session = row.session_shared
+    ? `<span class="tag tag-danger">Shared session</span>
+       <p class="field-hint" style="margin:4px 0 0">Another lead this search didn't match used the same browsing session — the event count may include their activity, not only this person's.</p>`
+    : `<span style="color:var(--text-3)">—</span>`;
+
+  return `<tr>
+    <td><span class="tag">${esc(row.funnel_slug || "—")}</span></td>
+    <td class="cell-mono" title="${esc(row.created_at || "")}">${esc(relativeTime(row.created_at))}</td>
+    <td>${flags}</td>
+    <td>${session}</td>
+    <td class="cell-mono">${esc(String(row.event_count ?? 0))}</td>
+    <td><pre style="margin:0;max-width:320px;white-space:pre-wrap;word-break:break-word;font-family:var(--mono);font-size:11px;color:var(--text-2)">${esc(
+      JSON.stringify(row.payload ?? {}, null, 2),
+    )}</pre></td>
+  </tr>`;
+}
+
+/**
+ * The erase receipt, shown in full until the operator runs another search —
+ * `leadsWithoutSession` and `sharedSessions` included, each with the one line
+ * an operator writing a statutory reply needs rather than has to infer
+ * (WO-D4). Every number here comes straight off the server's own JSON, never
+ * recomputed from `state.subjects`.
+ */
+function renderSubjectsReceipt() {
+  const r = state.subjectsReceipt;
+  const el = $("subjectsReceiptBody");
+  if (!el || !r) return;
+  const row = (n, text) => `<p style="margin:6px 0;font-size:13px"><strong>${esc(String(n ?? 0))}</strong> ${text}</p>`;
+  el.innerHTML =
+    row(r.leadsDeleted, "lead(s) soft-deleted just now.") +
+    row(r.leadsAlreadyDeleted, "lead(s) were already deleted by an earlier request.") +
+    row(r.eventsDeleted, "event(s) deleted.") +
+    row(
+      r.leadsWithoutSession,
+      "lead(s) carried no reachable session — their events could not be found, so this does not claim everything was removed.",
+    ) +
+    row(
+      r.sharedSessions,
+      "emptied session(s) were also used by a visitor this search did not match — their events were deleted too, since one browsing session cannot be split between two people.",
+    ) +
+    `<p class="field-hint" style="margin-top:10px">This is a soft delete: it becomes permanent within 24 hours. Backups sit outside that window and are not touched by this action.</p>`;
+}
+
+function renderSubjects() {
+  const clientSelect = $("subjectClientSelect");
+  const searchBtn = $("subjectSearchBtn");
+  const exportBtn = $("subjectsExportBtn");
+  const eraseBtn = $("subjectsEraseBtn");
+  const sub = $("subjectsSub");
+  const body = $("subjectsBody");
+  const receiptPanel = $("subjectsReceiptPanel");
+
+  const hasClients = state.subjectClients.length > 0;
+  if (clientSelect) {
+    const current = clientSelect.value;
+    clientSelect.innerHTML = hasClients
+      ? `<option value="">Select a client…</option>${state.subjectClients
+          .map((c) => `<option value="${esc(c.id)}">${esc(c.name || c.slug)}</option>`)
+          .join("")}`
+      : `<option value="">No clients yet</option>`;
+    if (hasClients && state.subjectClients.some((c) => c.id === current)) clientSelect.value = current;
+    clientSelect.disabled = !hasClients;
+  }
+  if (searchBtn) searchBtn.disabled = !hasClients;
+
+  const ready = state.subjectsState === "ready";
+  const hasResults = ready && state.subjects.length > 0;
+  if (exportBtn) exportBtn.disabled = !hasResults;
+  if (eraseBtn) eraseBtn.disabled = !subjectsCanErase();
+
+  if (sub) {
+    sub.textContent =
+      state.subjectsState === "unauthorized"
+        ? "Not authorised — paste the admin token in Settings."
+        : state.subjectsState === "unconfigured"
+          ? "No database configured — subject search is unavailable."
+          : state.subjectsState === "error"
+            ? "Could not search."
+            : state.subjectsState === "idle"
+              ? "Pick a client, then search by the email or phone number a person submitted."
+              : `${count(state.subjects.length, "record")} found for "${state.subjectsQuery?.q ?? ""}".`;
+  }
+
+  if (receiptPanel) receiptPanel.hidden = !state.subjectsReceipt;
+  if (state.subjectsReceipt) renderSubjectsReceipt();
+
+  if (!body) return;
+
+  if (!ready) {
+    const [title, hint] = SUBJECTS_EMPTY[state.subjectsState] || SUBJECTS_EMPTY.error;
+    body.innerHTML = `<tr><td colspan="6"><div class="empty">
+      <div class="empty-title">${esc(title)}</div>
+      <p class="empty-body">${esc(hint)}</p>
+    </div></td></tr>`;
+    return;
+  }
+
+  if (!state.subjects.length) {
+    body.innerHTML = `<tr><td colspan="6"><div class="empty">
+      <div class="empty-title">Nothing found</div>
+      <p class="empty-body">No lead in this client matched that email or phone number.</p>
+    </div></td></tr>`;
+    return;
+  }
+
+  body.innerHTML = state.subjects.map(subjectRow).join("");
+}
+
+/** Downloads exactly the JSON the last search returned. No server export
+ *  endpoint exists — a second surface returning the same personal data would
+ *  be a second thing to secure (WO-D4 Decision 5). */
+function exportSubjectsJson() {
+  if (!state.subjects.length) return;
+  const blob = new Blob([JSON.stringify(state.subjects, null, 2)], { type: "application/json;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  const slug = (state.subjectsQuery?.q || "subject").replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "subject";
+  a.download = `openfunnel-subject-${slug}-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  toast(`Exported ${count(state.subjects.length, "record")}`);
+}
+
+async function eraseSubjects() {
+  const query = state.subjectsQuery;
+  const confirmInput = $("subjectsConfirmInput");
+  const btn = $("subjectsEraseBtn");
+  if (!query || !subjectsCanErase()) return;
+  const confirmValue = confirmInput?.value || "";
+
+  // The dialog names the CLIENT as well as the needle. It is the last thing
+  // between a click and a deletion, and "which client" is the half of that
+  // question the screen answers least clearly.
+  const clientName = state.subjectClients.find((c) => c.id === query.client);
+  const clientLabel = clientName?.name || clientName?.slug || query.client;
+  if (
+    !confirm(
+      `Erase every record found for "${query.q}" under ${clientLabel}? This cannot be undone from this screen.`,
+    )
+  ) {
+    return;
+  }
+
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Erasing…";
+  }
+  try {
+    const res = await apiFetch("/api/admin/subjects", {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ client: query.client, q: query.q, confirm: confirmValue }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      state.subjectsReceipt = data;
+      toast("Subject data erased");
+      if (confirmInput) confirmInput.value = "";
+      // Refreshes the table so its flags reflect the fresh `deleted_at` stamp.
+      // `runSubjectSearch` never touches the receipt, so it stays on screen.
+      await runSubjectSearch(query.client, query.q);
+    } else {
+      subjectErrorToast(res, data);
+    }
+  } catch {
+    toast("Could not reach the server", "error");
+  } finally {
+    if (btn) btn.textContent = "Erase";
+  }
+}
+
+function bindSubjects() {
+  $("subjectSearchBtn")?.addEventListener("click", searchSubjects);
+  $("subjectSearchInput")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      searchSubjects();
+    }
+  });
+  // Picking a different client is not a search, so the rows on screen stop
+  // describing the selection the moment this fires. Clearing them is the honest
+  // render; `subjectsCanErase()` refuses the mismatch as well, but a table that
+  // silently belongs to another client is the thing the operator reads before
+  // pressing a destructive button.
+  $("subjectClientSelect")?.addEventListener("change", () => {
+    resetSubjectSearch("idle");
+    renderSubjects();
+  });
+  $("subjectsExportBtn")?.addEventListener("click", exportSubjectsJson);
+  $("subjectsConfirmInput")?.addEventListener("input", () => {
+    const btn = $("subjectsEraseBtn");
+    if (btn) btn.disabled = !subjectsCanErase();
+  });
+  $("subjectsEraseBtn")?.addEventListener("click", eraseSubjects);
+}
+
+/* ========================================================================== *
  *  Templates
  * ========================================================================== */
 
@@ -4059,7 +4491,13 @@ async function generateFunnel() {
  *
  * @param {string} view
  */
-const viewHint = (view) => String(VIEWS.indexOf(view) + 1);
+// Empty for anything past the ninth view: `bindKeys` cannot receive a two-character
+// key, so a "10" in the palette is a shortcut that does not exist. The palette
+// renders no chip at all for an empty hint.
+const viewHint = (view) => {
+  const position = VIEWS.indexOf(view) + 1;
+  return position >= 1 && position <= 9 ? String(position) : "";
+};
 
 const PALETTE_ACTIONS = [
   { label: "Overview", icon: "grid", hint: viewHint("dashboard"), category: "Navigation", run: () => showView("dashboard") },
@@ -4070,6 +4508,7 @@ const PALETTE_ACTIONS = [
   { label: "Templates", icon: "grid", hint: viewHint("templates"), category: "Navigation", run: () => showView("templates") },
   { label: "Domains", icon: "external", hint: viewHint("domains"), category: "Navigation", run: () => showView("domains") },
   { label: "Reports", icon: "copy", hint: viewHint("reports"), category: "Navigation", run: () => showView("reports") },
+  { label: "Subjects", icon: "search", hint: viewHint("subjects"), category: "Navigation", run: () => showView("subjects") },
   { label: "Settings", icon: "settings", hint: viewHint("settings"), category: "Navigation", run: () => showView("settings") },
 
   { label: "Funnel theme", icon: "palette", category: "Funnel Settings & Config", run: () => openModal("themeOverlay") },
@@ -5177,6 +5616,7 @@ async function init() {
   bindDelivery();
   bindDomains();
   bindReports();
+  bindSubjects();
   bindModals();
   bindKeys();
   initSymbolPicker();

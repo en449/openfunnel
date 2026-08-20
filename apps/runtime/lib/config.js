@@ -203,5 +203,6 @@ export const APP_ROUTES = new Set([
   "/templates",
   "/domains",
   "/reports",
+  "/subjects",
   "/settings",
 ]);

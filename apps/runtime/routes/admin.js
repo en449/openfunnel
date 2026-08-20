@@ -523,6 +523,115 @@ export async function handleAdmin(req, ctx) {
     }
   }
 
+  /* ------------------------------------------------------------------ *
+   *  Subject rights — Art. 15/17/20, PHASE-2-PLAN.md §4 Decisions 2-3
+   *
+   *  Both endpoints call `find_subject`/`erase_subject` in
+   *  supabase/migrations/20260819100000_subject_rights.sql and must not claim
+   *  more than that file's header says those functions guarantee — read it
+   *  before touching this block. In short: the match is exact (never a
+   *  substring, because this also deletes), `session_shared` /
+   *  `sharedSessions` mean a lead THIS SEARCH DOES NOT MATCH shares the same
+   *  browsing session (so a number here can describe more than one visitor —
+   *  show it, never hide it), and the erase is a SOFT delete: the hard delete
+   *  is WO D5's sweeper 24h later, and backups sit outside even that window
+   *  (PLAN.md §8.7).
+   *
+   *  No export endpoint here on purpose — the console downloads what the GET
+   *  already returned, client-side. A second server surface returning the
+   *  same personal data is a second thing to secure.
+   * ------------------------------------------------------------------ */
+  if (path === "/api/admin/subjects" && req.method === "GET") {
+    if (!dbConfigured()) return json({ error: "db_not_configured" }, 503);
+
+    const clientId = String(url.searchParams.get("client") || "").trim();
+    if (!UUID_RE.test(clientId)) return json({ error: "invalid_client" }, 400);
+
+    // The SQL enforces the same floor (defence in depth, per its own header),
+    // but refusing here means a short search reads as "type more characters"
+    // rather than a raised exception surfacing as a generic 503 the operator
+    // takes for an outage.
+    const needle = String(url.searchParams.get("q") || "");
+    if (needle.trim().length < 3) return json({ error: "needle_too_short" }, 400);
+
+
+    try {
+      const leads = await rpc("find_subject", { p_client_id: clientId, p_needle: needle });
+      // `no-store`: this response holds one identified person's data, name and
+      // all — the same reason the client report link is never cacheable.
+      return json({ leads }, 200, { "cache-control": "no-store" });
+    } catch (err) {
+      console.warn(`[admin] subject search unavailable for client ${clientId}: ${errSummary(err)}`);
+      return json({ error: "db_unavailable" }, 503);
+    }
+  }
+
+  if (path === "/api/admin/subjects" && req.method === "DELETE") {
+    if (!dbConfigured()) return json({ error: "db_not_configured" }, 503);
+    const body = await readJson(req);
+
+    const clientId = String(body?.client || "").trim();
+    if (!UUID_RE.test(clientId)) return json({ error: "invalid_client" }, 400);
+
+    // Strings, not "things that stringify". `String(["a@b.de"])` is `"a@b.de"`, so
+    // an array-typed field satisfied a check whose entire purpose is that a human
+    // typed the same value twice. Symmetric coercion made it harmless in practice;
+    // requiring the type makes it impossible.
+    if (typeof body?.q !== "string" || typeof body?.confirm !== "string") {
+      return json({ error: "invalid_body" }, 400);
+    }
+    const needle = body.q;
+    if (needle.trim().length < 3) return json({ error: "needle_too_short" }, 400);
+
+    // The operator must retype the needle, exactly, before this deletes
+    // anything — not theatre: a mis-wired console button that fires on click
+    // rather than on confirmation is a bug this repo has already shipped once
+    // in a different view. Checked, and failed, BEFORE the RPC: a wrong or
+    // missing `confirm` calls nothing.
+    if (body.confirm !== needle) return json({ error: "confirm_mismatch" }, 400);
+
+    // NO RATE LIMIT HERE, and that is deliberate — this is the one write in this
+    // file without one, so here is why before somebody adds it back for symmetry.
+    //
+    // A ceiling on an admin route buys blast radius against a stolen token. It buys
+    // almost nothing here: whoever holds the token can already read the same person's
+    // data through the GET above, unthrottled, and read every client's leads through
+    // `/api/admin/leads`. Capping the erase caps the LOWER-value path while the bulk
+    // read stays open. Meanwhile `clientIp` returns null on a serverless deploy
+    // without TRUST_PROXY, so the key would collapse to one bucket shared by every
+    // caller and every client on the deployment — not the per-operator ceiling it
+    // reads as.
+    //
+    // Against that: a 429 here refuses an Art. 17 erasure, which carries a one-month
+    // statutory deadline, exactly when someone is working through a backlog or a
+    // breach response. The accidental-mass-delete failure is already closed by the
+    // exact-confirm gate above, and `erase_subject` is idempotent, so a looping
+    // console button deletes nothing the first call did not.
+
+    try {
+      const [receipt] = await rpc("erase_subject", { p_client_id: clientId, p_needle: needle });
+      const leadsDeleted = receipt?.leads_deleted ?? 0;
+      const leadsAlreadyDeleted = receipt?.leads_already_deleted ?? 0;
+      const eventsDeleted = receipt?.events_deleted ?? 0;
+      const leadsWithoutSession = receipt?.leads_without_session ?? 0;
+      const sharedSessions = receipt?.shared_sessions ?? 0;
+
+      // The needle never reaches a log line — it is a named person's email or
+      // phone number. The client id and the counts are the audit trail an
+      // Art. 17 erasure needs (Art. 30/32); nothing else goes in this line.
+      console.warn(
+        `[admin] erased subject data for client ${clientId}: leadsDeleted=${leadsDeleted} ` +
+          `leadsAlreadyDeleted=${leadsAlreadyDeleted} eventsDeleted=${eventsDeleted} ` +
+          `leadsWithoutSession=${leadsWithoutSession} sharedSessions=${sharedSessions}`,
+      );
+
+      return json({ leadsDeleted, leadsAlreadyDeleted, eventsDeleted, leadsWithoutSession, sharedSessions });
+    } catch (err) {
+      console.warn(`[admin] subject erase failed for client ${clientId}: ${errSummary(err)}`);
+      return json({ error: "db_unavailable" }, 503);
+    }
+  }
+
   if (path === "/api/admin/test-email" && req.method === "POST") {
     const body = await readJson(req);
     const targetEmail = String(body?.email || (await getEmailSettings()).notifyEmail || "").trim();
