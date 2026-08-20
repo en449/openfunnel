@@ -235,6 +235,15 @@ export interface FunnelConsent {
   declineLabel?: string;
   /** Wins over `legal.privacyUrl` when both are set; falls back to it otherwise. */
   policyUrl?: string;
+  /** Names which wording of the bar a visitor agreed to (§8.4 evidence). */
+  textVersion?: string;
+  /** Label for the footer's withdrawal control. Defaults to "Datenschutz-Einstellungen". */
+  manageLabel?: string;
+  /**
+   * Shown before the cleanup reload a withdrawal needs when a pixel is live and
+   * the visitor has typed something on the current step. German default.
+   */
+  reloadNotice?: string;
 }
 
 /** "Powered by OpenFunnel" footer. Shown unless `hidden` is set. */

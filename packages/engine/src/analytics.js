@@ -100,6 +100,26 @@ export function firePixel(eventName, payload, integrations = {}) {
 }
 
 /**
+ * The integration keys `installPixels` actually loads a third party for. Kept
+ * beside it deliberately: a caller that needs to know "would installing put
+ * someone else's script in this page?" must not carry its own copy of the list,
+ * or the day a fifth pixel is added the caller silently answers no for it.
+ */
+const PIXEL_KEYS = ["gtmId", "metaPixelId", "ga4Id", "tiktokPixelId"];
+
+/**
+ * Would `installPixels` load anything for this funnel? Used by the consent
+ * withdrawal path in `controller.js`, which reloads the page to unload live
+ * third-party scripts — and must not pay that cost when there were none.
+ *
+ * @param {FunnelIntegrations} [integrations]
+ * @returns {boolean}
+ */
+export function hasPixels(integrations = {}) {
+  return PIXEL_KEYS.some((key) => Boolean(/** @type {any} */ (integrations)[key]));
+}
+
+/**
  * Inject the pixel base snippets from a funnel's integration config. Safe to
  * call once at funnel start; each block no-ops if already present or unset.
  *

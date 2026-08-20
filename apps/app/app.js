@@ -4717,6 +4717,10 @@ function loadSettings() {
     $("setGdpr").checked = Boolean(state.funnel?.consent?.enabled);
     $("setGdpr").disabled = !state.funnel;
   }
+  if ($("consentTextVersion")) {
+    $("consentTextVersion").value = state.funnel?.consent?.textVersion || "";
+    $("consentTextVersion").disabled = !state.funnel;
+  }
   if ($("legalImpressumUrl")) {
     $("legalImpressumUrl").value = state.funnel?.legal?.impressumUrl || "";
     $("legalImpressumUrl").disabled = !state.funnel;
@@ -4753,9 +4757,15 @@ function saveSettings() {
     }
   }
   if (state.funnel) {
-    if ($("setGdpr")) {
-      const enabled = $("setGdpr").checked;
-      state.funnel.consent = { ...(state.funnel.consent || {}), enabled };
+    if ($("setGdpr") || $("consentTextVersion")) {
+      const consent = { ...(state.funnel.consent || {}) };
+      if ($("setGdpr")) consent.enabled = $("setGdpr").checked;
+      if ($("consentTextVersion")) {
+        const textVersion = $("consentTextVersion").value.trim();
+        if (textVersion) consent.textVersion = textVersion;
+        else delete consent.textVersion;
+      }
+      state.funnel.consent = consent;
     }
     if ($("legalImpressumUrl") || $("legalPrivacyUrl")) {
       const legal = { ...(state.funnel.legal || {}) };

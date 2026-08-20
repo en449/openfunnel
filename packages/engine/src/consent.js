@@ -21,6 +21,15 @@
  * The decision lives in localStorage, first-party, and fails silently exactly
  * like `persist.js` — a browser that refuses storage is treated as undecided,
  * which is the conservative direction.
+ *
+ * §8.4 asks for two more things a plain accept/decline bar doesn't give you:
+ * withdrawal as easy as granting (`clearDecision`, wired to a footer control in
+ * `controller.js` — the bar itself can't host it, since it stops rendering the
+ * moment a decision exists), and evidence of what was agreed to
+ * (`consentEvidence`, `{ signal, at, text_version }`, riding to the server as
+ * `meta.consentRecord` — a SECOND field, never a replacement for the bare
+ * string `consentSignal()` returns, because `apps/runtime/lib/capi.js` compares
+ * that string to `"granted"` directly).
  */
 
 import { el, isNavigableUrl } from "./dom.js";
@@ -40,27 +49,82 @@ export function consentRequired(funnel) {
 }
 
 /**
- * @param {string} key  The funnel key (slug or id).
- * @returns {"granted" | "denied" | null}  null when the visitor has not decided.
+ * @typedef {{ d: "granted"|"denied", at: string|null, v: string|null }} StoredDecision
  */
-export function readDecision(key) {
+
+/**
+ * Read whatever is under this key and normalise it to a `StoredDecision`, or
+ * `null` when there is no decision yet. Two formats can be sitting there:
+ *
+ *   - the current one, a JSON object `{ d, at, v }`;
+ *   - a bare `"granted"` / `"denied"` string, written by every build before
+ *     this one — read-compatibility with it is load-bearing (trap 2): a
+ *     visitor who already decided must not be asked again just because the
+ *     storage format grew a timestamp.
+ *
+ * Unparseable JSON reads as "undecided" rather than throwing, same posture as
+ * the try/catch below it for a storage engine that refuses reads entirely.
+ *
+ * @param {string} key
+ * @returns {StoredDecision | null}
+ */
+function readStored(key) {
   try {
     const raw = localStorage.getItem(PREFIX + key);
-    return raw === "granted" || raw === "denied" ? raw : null;
+    if (raw === "granted" || raw === "denied") return { d: raw, at: null, v: null };
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && (parsed.d === "granted" || parsed.d === "denied")) {
+      return {
+        d: parsed.d,
+        at: typeof parsed.at === "string" ? parsed.at : null,
+        v: typeof parsed.v === "string" ? parsed.v : null,
+      };
+    }
+    return null;
   } catch {
     return null;
   }
 }
 
 /**
+ * @param {string} key  The funnel key (slug or id).
+ * @returns {"granted" | "denied" | null}  null when the visitor has not decided.
+ */
+export function readDecision(key) {
+  return readStored(key)?.d ?? null;
+}
+
+/**
  * @param {string} key
  * @param {"granted" | "denied"} decision
+ * @param {import('./types.js').Funnel} [funnel]  Its `consent.textVersion`
+ *   travels with the decision, so the evidence can later name which wording
+ *   the visitor actually agreed to.
  */
-export function writeDecision(key, decision) {
+export function writeDecision(key, decision, funnel) {
   try {
-    localStorage.setItem(PREFIX + key, decision);
+    /** @type {StoredDecision} */
+    const record = { d: decision, at: new Date().toISOString(), v: funnel?.consent?.textVersion || null };
+    localStorage.setItem(PREFIX + key, JSON.stringify(record));
   } catch {
     /* storage unavailable — the visitor is simply asked again next visit */
+  }
+}
+
+/**
+ * Forget a decision, so `readDecision` reports undecided again and the bar
+ * reappears. Used by the withdrawal control in the branding footer — GDPR
+ * requires consent to be as easy to withdraw as it was to give, and the
+ * decision lives only in this one key.
+ *
+ * @param {string} key
+ */
+export function clearDecision(key) {
+  try {
+    localStorage.removeItem(PREFIX + key);
+  } catch {
+    /* storage unavailable — nothing was persisted to begin with */
   }
 }
 
@@ -91,6 +155,31 @@ export function marketingAllowed(funnel, key) {
 export function consentSignal(funnel, key) {
   if (!consentRequired(funnel)) return undefined;
   return readDecision(key) || "pending";
+}
+
+/**
+ * Evidence of what was agreed to, for the lead record (§8.4): `{ signal, at,
+ * text_version }`. `signal` is exactly what `consentSignal()` returns
+ * (including `"pending"`), so the two read the same localStorage entry and
+ * cannot disagree.
+ *
+ * This is a SEPARATE field from `consentSignal()`'s plain string, never a
+ * replacement for it — `apps/runtime/lib/capi.js` compares that string to
+ * `"granted"` directly, so its shape must never change (trap 1).
+ *
+ * @param {import('./types.js').Funnel} funnel
+ * @param {string} key
+ * @returns {{ signal: "granted"|"denied"|"pending", at: string|null, text_version: string|null } | undefined}
+ *   undefined when the funnel does not use the bar, same posture as `consentSignal`.
+ */
+export function consentEvidence(funnel, key) {
+  if (!consentRequired(funnel)) return undefined;
+  const stored = readStored(key);
+  return {
+    signal: stored?.d || "pending",
+    at: stored?.at ?? null,
+    text_version: stored?.v ?? null,
+  };
 }
 
 /**
@@ -135,7 +224,7 @@ export function buildConsentBar(funnel, onDecide) {
 
   /** @param {"granted" | "denied"} decision */
   const decide = (decision) => {
-    writeDecision(key, decision);
+    writeDecision(key, decision, funnel);
     bar.remove();
     onDecide(decision);
   };

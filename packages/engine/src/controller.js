@@ -13,8 +13,16 @@ import { el, clear, uid, prefersReducedMotion, isNavigableUrl, isSameOriginUrl, 
 import { resolveNext } from "./branching.js";
 import { renderStep } from "./render/index.js";
 import { applyTheme } from "./theme.js";
-import { installPixels, firePixel } from "./analytics.js";
-import { buildConsentBar, consentSignal, marketingAllowed } from "./consent.js";
+import { installPixels, firePixel, hasPixels } from "./analytics.js";
+import {
+  buildConsentBar,
+  clearDecision,
+  consentEvidence,
+  consentRequired,
+  consentSignal,
+  marketingAllowed,
+  readDecision,
+} from "./consent.js";
 import { submitLead as sendLead, trackEvent } from "./leads.js";
 import { loadState, saveState, clearState } from "./persist.js";
 
@@ -136,46 +144,47 @@ export class Controller {
     // operator will switch off. D2 (a later change) decides what to refuse when
     // a URL is missing; here a missing or unparseable one just renders no link.
     const legal = this.funnel.legal || {};
-    this.container.appendChild(
-      el("div", { class: "of-branding-footer" }, [
-        hideBranding
-          ? null
-          : el("span", {
-              class: "of-branding-link",
-              html: "⚡ Powered by <strong>OpenFunnel</strong>",
-            }),
-        isNavigableUrl(legal.impressumUrl)
-          ? el("a", {
-              class: "of-legal-link",
-              href: legal.impressumUrl,
-              target: "_blank",
-              rel: "noopener",
-              text: legal.impressumLabel || "Impressum",
-            })
-          : null,
-        isNavigableUrl(legal.privacyUrl)
-          ? el("a", {
-              class: "of-legal-link",
-              href: legal.privacyUrl,
-              target: "_blank",
-              rel: "noopener",
-              text: legal.privacyLabel || "Datenschutz",
-            })
-          : null,
-        el("a", {
-          class: "of-source-link",
-          href: SOURCE_URL,
-          target: "_blank",
-          rel: "noopener license",
-          text: this.funnel.branding?.sourceLabel || "Source code",
-        }),
-      ])
-    );
+    this.footerEl = el("div", { class: "of-branding-footer" }, [
+      hideBranding
+        ? null
+        : el("span", {
+            class: "of-branding-link",
+            html: "⚡ Powered by <strong>OpenFunnel</strong>",
+          }),
+      isNavigableUrl(legal.impressumUrl)
+        ? el("a", {
+            class: "of-legal-link",
+            href: legal.impressumUrl,
+            target: "_blank",
+            rel: "noopener",
+            text: legal.impressumLabel || "Impressum",
+          })
+        : null,
+      isNavigableUrl(legal.privacyUrl)
+        ? el("a", {
+            class: "of-legal-link",
+            href: legal.privacyUrl,
+            target: "_blank",
+            rel: "noopener",
+            text: legal.privacyLabel || "Datenschutz",
+          })
+        : null,
+      el("a", {
+        class: "of-source-link",
+        href: SOURCE_URL,
+        target: "_blank",
+        rel: "noopener license",
+        text: this.funnel.branding?.sourceLabel || "Source code",
+      }),
+    ]);
+    this.container.appendChild(this.footerEl);
 
-    const consentBar = buildConsentBar(this.funnel, (decision) => {
-      if (decision === "granted") this._grantConsent();
-    });
-    if (consentBar) this.container.appendChild(consentBar);
+    // The withdrawal control lives in the footer, not the bar: `buildConsentBar`
+    // returns null once a decision exists, so the bar can never host its own
+    // way back. The footer renders on every step, which is what makes
+    // withdrawal reachable from anywhere in the funnel.
+    if (consentRequired(this.funnel) && readDecision(this.key)) this._appendManageControl();
+    this._mountConsentBar();
 
     this._emit("funnel_start");
     this._render("none");
@@ -240,7 +249,9 @@ export class Controller {
       endpoint: isSameOriginUrl(docEndpoint) ? docEndpoint : this.options.leadEndpoint,
       funnelId: this.funnel.id,
       sessionId: this.state.sessionId,
-      meta: { consent: consentSignal(this.funnel, this.key) },
+      // `consent` stays the bare string (trap 1 — `capi.js` compares it to
+      // "granted"). `consentRecord` is the §8.4 evidence, a separate field.
+      meta: { consent: consentSignal(this.funnel, this.key), consentRecord: consentEvidence(this.funnel, this.key) },
     });
 
     this.advance({ next: step?.next });
@@ -379,6 +390,148 @@ export class Controller {
     if (step) this._pixel("step_view", { stepId: step.id, stepIndex: this.state.index });
   }
 
+  /**
+   * Build (or rebuild) the consent bar and wire its decision back into the
+   * footer control. Called at mount, and again after a withdrawal — routing
+   * both through the same `onDecide` callback is what makes re-granting after
+   * a withdrawal install pixels exactly like the first grant did.
+   */
+  _mountConsentBar() {
+    const bar = buildConsentBar(this.funnel, (decision) => {
+      if (decision === "granted") this._grantConsent();
+      // Either way a decision now exists, so the way back belongs in the
+      // footer again.
+      this._appendManageControl();
+    });
+    if (bar) this.container.appendChild(bar);
+  }
+
+  /**
+   * Add the footer's withdrawal control. Only meaningful once a decision
+   * exists — before that, the bar itself is the only control, and showing a
+   * "manage" button next to it would offer to withdraw a choice nobody made.
+   */
+  _appendManageControl() {
+    if (this._manageEl || !this.footerEl) return;
+    this._manageEl = el("button", {
+      type: "button", // never a link — it navigates nowhere, it reopens the bar
+      class: "of-consent-manage",
+      text: this.funnel.consent?.manageLabel || "Datenschutz-Einstellungen",
+      onclick: () => this._withdrawConsent(),
+    });
+    this.footerEl.appendChild(this._manageEl);
+  }
+
+  _removeManageControl() {
+    this._manageEl?.remove();
+    this._manageEl = null;
+  }
+
+  /**
+   * Visitor clicked the footer control: forget the decision and ask again.
+   *
+   * When the decision being withdrawn was a GRANT, the page is reloaded rather
+   * than re-shown in place. Clearing the key re-gates every future `_pixel()`
+   * call, but it cannot unload what `installPixels` already put in the
+   * document: Meta's `fbevents.js` and GTM's `gtm.js` keep running and keep
+   * firing on their own triggers, so a bar that reappeared while they stayed
+   * live would be a withdrawal button that withdraws nothing. A reload is the
+   * only way to remove them from the page, and on the way back up
+   * `marketingAllowed()` is false, so `mount()` does not install them again.
+   *
+   * The cost is a reload mid-funnel. It is bounded: progress is persisted
+   * (`persist.js`), so the visitor returns to the step they were on, and this
+   * runs only for the visitor who granted and then changed their mind. A
+   * decline being withdrawn installed nothing, so that path just re-shows the
+   * bar.
+   */
+  _withdrawConsent() {
+    // Only a GRANT on a funnel that actually configures a pixel put a third
+    // party in this page, and only that combination is worth a reload. A
+    // decline installed nothing, and neither did a grant on a funnel with no
+    // integrations — reloading either would throw away the visitor's place in
+    // the funnel to unload scripts that were never there.
+    const live = readDecision(this.key) === "granted" && hasPixels(this.funnel.integrations);
+
+    // The withdrawal ITSELF is unconditional and happens first. Everything
+    // below is only about cleaning up scripts that are already running, and
+    // none of it may become a reason the decision does not take effect.
+    clearDecision(this.key);
+    this._removeManageControl();
+
+    if (live && this._mayReload()) return;
+    this._mountConsentBar();
+  }
+
+  /**
+   * Whether the cleanup reload should happen, and if so, do it.
+   *
+   * Two things can veto it, and neither vetoes the withdrawal above:
+   *
+   *  - **The builder's preview iframe.** `FUNNEL_BOOT_SCRIPT` (runtime
+   *    `lib/csp.js`) sets `isEditor` there and drives updates by `postMessage`
+   *    precisely so the preview never reloads: a reload re-fetches the funnel
+   *    ON DISK, so an operator testing withdrawal on unsaved edits would watch
+   *    their own work flash away until the parent re-pushes it. No third party
+   *    is being protected from anything in a preview.
+   *  - **Unsubmitted input on the current step.** `saveState()` only runs on
+   *    `advance()`/`back()`, and a form's `oninput` does not write into
+   *    `state.lead` — only `submitForm` does. So the reload returns the visitor
+   *    to the right STEP with the fields they had typed emptied. On a lead
+   *    funnel that is the lead, so the visitor is asked rather than surprised;
+   *    declining leaves their input and their withdrawal both intact, and the
+   *    scripts already in the page stop at the next navigation instead of now.
+   *
+   * @returns {boolean} whether a reload was started.
+   */
+  _mayReload() {
+    if (this.isEditor || this.options.isPreview) return false;
+    if (this._hasUnsubmittedInput() && !this._confirmReload()) return false;
+    return this._reload();
+  }
+
+  /** Anything typed or ticked on the step currently on screen. */
+  _hasUnsubmittedInput() {
+    const fields = this.container.querySelectorAll(".of-step input, .of-step textarea, .of-step select");
+    return Array.from(fields).some((node) => {
+      const field = /** @type {HTMLInputElement} */ (node);
+      if (field.type === "checkbox" || field.type === "radio") return field.checked;
+      return Boolean(field.value && field.value.trim());
+    });
+  }
+
+  /** @returns {boolean} true when the visitor accepts losing what they typed. */
+  _confirmReload() {
+    const notice =
+      this.funnel.consent?.reloadNotice ||
+      "Die Seite wird neu geladen, damit die Marketing-Skripte entfernt werden. " +
+        "Nicht abgeschickte Eingaben auf dieser Seite gehen dabei verloren.";
+    try {
+      // No `confirm` in the host (a test, an SSR pass) means nobody can be
+      // asked — and reloading unasked is the answer that can lose data, so the
+      // silent path is the one that keeps it.
+      if (typeof confirm !== "function") return false;
+      return confirm(notice);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * @returns {boolean} whether a reload was actually started — false in a
+   * non-browser host (the test suite, an SSR pass), where the caller falls
+   * back to re-showing the bar in place.
+   */
+  _reload() {
+    try {
+      if (typeof location === "undefined" || typeof location.reload !== "function") return false;
+      location.reload();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   _finish() {
     if (this.settings.persist) clearState(this.key);
     // No further step — most funnels end on a `success` step, but if a branch
@@ -472,8 +625,10 @@ export class Controller {
       stepId: this.steps[this.state.index]?.id,
       stepIndex: this.state.index,
       // First-party ingest is not gated, but the signal travels with the record
-      // so the server will not forward it to Meta without permission.
-      meta: consent ? { ...meta, consent } : meta,
+      // so the server will not forward it to Meta without permission. The
+      // evidence object rides along the same way `submitForm` sends it —
+      // `consent` itself stays the bare string (trap 1).
+      meta: consent ? { ...meta, consent, consentRecord: consentEvidence(this.funnel, this.key) } : meta,
       ts: Date.now(),
     };
     if (this.options.onEvent) this.options.onEvent(event);

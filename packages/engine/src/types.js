@@ -483,10 +483,22 @@
  * @property {string} [text]           Bar copy. A sensible default is used if unset.
  * @property {string} [acceptLabel]
  * @property {string} [declineLabel]
+ * @property {string} [reloadNotice]   Shown before the cleanup reload a withdrawal
+ *                                     needs when a pixel is live and the visitor has
+ *                                     typed something on the current step. A sensible
+ *                                     German default is used if unset.
  * @property {string} [policyUrl]      Optional link to your privacy policy. Wins
  *                                     over `legal.privacyUrl` when both are set
  *                                     (self-hoster back-compat); falls back to it
  *                                     when unset. See `consent.js`.
+ * @property {string} [textVersion]    Names which wording of the bar a visitor
+ *                                     agreed to (§8.4 evidence). Bump it whenever
+ *                                     `text`/`acceptLabel`/`declineLabel` change,
+ *                                     or an old agreement reads as consent to
+ *                                     wording nobody saw. Stored with the
+ *                                     decision, not re-read at evidence time.
+ * @property {string} [manageLabel]    Label for the footer's withdrawal control.
+ *                                     Defaults to "Datenschutz-Einstellungen".
  */
 
 /**

@@ -107,6 +107,58 @@ function dedupeKey(slug, lead) {
 /** Attribution parameters, wherever the engine happened to put them. */
 const ATTRIBUTION_RE = /^(utm_.*|gclid|fbclid|ttclid|ref)$/;
 
+/* ========================================================================== *
+ *  Consent evidence (WO-D6, §8.4)
+ * ========================================================================== */
+
+/** The three signals `consentSignal()` in the engine can ever produce. */
+const CONSENT_SIGNALS = new Set(["granted", "denied", "pending"]);
+
+/** @param {unknown} value @param {number} max @returns {string|null} */
+function boundedStringOrNull(value, max) {
+  return typeof value === "string" ? oneLine(value, max) || null : null;
+}
+
+/**
+ * `record.meta.consentRecord` is the §8.4 evidence a current engine build
+ * sends: `{ signal, at, text_version }`, proof of what was agreed to. It is a
+ * SEPARATE field from `record.meta.consent` — that one stays the bare string
+ * `lib/capi.js` compares to `"granted"` (trap 1), and is never touched here.
+ *
+ * `/api/lead` is public, so this never trusts the shape: object, known keys
+ * only (nothing but `signal`/`at`/`text_version` survives into the return
+ * value), `signal` one of the three the engine can produce, `at` and
+ * `text_version` bounded strings or null.
+ *
+ * A record from an older engine build carries no `consentRecord` at all — only
+ * the bare string under `meta.consent` (or, before that convention, a
+ * top-level `consent`) — and is normalised into the SAME shape rather than a
+ * second one, so `lead.consent` never has to carry two different shapes.
+ *
+ * @param {Record<string, any>} record
+ * @returns {{ signal: string, at: string|null, text_version: string|null } | null}
+ */
+function consentEvidenceOf(record) {
+  const evidence = record.meta?.consentRecord;
+  if (
+    evidence &&
+    typeof evidence === "object" &&
+    !Array.isArray(evidence) &&
+    CONSENT_SIGNALS.has(evidence.signal)
+  ) {
+    return {
+      signal: evidence.signal,
+      at: boundedStringOrNull(evidence.at, 64),
+      text_version: boundedStringOrNull(evidence.text_version, 200),
+    };
+  }
+  const legacy = record.meta?.consent ?? record.consent ?? null;
+  if (typeof legacy === "string" && CONSENT_SIGNALS.has(legacy)) {
+    return { signal: legacy, at: null, text_version: null };
+  }
+  return null;
+}
+
 /**
  * @param {Record<string, any>} record
  * @returns {Record<string, unknown>}
@@ -168,7 +220,7 @@ async function storeLead(record, ip) {
       p_slug: slug,
       p_payload: payload,
       p_utm: attributionOf(record),
-      p_consent: record.meta?.consent ?? record.consent ?? null,
+      p_consent: consentEvidenceOf(record),
       p_email_verified: Boolean(record.lead?.email_verified),
       p_ip_hash: hashIp(ip),
       p_user_agent: oneLine(record.user_agent, 400),

@@ -257,3 +257,101 @@ test("a claimed email_verified does not survive into the insert", async () => {
 
   expect(rpcCalls.find((c) => c.fn === "ingest_lead").body.p_email_verified).toBe(false);
 });
+
+/* ========================================================================== *
+ *  Consent evidence (WO-D6, §8.4) — `p_consent` used to be whatever string
+ *  `record.meta.consent` held. It is now always the same shape:
+ *  `{ signal, at, text_version }`, regardless of which engine build sent the
+ *  lead.
+ * ========================================================================== */
+
+test("a current-build engine's consent evidence is stored as one object", async () => {
+  const { handleIngest } = await import("../routes/ingest.js");
+  const { rpcCalls } = stub((fn) => (fn === "ingest_lead" ? [{ lead_id: "l", queued: 1 }] : []));
+
+  await handleIngest(
+    post(
+      lead({
+        meta: {
+          consent: "granted", // trap 1: the bare string a current engine still sends
+          consentRecord: { signal: "granted", at: "2026-08-19T10:00:00.000Z", text_version: "v2" },
+        },
+      })
+    ),
+    ctx()
+  );
+  await settle();
+
+  expect(rpcCalls.find((c) => c.fn === "ingest_lead").body.p_consent).toEqual({
+    signal: "granted",
+    at: "2026-08-19T10:00:00.000Z",
+    text_version: "v2",
+  });
+});
+
+// The shape an engine built before D6 sends: a bare string under `meta.consent`
+// and no `consentRecord` at all. It must land in the SAME shape as the block
+// above, not a second one `lead.consent` readers would have to branch on.
+test("a legacy string body is normalised, not stored as-is", async () => {
+  const { handleIngest } = await import("../routes/ingest.js");
+  const { rpcCalls } = stub((fn) => (fn === "ingest_lead" ? [{ lead_id: "l", queued: 1 }] : []));
+
+  await handleIngest(post(lead({ meta: { consent: "denied" } })), ctx());
+  await settle();
+
+  expect(rpcCalls.find((c) => c.fn === "ingest_lead").body.p_consent).toEqual({
+    signal: "denied",
+    at: null,
+    text_version: null,
+  });
+});
+
+// `/api/lead` is public: an attacker's `consentRecord` must not reach the
+// database as typed, oversized, or carrying extra keys.
+test("a malformed consentRecord is validated, not trusted, before it reaches p_consent", async () => {
+  const { handleIngest } = await import("../routes/ingest.js");
+  const { rpcCalls } = stub((fn) => (fn === "ingest_lead" ? [{ lead_id: "l", queued: 1 }] : []));
+
+  await handleIngest(
+    post(
+      lead({
+        meta: {
+          consentRecord: {
+            signal: "not-a-real-signal",
+            at: "x".repeat(500),
+            text_version: "y".repeat(500),
+            evil: "<script>",
+          },
+        },
+      })
+    ),
+    ctx()
+  );
+  await settle();
+
+  // An invalid `signal` sinks the whole object rather than storing junk —
+  // there is no legacy string here either, so the record carries no evidence.
+  expect(rpcCalls.find((c) => c.fn === "ingest_lead").body.p_consent).toBeNull();
+});
+
+test("an oversized but validly-shaped consentRecord is bounded, not stored whole", async () => {
+  const { handleIngest } = await import("../routes/ingest.js");
+  const { rpcCalls } = stub((fn) => (fn === "ingest_lead" ? [{ lead_id: "l", queued: 1 }] : []));
+
+  await handleIngest(
+    post(
+      lead({
+        meta: {
+          consentRecord: { signal: "granted", at: "x".repeat(500), text_version: "y".repeat(500) },
+        },
+      })
+    ),
+    ctx()
+  );
+  await settle();
+
+  const stored = rpcCalls.find((c) => c.fn === "ingest_lead").body.p_consent;
+  expect(stored.signal).toBe("granted");
+  expect(stored.at.length).toBeLessThanOrEqual(64);
+  expect(stored.text_version.length).toBeLessThanOrEqual(200);
+});

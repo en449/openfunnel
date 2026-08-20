@@ -1007,20 +1007,31 @@ textarea.of-input { min-height: 96px; resize: vertical; }
   gap: 8px;
   flex: 0 0 auto;
 }
+/* EQUAL PROMINENCE (PLAN.md §8.4, PHASE-2-PLAN.md §4 Decision 4). Accept and
+   Decline share ONE rule and differ in nothing a visitor can see — same
+   padding, radius, weight, border, background and colour. That is the whole
+   requirement: consent is not freely given when one answer is dressed as the
+   button and the other as the way out of it.
+
+   What this replaced: `.of-consent-accept` carried the theme's primary fill
+   while `.of-consent-decline` was a plain outline. Every colour cue on the
+   page pointed at Accept. Raising Decline to a heavier border was the first
+   attempt and it is not enough — an outlined button beside a filled one still
+   reads as secondary, which is exactly the pattern supervisory authorities
+   name when they say a reject option must be as easy and as visible.
+
+   The classes stay as hooks (the engine's tests and any operator CSS target
+   them); they simply must not encode a preference. If a future theme wants
+   colour here, it has to apply the SAME colour to both. */
 .of-consent-btn {
   font: inherit;
   font-weight: 600;
   padding: 8px 14px;
   border-radius: var(--of-radius, 12px);
-  border: 1px solid var(--of-border);
-  background: transparent;
+  border: 2px solid var(--of-text);
+  background: color-mix(in srgb, var(--of-text) 6%, transparent);
   color: var(--of-text);
   cursor: pointer;
-}
-.of-consent-accept {
-  background: var(--of-primary);
-  color: var(--of-primary-text, #fff);
-  border-color: transparent;
 }
 .of-consent-btn:focus-visible {
   outline: 2px solid var(--of-primary);
@@ -1058,13 +1069,27 @@ textarea.of-input { min-height: 96px; resize: vertical; }
 }
 /* The AGPL §13 source offer. Always rendered — see SOURCE_URL in controller.js.
    Styled like the legal footer links a German funnel needs anyway (Impressum,
-   Datenschutz), not like a badge, so it reads as what it is. */
-.of-source-link, .of-legal-link {
+   Datenschutz), not like a badge, so it reads as what it is. The withdrawal
+   control (`.of-consent-manage`) joins the same idiom — it is a `<button>`,
+   not an `<a>`, because it navigates nowhere, so it also needs the reset
+   below undoing the browser's default button chrome. */
+.of-source-link, .of-legal-link, .of-consent-manage {
   color: var(--of-text-secondary, #64748b);
   text-decoration: underline;
   font-weight: 500;
 }
-.of-source-link:hover, .of-legal-link:hover {
+.of-source-link:hover, .of-legal-link:hover, .of-consent-manage:hover {
   color: var(--of-primary, inherit);
+}
+.of-consent-manage {
+  font: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+.of-consent-manage:focus-visible {
+  outline: 2px solid var(--of-primary);
+  outline-offset: 2px;
 }
 
