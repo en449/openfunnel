@@ -7,13 +7,13 @@
 
 ## State (2026-08-20)
 
-Branch `phase-1-delivery-queue`, head `5d81e41`, clean tree. `main` untouched — merging is
+Branch `phase-1-delivery-queue`, head `9e53895`, clean tree. `main` untouched — merging is
 Enno's call. **Seven of the NINE migrations are applied to the live Supabase project.** The
 two that are not are D3's and D5's, and they exist only in git — see below.
 
 Done: Phase 1 complete. Phase 2 §1 asset upload, §2 custom domains, §3 the client report link
-`/r/:token`. Phase 2 §4: **D1, D2, D3, D4 and D5** (`fa009da`, `7dc3bb9`, `d153a51`, `062a80b`,
-`5d81e41`).
+`/r/:token`. Phase 2 §4: **D1–D6** (`fa009da`, `7dc3bb9`, `d153a51`, `062a80b`, `5d81e41`,
+`9e53895`), plus three review fixes on top of D4/D5 (`a568146`, `3c676ba`, `5018c0a`).
 
 - **D1** — `legal` on the funnel document (`impressumUrl`, `privacyUrl`, optional label
   overrides); the engine renders both as footer links on every step, before the AGPL source
@@ -37,6 +37,12 @@ Done: Phase 1 complete. Phase 2 §1 asset upload, §2 custom domains, §3 the cl
   PostgREST with two clients (`screenshots/d4-subjects-erase-receipt.png`). Two review Majors
   are recorded below — both were about the Erase button acting on state that no longer
   described the screen.
+- **D6** — the consent bar. Accept and Decline share one CSS rule and differ in nothing a visitor
+  can see; the withdrawal control lives in the branding footer (the bar cannot host it — it stops
+  rendering once a decision exists); and `consent.textVersion` reaches `lead.consent` as
+  `{ signal, at, text_version }`. Withdrawing a GRANT on a funnel with a pixel also reloads,
+  because clearing localStorage cannot unload `gtm.js` — with three exemptions written into
+  `_withdrawConsent`. `screenshots/d6-consent-*.png`.
 - **D5** — `purge_expired(p_limit)` + the `purge_run` log, in
   `supabase/migrations/20260819140000_retention_purge.sql`; `supabase/cron.sql` now schedules
   `openfunnel-purge` in place of the inline `openfunnel-event-purge` delete. 42 assertions in
@@ -100,12 +106,11 @@ when the subquery self-matches and reports every session as shared.
 
 Not started: **D4–D8**. Enno authorised the whole D1–D8 scope on 2026-08-17.
 
-## Next: D6–D8, in this order
+## Next: D7–D8, in this order
 
 | # | Work order | Tier | Notes |
 | --- | --- | --- | --- |
-| D6 | Consent bar: equal prominence, a withdrawal affordance, `consent.textVersion` onto `lead.consent` | Sonnet | see the traps below |
-| D7 | Datenschutzerklärung module generated from the funnel's own configuration | Sonnet | depends on D1 |
+| D7 | Datenschutzerklärung module generated from the funnel's own configuration (§8.5) | Sonnet | work order at `.tmp/WO-D7.md` |
 | D8 | Docs: CLAUDE.md invariants, PLAN.md §10 lines, Löschkonzept + breach runbook one-pagers | Sonnet | last |
 
 Build Workflow applies per work order: write → `code-reviewer` + `qa` in parallel
@@ -113,21 +118,26 @@ Build Workflow applies per work order: write → `code-reviewer` + `qa` in paral
 reviewer PASS, qa PASS, and for anything visitor-facing a live self-test with a screenshot.
 On D1–D3 the reviewer found a real bug on five of six passes — do not treat it as a formality.
 
-### D6 — three traps found while reading the code, before it is started
+### D6's shape, because three parts of it look optional and are not
 
-- **`record.meta.consent` must stay a plain string.** `lib/capi.js` compares it to `"granted"`
-  to decide whether the Meta CAPI forward may fire. Turning it into the `{ signal, at,
-  text_version }` object the schema comment promises would make that comparison false for every
-  lead and silently disable conversion tracking. Send the evidence object as a SECOND field and
-  map that one into `p_consent` in `routes/ingest.js` (today it passes the string through, so
-  `lead.consent` holds a bare JSON string, not the documented object).
-- **A stored decision has no timestamp today.** `consent.js` writes `"granted"` / `"denied"`
-  into localStorage as a bare string, so the `at` half of the evidence does not exist yet.
-  Changing the stored format means `readDecision` has to keep accepting the old bare string, or
-  every visitor who already decided is asked again.
-- **The withdrawal affordance has to live somewhere permanent.** `buildConsentBar` returns null
-  once a decision exists, so the bar itself cannot be the way back. The branding footer that D1
-  put the legal links in is the obvious host, and it is rendered on every step.
+- **`record.meta.consent` is a plain string and must stay one.** `lib/capi.js` compares it to
+  `"granted"` to decide whether the Meta CAPI forward may fire, so an object there would make that
+  comparison false for every lead and disable conversion tracking with no error anywhere. The
+  §8.4 evidence therefore rides as a SECOND field, `meta.consentRecord`, and `routes/ingest.js`
+  maps that into `p_consent` after validating it — `/api/lead` is public.
+- **The stored decision is now JSON (`{ d, at, v }`) and still reads the old bare string.**
+  Drop that compatibility and every visitor who already decided is asked again, which is itself a
+  consent-UX regression.
+- **Withdrawing a grant RELOADS, and the three exemptions are load-bearing.** Clearing
+  localStorage re-gates future `_pixel()` calls but cannot unload `gtm.js` / `fbevents.js` — they
+  keep firing on their own triggers, so without the reload the button withdraws nothing. It is
+  skipped for a decline, for a funnel with no pixel, and inside the builder's preview iframe
+  (`isEditor`), where a reload re-fetches the funnel ON DISK and flashes the operator's unsaved
+  edits away. A visitor with unsubmitted input is asked first, because `saveState()` only runs on
+  advance/back — declining that question still withdraws, it only skips the cleanup.
+- **Equal prominence meant deleting the primary fill, not strengthening Decline.** An outlined
+  button beside a filled one still reads as secondary. Both buttons share one rule now; the
+  classes remain only as hooks.
 
 ### D4's two review findings, both about the same thing
 
