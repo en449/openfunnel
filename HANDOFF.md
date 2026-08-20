@@ -185,6 +185,10 @@ A fuller work order is preserved at `.tmp/WO-D4.md` (gitignored). The load-beari
 - Local `bun` is 1.3.13 against the pinned 1.3.14, which is the one expected test failure
   (`refuses an oversized body`, 413-vs-400). **Do not `bun upgrade`** — five workspace projects
   share that binary.
+- **`gh` resolves to the UPSTREAM repo, not this fork.** `gh run list` in this directory answers
+  for `luispdoesai/openFunnel` and shows runs that stop in August on `main` — it looks exactly
+  like a fork whose Actions are switched off. Pass the fork explicitly:
+  `gh api repos/en449/openfunnel/actions/runs --jq '.workflow_runs[] | "\(.head_branch) \(.conclusion) \(.head_sha[0:7])"'`.
 - **Check CI after any push touching `supabase/`.** The SQL job runs against a bare Postgres with
   no `storage` schema; it was red for two commits once with two green jobs beside it.
 - Migrations go through `supabase db push` only, never the Supabase SQL editor. The CLI **is**
