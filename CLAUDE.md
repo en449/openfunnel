@@ -293,6 +293,36 @@ RPC (PHASE-1-PLAN.md §4.3). Two rules hold this together:
 `SERVER_ONLY_INTEGRATIONS`: the whole document is inlined into the funnel page,
 so leaving it in publishes a client's address to everyone who clicks the ad.
 
+**`delivery_target` rows are per FUNNEL, not per client — query them with the
+predicate `ingest_lead` queues with.** A client with two funnels can have two
+different webhooks, one per funnel, plus targets with `funnel_id is null`
+meaning "every funnel of this client." So any query about "this funnel's
+targets" — not just the queue's own dispatch — has to carry
+`(funnel_id is null or funnel_id = <this funnel>)` (`phase1_functions.sql`,
+`ingest_lead`), never `client_id = <this client>` alone. `lib/privacy.js`'s
+caller in `routes/admin.js` got this wrong first: filtering on `client_id`
+only described a sibling funnel's webhook in the notice for a funnel it does
+not deliver to — a published legal document naming a recipient that receives
+nothing. Reuse the predicate rather than re-deriving it; the day a second copy
+drifts from `ingest_lead`'s is the day a query and a delivery disagree about
+which funnel a target belongs to.
+
+**A generated privacy notice may never claim anything the configuration does
+not do — and where the configuration is non-compliant, the defect goes in the
+TEXT, not only in the console's `warnings`.** `lib/privacy.js`'s `privacyNotice()`
+is pure and switches every paragraph on something real in the `facts` it is
+handed; two of its bugs, both found in review, were the module asserting a
+safeguard that was not actually there: an unconditional Art. 28 sentence
+publishing an AVV date for a client with no signed AVV, and a `sheet` delivery
+target described as a live transfer to Google when that kind has no dispatcher
+and dead-letters every lead sent to it. A `warnings` entry is not enough for
+either case, because a warning lives in the console and this text gets pasted
+into a document by an operator who may never open that panel — so the pixel-
+without-consent case and the unsigned-AVV case both carry an inline
+`[ACHTUNG — NICHT VERÖFFENTLICHEN]` marker in the body itself. Extending this
+module to a new fact means gating its paragraph on that fact being true, not
+on the feature merely existing.
+
 **The router runs on two entry points, and both of Bun's gifts are passed in
 rather than assumed.** `handleRequest(req, { server, waitUntil })` — see
 PHASE-1-PLAN.md §4.2. Bun supplies a `server` object and a process that is still
@@ -368,6 +398,17 @@ all**: every upload is authorised by its own signed token, which keeps "who may
 upload" answerable in one place. A deleted object can still be served from
 Supabase's CDN for a while — verified, 2026-08-13 — so a deletion under Art. 17
 is not complete at the moment the delete call returns.
+
+**The request-body ceiling is `readJson`'s, not `Bun.serve`'s.** `maxRequestBodySize`
+in `server.js` looks like the cap and is not one: it is enforced against
+`content-length`, and a request sent with `Transfer-Encoding: chunked` carries no
+`content-length` at all — verified on Bun 1.3.13, where a 256KB chunked body
+reached the handler in full against a 64KB `maxRequestBodySize`, on `/api/lead`,
+public and unauthenticated. `readCapped()` in `lib/http.js` counts bytes off the
+stream itself as they arrive and aborts past `MAX_BODY`, which is the only ceiling
+both entry points (Bun and Vercel) actually share — `maxRequestBodySize` doesn't
+exist on the Vercel path at all. Any new route that reads a body relies on
+`readJson`/`readCapped` for its size limit, never on a platform-level setting.
 
 **Preview traffic must never pollute analytics.** Two independent guards, and
 new code needs both: `Controller._emit()` bails when `isPreview` or
@@ -697,6 +738,19 @@ visitor typed their details in and pressed submit, so dropping the lead would be
 a broken funnel rather than a private one, and those records stay on the
 operator's own server. See the header of `src/consent.js`.
 
+**`record.meta.consent` stays a plain string, forever.** `lib/capi.js` compares
+it to `"granted"` directly (`consent !== "granted"`); shaping it into an object
+would make that comparison false for every lead and silently turn off the Meta
+CAPI forward with nothing thrown anywhere. The §8.4 consent evidence (signal +
+timestamp + `consent.textVersion`) therefore rides as a SEPARATE field,
+`meta.consentRecord`, which `routes/ingest.js` validates (known keys, a signal
+from the three the engine can produce, bounded strings) before mapping it into
+`p_consent` — `/api/lead` is public, so that field is attacker-controlled input
+until validated. `lead.consent` in Postgres ends up `{ signal, at, text_version }`;
+an older engine build sending only the bare string is normalised into the same
+shape rather than kept as a second one. Do not merge the two fields, and do not
+add a third place consent evidence can live.
+
 **Never trust the client for anything that matters.** Two live examples worth
 copying: `email_verified` arrives in the lead payload but is re-derived from
 the server's own `verifiedEmails` record before being stored, and the webhook
@@ -974,6 +1028,17 @@ once per accumulated listener.
   `loadFromDb` returns a sentinel for it rather than null — otherwise the disk
   fallback would serve a funnel the operator had just deleted. `removeFunnel`
   clears both stores for the same reason.
+- **Migrations are applied with `supabase db push`, never through the Supabase
+  SQL editor.** The CLI is what keeps `supabase/migrations/` and the live schema
+  the same sequence of files — a change pasted into the SQL editor happened to
+  the database but not to the repo, so the next `db push` either reapplies it
+  (if it's idempotent) or the migration history and the live schema have quietly
+  forked with no diff anywhere to show it. As of 2026-08-21 the D3 and D5
+  migrations (`20260819100000_subject_rights.sql`, `20260819140000_retention_purge.sql`)
+  are written, tested and committed but **not yet pushed** to the live project —
+  `find_subject` / `erase_subject` / `purge_expired` do not exist there yet, so
+  the Subjects view (D4) answers a database error on the live deployment until
+  that push happens, and nothing is being purged on a schedule.
 - `apps/builder` and `apps/admin` (the legacy standalone UIs at `/_builder/*`
   and `/_admin/*`) are **deleted**. All console work belongs in `apps/app`. Do
   not restore them: `builder.js` broadcast the whole funnel document, including
