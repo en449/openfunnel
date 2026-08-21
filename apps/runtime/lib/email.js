@@ -427,6 +427,33 @@ function pickTransport(cfg) {
 }
 
 /**
+ * The provider a lead-notification mail would ACTUALLY send through right now
+ * — for WO-D7's privacy notice, which must name only a provider actually in
+ * use, never one merely selected. `pickTransport` alone is not that: it names
+ * a chosen provider even with no key configured, on purpose, so `sendEmail`
+ * fails loudly as that provider rather than silently as another one. Naming
+ * an unreachable provider in a document the client publishes would be the
+ * same invented fact this function exists to avoid, so it checks the key too.
+ *
+ * @param {any} cfg  From `getEmailSettings()`.
+ * @returns {"brevo"|"resend"|"http_relay"|null}
+ */
+export function activeEmailProvider(cfg) {
+  const name = pickTransport(cfg);
+  const transport = name ? API_TRANSPORTS[name] : undefined;
+  if (name && transport) {
+    // `sendEmail` returns from inside the named-transport branch whether or not
+    // the key is there — it never falls through to the relay. So a named
+    // provider with no key means mail reaches NOBODY, not that it reaches the
+    // relay instead: answering "http_relay" here would name a recipient in a
+    // published notice for mail that never leaves this process.
+    return cfg[transport.keyField] ? /** @type {"brevo"|"resend"} */ (name) : null;
+  }
+  if (cfg.relayUrl) return "http_relay";
+  return null;
+}
+
+/**
  * Send one message through whichever transport `pickTransport` selects.
  *
  * `text` and `signal` are optional: most callers have neither, and a plain-text

@@ -4741,6 +4741,16 @@ function loadSettings() {
     $("setEnableSwipe").checked = Boolean(state.funnel?.settings?.enableSwipe ?? true);
     $("setEnableSwipe").disabled = !state.funnel;
   }
+  // The Baustein is scoped to one funnel's slug, so a stale render from the
+  // previously open funnel must not linger once another one is loaded — or a
+  // client could be handed a text describing a different funnel's config.
+  if ($("generatePrivacyNoticeBtn")) $("generatePrivacyNoticeBtn").disabled = !state.funnel;
+  if ($("copyPrivacyNoticeBtn")) $("copyPrivacyNoticeBtn").disabled = true;
+  if ($("privacyNoticeText")) $("privacyNoticeText").value = "";
+  if ($("privacyWarnings")) {
+    $("privacyWarnings").style.display = "none";
+    $("privacyWarnings").innerHTML = "";
+  }
   loadEmailSettings();
 }
 
@@ -4814,6 +4824,66 @@ async function loadEmailSettings() {
     toggleAutoresponderFields(Boolean(cfg.autoresponderEnabled));
   } catch (err) {
     console.warn("Failed to load email settings:", err);
+  }
+}
+
+/**
+ * WO-D7: fetch the Datenschutzerklärung Baustein for the open funnel and
+ * render its text and warnings. Slug-scoped and fetched on demand — `loadSettings()`
+ * runs on every funnel switch, and firing this alongside it would mean a
+ * database round trip (client row, delivery targets) every time, whether or
+ * not the operator ever opens this panel.
+ */
+async function loadPrivacyNotice() {
+  const slug = state.funnel?.slug;
+  if (!slug) return;
+
+  const btn = $("generatePrivacyNoticeBtn");
+  const original = btn?.textContent;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Generiere…";
+  }
+
+  try {
+    const res = await apiFetch(`/api/admin/privacy-notice?slug=${encodeURIComponent(slug)}`);
+    if (state.funnel?.slug !== slug) return;
+    if (!res.ok) {
+      toast("Baustein konnte nicht generiert werden", "error");
+      return;
+    }
+    const data = await res.json();
+
+    // The operator can switch funnel while this is in flight — the request
+    // costs a database round trip, `loadSettings()` clears the card on the
+    // switch, and this response would then paint funnel A's Datenschutzerklärung
+    // into funnel B's card and re-enable Copy under it. Same rule as the erase
+    // receipt in the Subjects view: work started before the switch may not
+    // render after it.
+    if (state.funnel?.slug !== slug) return;
+
+    if ($("privacyNoticeText")) $("privacyNoticeText").value = data.text || "";
+    if ($("copyPrivacyNoticeBtn")) $("copyPrivacyNoticeBtn").disabled = !data.text;
+
+    const warningsEl = $("privacyWarnings");
+    if (warningsEl) {
+      const warnings = Array.isArray(data.warnings) ? data.warnings : [];
+      if (warnings.length) {
+        warningsEl.innerHTML =
+          `${icon("alert", 14)}<ul>${warnings.map((w) => `<li>${esc(w)}</li>`).join("")}</ul>`;
+        warningsEl.style.display = "flex";
+      } else {
+        warningsEl.innerHTML = "";
+        warningsEl.style.display = "none";
+      }
+    }
+  } catch (err) {
+    toast("Fehler beim Generieren des Bausteins", "error");
+  } finally {
+    if (btn) {
+      btn.disabled = !state.funnel;
+      btn.textContent = original || "Baustein generieren";
+    }
   }
 }
 
@@ -5195,6 +5265,16 @@ function purgeCredentials() {
   $("setAutoresponderEnabled")?.addEventListener("change", (e) => toggleAutoresponderFields(e.target.checked));
   $("saveEmailBtn")?.addEventListener("click", saveEmailSettingsFromUI);
   $("testEmailBtn")?.addEventListener("click", sendTestEmailFromUI);
+  $("generatePrivacyNoticeBtn")?.addEventListener("click", loadPrivacyNotice);
+  $("copyPrivacyNoticeBtn")?.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText($("privacyNoticeText").value);
+      toast("Baustein-Text kopiert");
+    } catch {
+      $("privacyNoticeText").select();
+      toast("Press ⌘C to copy", "error");
+    }
+  });
 }
 
 function bindKeys() {

@@ -955,6 +955,26 @@
             </div>
 
             <div class="card">
+              <div class="card-head"><span class="card-title">🔒 Datenschutzerklärung-Baustein</span></div>
+              <div class="card-pad">
+                <p class="field-hint">
+                  Baustein für die Datenschutzerklärung DIESES Funnels, generiert aus seiner tatsächlichen
+                  Konfiguration (PLAN.md §8.5). Kein vollständiger Text und keine Rechtsberatung — der Kunde
+                  bleibt Verantwortlicher und muss ihn vor Veröffentlichung prüfen und einfügen.
+                </p>
+                <div id="privacyWarnings" class="privacy-warnings" style="display:none"></div>
+                <div class="field">
+                  <label for="privacyNoticeText">Generierter Text</label>
+                  <textarea id="privacyNoticeText" class="textarea input-mono" rows="12" readonly placeholder="Funnel öffnen und „Baustein generieren“ klicken."></textarea>
+                </div>
+                <div style="margin-top:10px;display:flex;gap:8px">
+                  <button id="generatePrivacyNoticeBtn" class="btn btn-primary" disabled>Baustein generieren</button>
+                  <button id="copyPrivacyNoticeBtn" class="btn btn-ghost" disabled>In Zwischenablage kopieren</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
               <div class="card-head"><span class="card-title">✉️ Email Delivery & Notifications</span></div>
               <div class="card-pad">
                 <div class="field">

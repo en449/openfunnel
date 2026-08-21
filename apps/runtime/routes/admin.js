@@ -14,12 +14,12 @@
  */
 
 import { esc } from "../lib/html.js";
-import { EMAIL_RE, getEmailSettings, redactEmailSettings, saveEmailSettings, sendEmail } from "../lib/email.js";
+import { EMAIL_RE, activeEmailProvider, getEmailSettings, redactEmailSettings, saveEmailSettings, sendEmail } from "../lib/email.js";
 import { clientIp, json, readJson } from "../lib/http.js";
 import { isPreviewRecord } from "../lib/preview.js";
 import { rateLimit, tooMany } from "../lib/ratelimit.js";
 import { readJsonlRecords } from "../lib/store.js";
-import { syncAllFunnelTargets } from "../lib/targets.js";
+import { deriveTargets, syncAllFunnelTargets } from "../lib/targets.js";
 import { dbConfigured, insert, remove, rpc, select, update } from "../lib/db.js";
 import { REPORT_TTL_DAYS, listReportTokens, mintReportToken } from "../lib/report.js";
 import { drainOnce } from "../lib/delivery.js";
@@ -27,7 +27,8 @@ import { errSummary } from "../lib/log.js";
 import { SLUG_RE } from "../lib/config.js";
 import { domainSource, invalidateDomains, listDomains, normalizeHost } from "../lib/domains.js";
 import { ASSET_TYPES, MAX_ASSET_BYTES, assetPath, deleteAsset, signAssetUpload } from "../lib/storage.js";
-import { funnelGates } from "../lib/funnels.js";
+import { funnelGates, loadFunnelForVisitor } from "../lib/funnels.js";
+import { privacyNotice } from "../lib/privacy.js";
 
 /** The five states in the schema's own check constraint. */
 const DELIVERY_STATUSES = new Set(["pending", "delivering", "done", "dead", "cancelled"]);
@@ -406,6 +407,102 @@ export async function handleAdmin(req, ctx) {
       console.warn(`[admin] funnel gates unavailable: ${errSummary(err)}`);
       return json({ error: "db_unavailable" }, 503);
     }
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  Datenschutzerklärung Baustein — WO-D7, PLAN.md §8.5
+   *
+   *  Every fact `privacyNotice()` needs is resolved HERE, so that function can
+   *  stay pure (no fetch, no database, no env read) and therefore unit-testable
+   *  on plain objects. This route is the only thing allowed to know where a
+   *  fact comes from.
+   *
+   *  `dbConfigured()` false is not an error: a self-hoster still gets a notice
+   *  built from what the funnel document itself configures, minus the
+   *  client-level facts (name, contact, retention, AVV) that only exist in
+   *  Postgres — and its delivery targets fall back to the same derivation the
+   *  direct fan-out uses, because that IS what gets delivered without a queue.
+   * ------------------------------------------------------------------ */
+  if (path === "/api/admin/privacy-notice" && req.method === "GET") {
+    const slug = String(url.searchParams.get("slug") || "").trim();
+    if (!SLUG_RE.test(slug)) return json({ error: "invalid_slug" }, 400);
+
+    // Reuses the exact reason the page-serve gate would refuse this funnel
+    // with (funnels.js), rather than re-deriving impressum/privacy/AVV
+    // validity a second time — the day a second implementation disagrees with
+    // the first is the day this notice claims a page is fine while it 404s.
+    const { funnel, blocked } = await loadFunnelForVisitor(slug);
+    if (!funnel) return json({ error: "funnel_not_found" }, 404);
+
+    /** @type {import("../lib/privacy.js").PrivacyClientFacts|null} */
+    let client = null;
+    /** @type {import("../lib/privacy.js").PrivacyDeliveryTarget[]} */
+    let deliveryTargets = [];
+    const emailSettings = await getEmailSettings();
+
+    if (dbConfigured()) {
+      try {
+        const [row] = await select(
+          "funnel",
+          `slug=eq.${encodeURIComponent(slug)}&select=id,client_id,client(name,contact_email,retention_months,avv_signed_at)&limit=1`,
+        );
+        if (row?.client) {
+          client = {
+            name: row.client.name,
+            contactEmail: row.client.contact_email,
+            retentionMonths: row.client.retention_months,
+            avvSignedAt: row.client.avv_signed_at ?? null,
+          };
+        }
+        if (row?.client_id) {
+          // Kinds only — never `config`, which holds the webhook secret
+          // (CLAUDE.md: the delivery log follows the same rule). `funnel_id`
+          // comes along because it is a filter, not a fact about anyone.
+          const rows = await select(
+            "delivery_target",
+            `select=kind,funnel_id&client_id=eq.${row.client_id}&enabled=is.true`,
+          );
+          // The same predicate `ingest_lead` queues a lead with: a client's
+          // targets are per-funnel, with a null `funnel_id` meaning client-wide.
+          // Filtering on `client_id` alone would describe a sibling funnel's
+          // webhook in THIS funnel's published privacy notice — a disclosure of
+          // a recipient that never receives anything, in a document whose only
+          // job is to be true. Filtered here rather than in the query because a
+          // client has a handful of these rows and the predicate is then plainly
+          // the one above.
+          deliveryTargets = rows.filter((t) => t.funnel_id == null || t.funnel_id === row.id);
+        }
+      } catch (err) {
+        // Degrade, don't fail: the funnel-level facts below are still worth a
+        // notice even when the client/target lookup breaks.
+        console.warn(`[admin] privacy notice facts unavailable for "${slug}": ${errSummary(err)}`);
+      }
+    } else {
+      deliveryTargets = deriveTargets(funnel, emailSettings, slug);
+    }
+
+    return json(
+      privacyNotice({
+        slug,
+        steps: funnel.steps,
+        integrations: funnel.integrations || {},
+        consent: funnel.consent || {},
+        client,
+        dbConfigured: dbConfigured(),
+        deliveryTargets,
+        emailProvider: activeEmailProvider(emailSettings),
+        vercelRegion: process.env.VERCEL_REGION,
+        // `funnels.js` types this as the broader `string|null` its callers share;
+        // `gateReason()`'s implementation only ever returns these three literals
+        // or null, so the notice's own narrower typedef stays honest about what
+        // it actually switches on.
+        blockedReason: /** @type {any} */ (blocked),
+      }),
+      200,
+      // The text embeds the client's name and contact email — the same reason
+      // the subject-rights response opposite this one is uncacheable.
+      { "cache-control": "no-store" },
+    );
   }
 
   /* ------------------------------------------------------------------ *

@@ -1083,6 +1083,24 @@ a { color: inherit; }
 }
 .gate-banner svg { flex: 0 0 auto; }
 
+/* Same warning palette as .gate-banner, for a LIST of reasons instead of one
+   line — the Datenschutzerklärung Baustein's warnings (WO-D7). */
+.privacy-warnings {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 14px;
+  background: color-mix(in srgb, var(--neg) 10%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--neg) 30%, transparent);
+  border-radius: var(--r-sm);
+  color: var(--neg);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+.privacy-warnings svg { flex: 0 0 auto; margin-top: 1px; }
+.privacy-warnings ul { margin: 0; padding-left: 16px; }
+.privacy-warnings li { margin: 2px 0; }
+
 .seg { display: inline-flex; padding: 2px; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-sm); }
 .seg button {
   display: inline-flex;

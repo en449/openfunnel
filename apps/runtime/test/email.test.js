@@ -149,3 +149,33 @@ test("with no salt configured, no RPC is issued at all and the in-memory path an
     delete process.env.RESEND_API_KEY;
   }
 });
+
+/* ========================================================================== *
+ *  activeEmailProvider — what a published privacy notice is allowed to name
+ * ========================================================================== */
+
+test("activeEmailProvider names a provider only when its key is actually there", async () => {
+  const { activeEmailProvider } = await import("../lib/email.js");
+
+  expect(activeEmailProvider({ provider: "brevo", brevoApiKey: "k" })).toBe("brevo");
+  expect(activeEmailProvider({ provider: "resend", resendApiKey: "k" })).toBe("resend");
+  // Chosen but unconfigured: `pickTransport` still names it (so `sendEmail`
+  // fails loudly as that provider), which is exactly why the notice cannot
+  // reuse `pickTransport` directly.
+  expect(activeEmailProvider({ provider: "brevo" })).toBe(null);
+  expect(activeEmailProvider({})).toBe(null);
+});
+
+test("activeEmailProvider does not fall back to the relay for a keyless provider", async () => {
+  const { activeEmailProvider } = await import("../lib/email.js");
+
+  // `sendEmail` returns from inside the named-transport branch whether or not
+  // the key is set, so it never reaches the relay in this configuration: mail
+  // goes nowhere. Naming the relay here would put a recipient into a document
+  // the client publishes for mail that never leaves the process.
+  expect(activeEmailProvider({ provider: "brevo", relayUrl: "https://mail.internal.invalid/send" })).toBe(null);
+  // `provider: "smtp"` is the operator explicitly choosing the relay path, and
+  // `pickTransport` short-circuits on it — that one really does send there.
+  expect(activeEmailProvider({ provider: "smtp", relayUrl: "https://mail.internal.invalid/send" })).toBe("http_relay");
+  expect(activeEmailProvider({ relayUrl: "https://mail.internal.invalid/send" })).toBe("http_relay");
+});
