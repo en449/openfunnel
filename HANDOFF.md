@@ -1,19 +1,27 @@
 # OpenFunnel — Handoff
 
-> Updated 2026-08-20. **Start here** when the next session is about OpenFunnel, then open
-> `PHASE-2-PLAN.md` §4. This file is the short version; the long records are
-> `PROJECT-MEMORY.md` (history + decision log) and `PLAN.md` (architecture, DSGVO §8, phases).
-> Replace this file's "State" and "Next" sections when they stop being true — do not stack entries.
+> Updated 2026-08-21. **Start here** when the next session is about OpenFunnel, then open
+> `TASK-HANDOFF.md` for what is still open. This file is the short version of what is DONE and
+> why it is shaped the way it is; the long records are `PROJECT-MEMORY.md` (history + decision
+> log) and `PLAN.md` (architecture, DSGVO §8, phases).
+> Replace this file's "State" section when it stops being true — do not stack entries.
 
-## State (2026-08-20)
+## State (2026-08-21)
 
-Branch `phase-1-delivery-queue`, head `9e53895`, clean tree. `main` untouched — merging is
-Enno's call. **Seven of the NINE migrations are applied to the live Supabase project.** The
-two that are not are D3's and D5's, and they exist only in git — see below.
+Branch `phase-1-delivery-queue`, head `2c3d4bb`, clean tree, CI green on the fork. `main`
+untouched — merging is Enno's call. **Seven of the NINE migrations are applied to the live
+Supabase project.** The two that are not are D3's and D5's, and they exist only in git.
+
+**Phase 2 §4 — the six DSGVO gates — is CODE-COMPLETE. D1 through D8 are all committed.**
+Three of those gates are not yet true on the live project, and that gap is the first section of
+`TASK-HANDOFF.md`: until `supabase db push` runs, `find_subject` / `erase_subject` /
+`purge_expired` do not exist on the live database, so the Subjects view answers an error for a
+real client and nothing is being purged on a schedule.
 
 Done: Phase 1 complete. Phase 2 §1 asset upload, §2 custom domains, §3 the client report link
-`/r/:token`. Phase 2 §4: **D1–D6** (`fa009da`, `7dc3bb9`, `d153a51`, `062a80b`, `5d81e41`,
-`9e53895`), plus three review fixes on top of D4/D5 (`a568146`, `3c676ba`, `5018c0a`).
+`/r/:token`. Phase 2 §4: **D1–D8** (`fa009da`, `7dc3bb9`, `d153a51`, `062a80b`, `5d81e41`,
+`9e53895`, `7766379`, `2c3d4bb`), plus review fixes on top of D4/D5 (`a568146`, `3c676ba`,
+`5018c0a`) and one unrelated hardening commit found while running the suite (`7682858`).
 
 - **D1** — `legal` on the funnel document (`impressumUrl`, `privacyUrl`, optional label
   overrides); the engine renders both as footer links on every step, before the AGPL source
@@ -48,6 +56,19 @@ Done: Phase 1 complete. Phase 2 §1 asset upload, §2 custom domains, §3 the cl
   `openfunnel-purge` in place of the inline `openfunnel-event-purge` delete. 42 assertions in
   `supabase/tests/purge.sql`, red-checked against 13 deliberate breaks. This is what completes
   Art. 17 — `erase_subject` only soft-deletes.
+- **D7** — `GET /api/admin/privacy-notice?slug=` (`lib/privacy.js`, pure `privacyNotice(facts)`)
+  builds a German Datenschutzerklärung building block out of what the funnel actually does: its
+  form fields, the pixels it embeds, the mail transport that would really send, its delivery
+  targets, the client's retention period and AVV, and the function region. Rendered in the
+  console's Settings behind a button, because it costs a database round trip. `screenshots/
+  d7-privacy-notice-baustein.png`. **The rule the module is built on — it may not claim anything
+  the configuration does not do — is now a CLAUDE.md invariant**, because two review findings were
+  exactly that failure (see below).
+- **D8** — the docs pass. Five invariants into CLAUDE.md, PLAN.md §10's six DSGVO gate lines
+  rewritten to say what shipped (**three of them `[~]`, not `[x]`** — see State above), and two
+  new one-pagers: `LOESCHKONZEPT.md` (§8.7) and `BREACH-RUNBOOK.md` (§8.8). Writing the
+  Löschkonzept surfaced two defects the plan had wrong; both are open items in
+  `TASK-HANDOFF.md` §D rather than quietly fixed in prose.
 
 ### The three things a next session most needs to know
 
@@ -104,14 +125,13 @@ Also from D3, and generalised into Claude memory: a `count = N` assertion pins n
 zero case beside it. `shared_sessions = 1` on a genuinely shared fixture passes just as happily
 when the subquery self-matches and reports every session as shared.
 
-Not started: **D4–D8**. Enno authorised the whole D1–D8 scope on 2026-08-17.
+All of **D1–D8** shipped. Enno authorised the whole D1–D8 scope on 2026-08-17.
 
-## Next: D7–D8, in this order
+## Next
 
-| # | Work order | Tier | Notes |
-| --- | --- | --- | --- |
-| D7 | Datenschutzerklärung module generated from the funnel's own configuration (§8.5) | Sonnet | work order at `.tmp/WO-D7.md` |
-| D8 | Docs: CLAUDE.md invariants, PLAN.md §10 lines, Löschkonzept + breach runbook one-pagers | Sonnet | last |
+**`TASK-HANDOFF.md`** — every open item, ordered by what it unblocks. The short version: the
+compliance gates are code-only until `supabase db push` and the `openfunnel-purge` cron step run,
+and both are Enno's. Nothing else in Phase 2 is blocked by them.
 
 Build Workflow applies per work order: write → `code-reviewer` + `qa` in parallel
 (`run_in_background: true`) → parent applies the fixes → re-run if non-trivial. Done means
@@ -149,6 +169,28 @@ retyping the confirmation erased the FIRST client's data while the only client-i
 on the page named someone else. The matching half is `resetSubjectSearch()`, called on all three
 branches of `loadSubjectClients()` — the first version reset only the success branch, so a 500 or
 an expired token on the way into the view left the previous client's rows live behind an error panel.
+
+### D7's three review findings, because each one published something false
+
+All three were the module stating a fact the configuration did not support, and all three passed
+the tests that existed — the AVV assertions checked only `warnings`, never `text`.
+
+- **The Art. 28 sentence was unconditional.** Every notice claimed a signed
+  Auftragsverarbeitungsvertrag, including for a client with `avv_signed_at` null and for a
+  self-hosted install with no processor at all. Now three branches: signed states the date,
+  unsigned carries an inline `[ACHTUNG — NICHT VERÖFFENTLICHEN]` marker, no client claims nothing.
+- **`delivery_target` was queried by `client_id` alone.** Those rows are per funnel — the
+  predicate `ingest_lead` queues with is `(funnel_id is null or funnel_id = <this funnel>)`. A
+  client with two funnels got the first one's webhook disclosed in the second one's notice: a
+  published legal document naming a recipient that receives nothing from that funnel.
+- **A `sheet` target was described as a live transfer to Google.** That kind has no dispatcher
+  in `lib/delivery.js` and dead-letters every lead. The paragraph is gone and a warning says
+  where those leads actually went. Note the direction of the error: it flattered the
+  configuration, which is why nobody would have reported it.
+
+The general rule is now a CLAUDE.md invariant: a warning lives in the console, and this text gets
+pasted into a document by someone who may never open that panel — so a defect the operator must
+act on goes in the TEXT, not only in `warnings`.
 
 ### D4 — the decisions already made, so they are not re-made
 
@@ -192,9 +234,11 @@ A fuller work order is preserved at `.tmp/WO-D4.md` (gitignored). The load-beari
   (never print it), `bun run apps/runtime/server.js` on a spare port, curl + browser-harness against
   `127.0.0.1`, screenshot into `screenshots/`, then **kill the server** and revoke any credential
   the test minted — `page_info()` puts a URL, and therefore a token, into the transcript.
-- Local `bun` is 1.3.13 against the pinned 1.3.14, which is the one expected test failure
-  (`refuses an oversized body`, 413-vs-400). **Do not `bun upgrade`** — five workspace projects
-  share that binary.
+- Local `bun` is 1.3.13 against the pinned 1.3.14. **Do not `bun upgrade`** — five workspace
+  projects share that binary. The suite is fully green on 1.3.13 as of 2026-08-21: the
+  `refuses an oversized body` failure that used to be written off as a Bun bug turned out to be
+  a real missing cap in `readJson`, fixed in `7682858`. If a test ever starts passing only on
+  one Bun version again, suspect the code before the runtime.
 - **`gh` resolves to the UPSTREAM repo, not this fork.** `gh run list` in this directory answers
   for `luispdoesai/openFunnel` and shows runs that stop in August on `main` — it looks exactly
   like a fork whose Actions are switched off. Pass the fork explicitly:
