@@ -5,7 +5,7 @@
  * upload URL, and delete an object.
  *
  * THE BYTES NEVER PASS THROUGH THIS SERVER.
- * `Bun.serve` caps every request body at `MAX_BODY` (64KB) process-wide, and
+ * `readJson` caps every request body at `MAX_BODY` (64KB) on both entries, and
  * Vercel caps a function body at 4.5MB — so an upload route that accepted the
  * file would either refuse a phone photo or force a 60× larger ceiling onto
  * public, anonymous `/api/lead`. Instead this mints a token scoped to one exact

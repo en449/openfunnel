@@ -68,12 +68,16 @@ const server = import.meta.main ? bunRuntime.serve({
 
   // Refuse an oversized body at the transport layer instead of buffering it.
   //
-  // `readJson` already caps at MAX_BODY, but it can only do so after Bun has
-  // read the body into memory: a request with `Transfer-Encoding: chunked` sends
-  // no `content-length`, so the declared-size check reads 0 and `req.text()`
-  // buffers the lot. Bun's own default ceiling is 128MB, so an unauthenticated
+  // Bun's own default ceiling is 128MB, so without this an unauthenticated
   // caller could make `/api/lead` allocate that much per request and repeat it.
   // Setting the limit here makes Bun answer 413 before the handler runs.
+  //
+  // It is not the ceiling, though: a request with `Transfer-Encoding: chunked`
+  // sends no `content-length`, and Bun does not apply this limit to one — on
+  // 1.3.13 a 256KB streamed body reaches the handler in full against a 64KB
+  // setting. `readJson` caps the stream as it arrives for exactly that reason,
+  // and that is the check both entry points share; this one only refuses a
+  // declared oversize earlier and more cheaply.
   //
   // Behaviour-neutral: every route on this server takes small JSON and none
   // accepts an upload, so anything above MAX_BODY was already rejected by

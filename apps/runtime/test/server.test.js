@@ -9,6 +9,7 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { copyFile, mkdir, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -297,11 +298,18 @@ describe("ingest", () => {
   });
 
   test("refuses an oversized body without buffering it", async () => {
-    // A chunked request declares no content-length, so `readJson`'s declared-size
-    // check reads 0 and only catches the body after Bun has buffered all of it.
-    // `maxRequestBodySize` is what makes this a transport-layer 413 instead of an
-    // unauthenticated caller getting the server to allocate up to Bun's 128MB
-    // default per request. A ReadableStream body forces chunked encoding.
+    // A ReadableStream body forces chunked encoding, so the request declares no
+    // content-length and every declared-size check reads 0.
+    //
+    // Two layers may refuse it and WHICH one does is a Bun version detail, not a
+    // property of this server: 1.3.14 answers 413 from `maxRequestBodySize`
+    // before the handler runs, 1.3.13 does not enforce that limit on a chunked
+    // body at all and the request reaches `readJson`, which caps the stream
+    // itself and yields 400. Pinning the status here would make the suite green
+    // or red on the developer's Bun rather than on this code. What matters is
+    // that the body is refused and never fully buffered — the cap that holds on
+    // both entry points and every version is asserted directly against
+    // `readJson` in hardening.test.js.
     const oversized = "A".repeat(256 * 1024);
     const res = await fetch(`${base}/api/lead`, {
       method: "POST",
@@ -315,7 +323,7 @@ describe("ingest", () => {
       // @ts-expect-error — required by fetch for a streaming request body.
       duplex: "half",
     });
-    expect(res.status).toBe(413);
+    expect([400, 413]).toContain(res.status);
   });
 
   test("answers CORS preflight so funnels can be embedded cross-origin", async () => {
@@ -524,25 +532,75 @@ describe("privileged route protection", () => {
    * ungated they are an open proxy to four paid APIs — and they fall back to the
    * operator's own OPENAI_API_KEY when the body omits one.
    */
-  const PRIVILEGED_ENDPOINTS = [
-    ["GET", "/api/admin/leads"],
-    ["GET", "/api/admin/stats"],
-    ["GET", "/api/admin/email-settings"],
-    ["POST", "/api/admin/email-settings"],
-    ["POST", "/api/admin/test-email"],
-    ["GET", "/api/admin/clients"],
-    // Issues and revokes a credential that reads one client's leads with no
-    // login, so it is the last route in this file that may ever escape the gate.
-    ["GET", "/api/admin/report-tokens"],
-    ["POST", "/api/admin/report-tokens"],
-    ["DELETE", "/api/admin/report-tokens"],
-    ["GET", "/api/builder/funnel/lead-gen"],
-    ["POST", "/api/builder/save"],
-    ["POST", "/api/builder/delete"],
-    ["POST", "/api/builder/duplicate"],
-    ["POST", "/api/ai/generate"],
-    ["POST", "/api/ai/improve-copy"],
-  ];
+  /**
+   * DERIVED from the route modules, not hand-listed. The comment above claims a
+   * new route is "covered the moment it exists", and with a hand-written array
+   * that was simply untrue: by the time this was noticed the list had drifted
+   * past `funnel-gates`, `subjects`, `domains`, `deliveries`, `assets`,
+   * `targets/sync` and `privacy-notice` — seven endpoints, every one of them
+   * reading or writing client data, none of them swept. The gate itself held
+   * (it is structural), but the test that proves it held was checking a
+   * shrinking fraction of the surface and reporting green.
+   *
+   * Every handler in these three modules matches on `path === "..."` or
+   * `path.startsWith("...")` together with `req.method === "..."`, so the list
+   * can be read off the source. A route that stops matching this shape is a
+   * route this sweep would silently drop, which is what `EXPECTED_AT_LEAST` and
+   * the spot-checks below exist to catch.
+   */
+  const ROUTE_MODULES = ["admin.js", "builder.js", "ai.js"];
+  const EXACT_RE = /path === "([^"]+)"\s*&&\s*req\.method === "([A-Z]+)"/g;
+  const PREFIX_RE = /path\.startsWith\("([^"]+)"\)\s*&&\s*req\.method === "([A-Z]+)"/g;
+
+  /** @type {[string, string][]} */
+  const PRIVILEGED_ENDPOINTS = [];
+  // Every method check in these modules, matched or not. A route the two
+  // regexes above cannot read is the whole risk here, so it has to be counted
+  // from something they are not involved in.
+  let methodChecks = 0;
+  for (const name of ROUTE_MODULES) {
+    const src = readFileSync(resolve(import.meta.dir, "../routes", name), "utf8");
+    methodChecks += (src.match(/req\.method === "/g) || []).length;
+    for (const [, path, method] of src.matchAll(EXACT_RE)) PRIVILEGED_ENDPOINTS.push([method, path]);
+    // A prefix route needs a concrete example to request; the segment after it
+    // is a slug and any value reaches the same handler.
+    for (const [, prefix, method] of src.matchAll(PREFIX_RE)) {
+      PRIVILEGED_ENDPOINTS.push([method, `${prefix}lead-gen`]);
+    }
+  }
+
+  // A regex that matched nothing would make both sweeps below pass by having
+  // no work to do — the failure mode this whole block exists to prevent. The
+  // floor is well under the real count (27 at the time of writing) so ordinary
+  // additions do not touch it, and the spot-checks name the two surfaces that
+  // matter most: the AI proxy and the subject-erasure endpoint.
+  const EXPECTED_AT_LEAST = 20;
+
+  test("the privileged sweep actually found the routes it claims to sweep", () => {
+    expect(PRIVILEGED_ENDPOINTS.length).toBeGreaterThanOrEqual(EXPECTED_AT_LEAST);
+    const flat = PRIVILEGED_ENDPOINTS.map(([m, p]) => `${m} ${p}`);
+    for (const required of [
+      "POST /api/ai/generate",
+      "POST /api/ai/improve-copy",
+      "DELETE /api/admin/subjects",
+      "GET /api/builder/funnel/lead-gen",
+      "POST /api/builder/save",
+    ]) {
+      expect(flat).toContain(required);
+    }
+  });
+
+  test("the sweep reads EVERY route in those modules, not the ones its regexes happen to fit", () => {
+    // The hand-written list this replaced drifted because nothing noticed a new
+    // route; a derived list drifts the same way the moment someone writes one
+    // in a shape the regexes miss — reversed operands, an OR'd method, a
+    // dispatch table — and it drifts SILENTLY, which is worse than the array
+    // was. So: one method check in these modules, one swept endpoint. If this
+    // fails, the new route is not being tested — teach the regex, or add the
+    // route here by hand and say why.
+    expect(PRIVILEGED_ENDPOINTS.length).toBe(methodChecks);
+  });
+
 
   test("every privileged endpoint refuses a proxied caller", async () => {
     for (const [method, path] of PRIVILEGED_ENDPOINTS) {

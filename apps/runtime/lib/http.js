@@ -134,12 +134,55 @@ export async function readJson(req) {
   const declared = Number(req.headers.get("content-length") || 0);
   if (declared > MAX_BODY) return null;
   try {
-    const text = await req.text();
-    if (!text || text.length > MAX_BODY) return null;
+    const text = await readCapped(req.body);
+    if (!text) return null;
     return JSON.parse(text);
   } catch {
     return null;
   }
+}
+
+/**
+ * Read a body stream as text, stopping the moment it exceeds `MAX_BODY`.
+ *
+ * The declared-size check above is not a ceiling: a request with
+ * `Transfer-Encoding: chunked` sends no `content-length`, so it reads 0 and
+ * `req.text()` would buffer the whole body before anyone could object. Bun's
+ * `maxRequestBodySize` does not close that hole either — verified on Bun 1.3.13,
+ * where a 256KB streamed body reaches the handler in full against a 64KB limit,
+ * while the same body with a `content-length` is refused with 413. So the only
+ * ceiling both entry points actually share is this one, counted here in bytes as
+ * the chunks arrive.
+ *
+ * @param {ReadableStream<Uint8Array>|null} body
+ * @returns {Promise<string|null>} null when the body is missing or oversized.
+ */
+async function readCapped(body) {
+  if (!body) return null;
+  const reader = body.getReader();
+  const chunks = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      // Past the budget the rest of the body is of no interest: drop what was
+      // read and let `cancel()` tell the peer to stop sending.
+      if (size > MAX_BODY) return null;
+      chunks.push(value);
+    }
+  } finally {
+    reader.cancel().catch(() => {});
+  }
+  if (!size) return null;
+  const joined = new Uint8Array(size);
+  let at = 0;
+  for (const chunk of chunks) {
+    joined.set(chunk, at);
+    at += chunk.byteLength;
+  }
+  return new TextDecoder().decode(joined);
 }
 
 /* ========================================================================== *

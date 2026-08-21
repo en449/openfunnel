@@ -185,3 +185,78 @@ test("the sink rotates at its ceiling and the new file is not world-readable", a
   expect(rolled.size).toBeLessThan(1000);
   expect(rolled.mode & 0o077).toBe(0); // 0600: these files hold lead PII
 });
+
+/* ========================================================================== *
+ *  A chunked body walked past every declared-size check
+ * ========================================================================== */
+
+test("readJson stops pulling a chunked body at MAX_BODY instead of buffering it", async () => {
+  const { readJson, MAX_BODY } = await import("../lib/http.js");
+
+  // No `content-length` — which is the whole point. The declared-size check
+  // reads 0 for a chunked request, and `Bun.serve`'s `maxRequestBodySize` does
+  // not cover one either (Bun 1.3.13 hands a 256KB streamed body to the handler
+  // in full against a 64KB limit). Without a cap in `readJson` an anonymous
+  // caller sizes this process's allocation, on both entry points.
+  const chunk = new Uint8Array(16 * 1024);
+  chunk.fill(65); // "A"
+  const WOULD_BE = 8 * 1024 * 1024;
+  let produced = 0;
+  const body = new ReadableStream({
+    pull(controller) {
+      if (produced >= WOULD_BE) return controller.close();
+      produced += chunk.byteLength;
+      controller.enqueue(chunk);
+    },
+  });
+
+  const req = new Request("http://localhost/api/lead", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body,
+    // @ts-expect-error — required by Request for a streaming body.
+    duplex: "half",
+  });
+  expect(req.headers.get("content-length")).toBe(null);
+
+  expect(await readJson(req)).toBe(null);
+  // The refusal has to happen while the body is still arriving. `pull` is
+  // demand-driven, so what was produced is what was actually held in memory:
+  // one chunk past the budget, nowhere near the 8MB the caller offered.
+  expect(produced).toBeLessThanOrEqual(MAX_BODY + chunk.byteLength);
+});
+
+test("readJson still accepts a chunked body that fits", async () => {
+  const { readJson } = await import("../lib/http.js");
+
+  // The cap is only worth anything if the legitimate case survives it — a
+  // `readCapped` that returned null unconditionally would pass the test above.
+  const payload = JSON.stringify({ email: "a@b.invalid", pad: "ä".repeat(1000) });
+  const bytes = new TextEncoder().encode(payload);
+
+  // Split INSIDE a two-byte "ä" — the boundary a decoder gets wrong. Decoding
+  // per chunk would turn the halves into two replacement characters and the
+  // JSON.parse would still succeed, so the corruption would ship silently;
+  // joining the bytes first and decoding once is what makes it survive. The
+  // cut is found rather than hardcoded so it stays a real split if the payload
+  // above is ever edited.
+  const cut = bytes.indexOf(0xc3, 20) + 1;
+  expect(bytes[cut - 1]).toBe(0xc3); // lead byte on one side…
+  expect(bytes[cut]).toBe(0xa4); // …continuation byte on the other
+
+  const req = new Request("http://localhost/api/lead", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: new ReadableStream({
+      start(controller) {
+        controller.enqueue(bytes.subarray(0, cut));
+        controller.enqueue(bytes.subarray(cut));
+        controller.close();
+      },
+    }),
+    // @ts-expect-error — required by Request for a streaming body.
+    duplex: "half",
+  });
+
+  expect(await readJson(req)).toEqual(JSON.parse(payload));
+});

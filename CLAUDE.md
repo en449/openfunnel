@@ -39,11 +39,17 @@ against the last recorded run rather than a number in this file. Several tests l
 invalid-URL `submitLead` failure, a refused non-path `leadEndpoint`, a sink
 rotation); those are assertions about failure tolerance, not breakage.
 
-One known failure that is not this codebase's: `ingest > refuses an oversized body
-without buffering it` expects Bun to answer 413 from `maxRequestBodySize` and gets
-400 on Bun 1.3.13. `package.json` pins `bun@1.3.14`, whose changelog fixes exactly
-that path (a chunked body over the limit with a pending-Promise handler). It fails
-identically on the pre-patch tree — run the pinned Bun before investigating it.
+That "known Bun failure" was this codebase's after all (2026-08-21). `ingest >
+refuses an oversized body without buffering it` returned 400 instead of 413 on Bun
+1.3.13, and the note here wrote it off as a bug the pinned 1.3.14 fixes. Probed
+directly, 1.3.13 does not apply `maxRequestBodySize` to a chunked body at all: a
+256KB stream reached the handler in full against a 64KB limit. The status code was
+the symptom; the missing cap was the finding, and CI was green only because it runs
+the version where the transport happens to refuse it. `readJson` now caps the body
+stream itself — the check both entry points share — and the test accepts either
+layer refusing, since which one does is a Bun detail. Lesson worth keeping: a
+security property that holds on one runtime version and not another was never being
+tested, whatever the suite said.
 
 ## Layout
 
