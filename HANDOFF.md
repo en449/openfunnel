@@ -18,20 +18,26 @@ which is *every* lead on *every* Postgres deployment until WO12. Four review pas
 first three finding something real. Details and the two things it deliberately left undone are in
 TASK-HANDOFF.md item 25; the deletion story is LOESCHKONZEPT.md §4.
 
-**Section A below is unchanged and still Enno's** — the two migrations and the cron step. Nothing
-in D-24 touched the database.
+**The database half of TASK-HANDOFF.md §A is DONE (2026-08-27), and it is no longer a blocker.**
+`supabase db push` applied D3's and D5's migrations, so **all NINE are live**, and
+`openfunnel-purge` is scheduled (`40 3 * * *`, active) with the old inline
+`openfunnel-event-purge` retired in the same sitting. Verified with
+`supabase db query --linked` against `pg_proc` and `cron.job`; one proof run is logged in
+`purge_run`, all counts 0 and `capped` false — a pass, since nothing was due yet on a project
+this young. **All six DSGVO gates are now true on the live project.** PLAN.md §10's three `[~]`
+gate lines are `[x]`.
+
+What that does NOT yet mean, and the next session should not overstate it: no subject search or
+erasure has been run for a real person, and the purge has not yet had anything to delete. The
+first real client is what proves both.
 
 ## State (2026-08-21)
 
 Branch `phase-1-delivery-queue`, head `2c3d4bb`, clean tree, CI green on the fork. `main`
-untouched — merging is Enno's call. **Seven of the NINE migrations are applied to the live
-Supabase project.** The two that are not are D3's and D5's, and they exist only in git.
+untouched — merging is Enno's call. *(Superseded above: all nine migrations are now applied.)*
 
 **Phase 2 §4 — the six DSGVO gates — is CODE-COMPLETE. D1 through D8 are all committed.**
-Three of those gates are not yet true on the live project, and that gap is the first section of
-`TASK-HANDOFF.md`: until `supabase db push` runs, `find_subject` / `erase_subject` /
-`purge_expired` do not exist on the live database, so the Subjects view answers an error for a
-real client and nothing is being purged on a schedule.
+*(Superseded above: they are also live as of 2026-08-27.)*
 
 Done: Phase 1 complete. Phase 2 §1 asset upload, §2 custom domains, §3 the client report link
 `/r/:token`. Phase 2 §4: **D1–D8** (`fa009da`, `7dc3bb9`, `d153a51`, `062a80b`, `5d81e41`,
@@ -87,15 +93,14 @@ Done: Phase 1 complete. Phase 2 §1 asset upload, §2 custom domains, §3 the cl
 
 ### The three things a next session most needs to know
 
-1. **TWO migrations are NOT applied to the live project** — D3's (`20260819100000_subject_rights`)
-   and D5's (`20260819140000_retention_purge`). `supabase db push` is the next database action
-   and it needs Enno's confirmation. Until then `find_subject` / `erase_subject` / `purge_expired`
-   do not exist on the live database, so D4's Subjects view answers errors and nothing is being
-   purged on a schedule. `supabase migration list --linked` will show local ahead by two.
-   `supabase/cron.sql`'s new `openfunnel-purge` job is a MANUAL step after that push, and it
-   replaces `openfunnel-event-purge` — unschedule the old one in the same sitting or the events
-   are deleted by two jobs and `purge_run.events_expired` reads 0, which looks exactly like a
-   purge that stopped working.
+1. ~~TWO migrations are NOT applied to the live project.~~ **Done 2026-08-27 — all nine are
+   applied and `openfunnel-purge` is scheduled.** What survives as a standing fact: the purge
+   is monitored ONLY through `purge_run`, not through `cron.job_run_details`, which records
+   that a statement ran and nothing about what it removed. An **empty** `purge_run` means the
+   job stopped; a row of zeros means it ran with nothing due. Those two look identical in every
+   other place you might check, which is why the log exists.
+   `supabase db query --linked "select ..."` reads the live project without `.env`, so an agent
+   can verify all of this — it could not before anyone noticed that subcommand exists.
 2. **D2 could not verify one thing against live Supabase:** the PostgREST embed reading
    `avv_signed_at` (`select=…,client(avv_signed_at)` in `loadFromDb`). It is the same form as
    `report.js`'s `TOKEN_SELECT`, which is live and self-tested, but this change was exercised
@@ -145,8 +150,11 @@ All of **D1–D8** shipped. Enno authorised the whole D1–D8 scope on 2026-08-1
 ## Next
 
 **`TASK-HANDOFF.md`** — every open item, ordered by what it unblocks. The short version: the
-compliance gates are code-only until `supabase db push` and the `openfunnel-purge` cron step run,
-and both are Enno's. Nothing else in Phase 2 is blocked by them.
+compliance gates are LIVE as of 2026-08-27, so nothing in that file is blocked on the database
+any more. What is still Enno's there is paperwork and paid tiers — the AVV and its legal review,
+`.env.example`, `NOTIFY_EMAIL`, `BREVO_FROM` on a verified domain, and Vercel/Supabase Pro. The
+largest remaining engineering item is the console's lead inbox, which reads the JSONL sink and
+nothing else and is therefore empty on Vercel (item 23).
 
 Build Workflow applies per work order: write → `code-reviewer` + `qa` in parallel
 (`run_in_background: true`) → parent applies the fixes → re-run if non-trivial. Done means

@@ -6,14 +6,19 @@
 > predictions turned out wrong (Storage needed no per-subject walk; the JSONL sink
 > is a fifth store the plan said would not exist) and are corrected below.
 >
-> **The single fact that matters most: the mechanisms below are code-complete and
-> tested against a local Postgres, but the two migrations that create them —
+> **LIVE as of 2026-08-27.** Both migrations that create these mechanisms —
 > `20260819100000_subject_rights.sql` and `20260819140000_retention_purge.sql` —
-> are NOT applied to the live Supabase project, and the cron schedule that runs
-> the purge automatically has NOT been started.** Until `supabase db push` runs and
-> `supabase/cron.sql` is executed by hand against the live project, nothing in this
-> document is true of a real client's data — it describes a deletion path that
-> exists in git, not yet in production. See `HANDOFF.md` for the exact commands.
+> are applied to the live Supabase project, and `openfunnel-purge` is scheduled
+> (`40 3 * * *`, active) with the old inline `openfunnel-event-purge` retired in
+> the same sitting, so the two cannot double-count. Verified against `pg_proc` and
+> `cron.job` with `supabase db query --linked`; one proof run is logged in
+> `purge_run` (all counts 0, `capped` false — a pass, since nothing was due yet on
+> a project this young; an EMPTY `purge_run` would have been the failure).
+> This document now describes what runs, not what exists in git.
+>
+> Two things it describes are still **not proven against real data**, because there
+> is none yet: no subject search or erasure has been executed for an actual person,
+> and the nightly purge has not yet had anything to delete.
 
 Enno is **Auftragsverarbeiter** (processor, Art. 28 DSGVO) for every client's leads;
 each client is **Verantwortlicher**. This concept is Enno's operational answer to
@@ -27,8 +32,8 @@ client's Datenschutzerklärung, which is generated separately per funnel
 
 | # | Store | What it holds | Deletion mechanism | Retention | Live status |
 |---|-------|----------------|---------------------|-----------|-------------|
-| 1 | `lead` (Postgres) | contact fields, free-text answers, IP hash, consent record | `erase_subject()` (on request, soft) → `purge_expired()` step 3 (hard, 24h later) | per client `retention_months` (default 12, floor `greatest(., 1)`) via `purge_expired()` step 2 | **Not scheduled/callable yet** — migration unapplied |
-| 2 | `event` (Postgres) | step/drop-off events, `session_id` | `erase_subject()` deletes events on a shared session on request; `purge_expired()` step 1 deletes on age; step 3 deletes a soft-deleted lead's events if the session is then empty | 90 days, fixed and global (not per client) | **Not scheduled/callable yet** — migration unapplied |
+| 1 | `lead` (Postgres) | contact fields, free-text answers, IP hash, consent record | `erase_subject()` (on request, soft) → `purge_expired()` step 3 (hard, 24h later) | per client `retention_months` (default 12, floor `greatest(., 1)`) via `purge_expired()` step 2 | **Live** 2026-08-27 — migration applied, `openfunnel-purge` scheduled |
+| 2 | `event` (Postgres) | step/drop-off events, `session_id` | `erase_subject()` deletes events on a shared session on request; `purge_expired()` step 1 deletes on age; step 3 deletes a soft-deleted lead's events if the session is then empty | 90 days, fixed and global (not per client) | **Live** 2026-08-27 — migration applied, `openfunnel-purge` scheduled |
 | 3 | `.data/*.jsonl` (JSONL sink) | lead/event records the database did **not** take — an outage, or an install with no Postgres at all | **none automatic** — cleared by hand, see §4 | rotates at 64MB by file size, not by age | Written only where the process has a writable filesystem AND nothing durable took the record; see §4 |
 | 4 | Supabase Storage (`funnel-assets` bucket) | operator-uploaded funnel images (hero photos, gallery items) | `DELETE /api/admin/assets`, one object at a time, by the console | none automatic | live since 2026-08-13; **not linked to lead deletion** — see §2 |
 | 5 | Backups / PITR | a point-in-time copy of everything in Postgres | not deletable per-row | **not configured** — see §5 | Free tier |

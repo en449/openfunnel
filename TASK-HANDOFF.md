@@ -5,32 +5,38 @@
 > [PLAN.md](PLAN.md) §10 (the phase checklist). This file holds only open items.
 >
 > Phase 2 §4 — the six DSGVO gates, work orders D1–D8 — is **code-complete as of
-> 2026-08-21**. Three of those gates are not yet true on the live project, and that
-> is the whole of section A below. Nothing in section B is blocked by section A.
+> 2026-08-21 and LIVE as of 2026-08-27**: the two migrations are pushed and the purge
+> is scheduled, so all six gates are now true on the live project. Nothing in section B
+> is blocked by section A.
 
 ---
 
-## A. Enno's, and blocking — the compliance gates are code-only until these run
+## A. Enno's — the two blocking items are DONE; the rest are not compliance gates
 
-These are the difference between "the deletion path is written" and "a data subject's
-erasure request can actually be executed." An agent cannot do them: two need a
-confirmation before touching the live database, and one needs a file agents are
-denied read access to.
+The database half is finished. What remains here needs either a file agents are denied
+read access to, a paid tier, or a lawyer.
 
-1. **`supabase db push` — TWO migrations are unapplied.**
-   `20260819100000_subject_rights.sql` (D3) and `20260819140000_retention_purge.sql` (D5).
-   `supabase migration list --linked` will show local ahead by two. Until this runs:
-   `find_subject` / `erase_subject` / `purge_expired` do not exist on the live database,
-   the console's **Subjects view answers a database error** for a real client, and
-   **nothing is being purged on any schedule**.
-   *The CLI is authenticated; an old note saying it hangs is stale.*
+1. ~~**`supabase db push` — TWO migrations are unapplied.**~~ **DONE 2026-08-27.**
+   All nine migrations are applied, including `20260819100000_subject_rights.sql` (D3)
+   and `20260819140000_retention_purge.sql` (D5). `find_subject` / `erase_subject` /
+   `subject_matches` / `purge_expired` exist on the live database, so the console's
+   Subjects view returns results rather than an error.
+   Re-check any time with `supabase migration list --linked` (every row has both
+   `local` and `remote`).
 
-2. **Then, in the same sitting: schedule `openfunnel-purge`.**
-   `supabase/cron.sql` is deliberately not a migration — it is run by hand.
-   Its statement also unschedules the old inline `openfunnel-event-purge`. Run it once,
-   completely. **Do not leave both jobs scheduled**: the events get deleted by the old
-   job, `purge_run.events_expired` then reads 0 every night, and a working purge looks
-   exactly like a broken one.
+2. ~~**Then, in the same sitting: schedule `openfunnel-purge`.**~~ **DONE 2026-08-27.**
+   `openfunnel-purge` runs at `40 3 * * *`, active, and the old inline
+   `openfunnel-event-purge` is gone — so the two cannot double-count and
+   `purge_run.events_expired` cannot read a false 0. One proof run is logged (all
+   counts 0, `capped` false), which is a pass: nothing was due yet.
+   **What to watch from here**, since nothing about either self-corrects:
+   an *empty* `purge_run` means the job stopped running, and `capped` true on
+   consecutive rows means one run's ceiling is smaller than a day's backlog — raise it
+   (`select purge_expired(100000);`) or schedule it more often.
+   ```sql
+   select started_at, events_expired, leads_expired, leads_erased, capped
+     from purge_run order by started_at desc limit 14;
+   ```
 
 3. **Confirm the `avv_signed_at` PostgREST embed on the first live run.**
    `loadFromDb`'s `select=…,client(avv_signed_at)` (`lib/funnels.js`) has only ever been

@@ -1060,12 +1060,15 @@ once per accumulated listener.
   the same sequence of files — a change pasted into the SQL editor happened to
   the database but not to the repo, so the next `db push` either reapplies it
   (if it's idempotent) or the migration history and the live schema have quietly
-  forked with no diff anywhere to show it. As of 2026-08-21 the D3 and D5
-  migrations (`20260819100000_subject_rights.sql`, `20260819140000_retention_purge.sql`)
-  are written, tested and committed but **not yet pushed** to the live project —
-  `find_subject` / `erase_subject` / `purge_expired` do not exist there yet, so
-  the Subjects view (D4) answers a database error on the live deployment until
-  that push happens, and nothing is being purged on a schedule.
+  forked with no diff anywhere to show it. All nine migrations are applied to the
+  live project as of **2026-08-27** — including D3's and D5's
+  (`20260819100000_subject_rights.sql`, `20260819140000_retention_purge.sql`),
+  which were the last two outstanding. `find_subject` / `erase_subject` /
+  `subject_matches` / `purge_expired` all exist there, the Subjects view (D4)
+  returns results rather than a database error, and `openfunnel-purge` runs
+  nightly at `40 3 * * *`. Verify with `supabase migration list --linked`, and read
+  the schedule with `supabase db query --linked "select jobname, schedule, active
+  from cron.job;"` — that subcommand is read-only and does not need `.env`.
 - `apps/builder` and `apps/admin` (the legacy standalone UIs at `/_builder/*`
   and `/_admin/*`) are **deleted**. All console work belongs in `apps/app`. Do
   not restore them: `builder.js` broadcast the whole funnel document, including
