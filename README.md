@@ -285,6 +285,11 @@ Copy `.env.example` to `.env.local`:
 # Runtime Configuration
 PORT=3000
 FUNNELS_DIR=examples/
+
+# Where the JSONL sinks live. With Postgres configured these files are written
+# only when the database did not take a record; with no database they are your
+# only lead store. Read "Real personal data needs a database" under Security &
+# Privacy before pointing either at real people.
 DATA_DIR=.data/
 
 # Interface to bind. Loopback by default, so a fresh install is not reachable
@@ -600,7 +605,7 @@ only reachable through the proxy.
 
 ### What the runtime does for you
 
-- **Local data ownership**: leads and events stay in `.data/leads.jsonl` unless you route them outward.
+- **Local data ownership**: leads and events stay in `.data/leads.jsonl` unless you route them outward — but read the boundary below before pointing this at real people.
 - **Credentials are never echoed back**: the settings API reports *whether* a Brevo, Resend or SMTP secret is set, never its value.
 - **Outbound destinations are operator-owned**: webhook targets come from your environment or your funnel document, never from a visitor's request, and loopback / private / cloud-metadata addresses are refused.
 - **Signed webhooks**: set a webhook secret and every delivery carries an `X-Webhook-Secret` header your automation can check.
@@ -627,6 +632,32 @@ only reachable through the proxy.
   is skipped until the visitor accepts. The server reads `consent.enabled` from
   your funnel document, so stripping the field out of a request does not turn the
   gate off. See [Third-party data sharing](#third-party-data-sharing).
+
+### ⚠️ Real personal data needs a database
+
+Without Postgres configured, OpenFunnel is a **local, development or demonstration
+mode**, not a deployment you may point at real people's contact details.
+
+The subject-rights machinery — find everything held on a person, erase it, and purge
+on a retention horizon — lives in Postgres functions (`find_subject`,
+`erase_subject`, `purge_expired`). With no database, `GET`/`DELETE
+/api/admin/subjects` answer `503`, and nothing purges on any schedule. Your only
+store is `.data/*.jsonl`, and deleting one person's data there means editing the file
+by hand — including the rotated `.jsonl.1` next to it, which nothing in this codebase
+reads.
+
+With Postgres configured, that file is written **only when the database did not take
+the record** — an outage, an unknown funnel, a row the schema refused. That is
+deliberate: a degraded local copy beats a lost lead. It also means those particular
+records sit outside the deletion functions until you clear them, so when you see
+
+```
+[runtime] the database did not take a record, so /path/to/.data/leads.jsonl now holds
+one. That file is outside erase_subject and purge_expired — clear it by hand once the
+records in it are safely stored (LOESCHKONZEPT.md §4).
+```
+
+in your logs, that file needs handling once the outage is over.
 
 ### Treat a funnel document as code, not as data
 

@@ -355,3 +355,158 @@ test("an oversized but validly-shaped consentRecord is bounded, not stored whole
   expect(stored.at.length).toBeLessThanOrEqual(64);
   expect(stored.text_version.length).toBeLessThanOrEqual(200);
 });
+
+/* ========================================================================== *
+ *  WO D-24 — the JSONL sink is the store of LAST RESORT, not a second copy
+ *
+ *  `persist()` used to append to `.data/*.jsonl` on every path. On a deployment
+ *  with Postgres that made the file a shadow copy of every lead, and both
+ *  deletion mechanisms are Postgres-only (`erase_subject`, `purge_expired`) — so
+ *  an erased lead went on sitting on disk with nothing that could reach it. This
+ *  is the only file in the suite that runs the ingest route WITH a database
+ *  configured, so it is the only place the distinction is observable at all.
+ *
+ *  Asserted per record, not by an empty file: every test here shares one
+ *  DATA_DIR, and the two below deliberately write to the same sink.
+ * ========================================================================== */
+
+/**
+ * Records in a sink whose lead email or session id EQUALS this test's marker.
+ *
+ * Exact, not `JSON.stringify(record).includes(marker)`, which is what this
+ * started as. `s-sink-evt-lost` contains `s-sink-evt`, so a substring matcher
+ * made the assert-0 test below pass only because Bun happens to run the file in
+ * declaration order — reorder the tests and it counts the other one's record.
+ * The same shape as the search-needle bug D4's review found: a matcher loose
+ * enough to be convenient is loose enough to answer about the wrong record.
+ */
+async function sinkRecordsFor(file, marker) {
+  const path = join(dataDir, file);
+  const raw = await Bun.file(path)
+    .text()
+    .catch(() => "");
+  return raw
+    .split("\n")
+    .filter((line) => line.trim())
+    .map((line) => JSON.parse(line))
+    .filter((r) => r.sessionId === marker || r.lead?.email === marker);
+}
+
+test("a lead the queue took leaves NO copy in the JSONL sink", async () => {
+  const { handleIngest } = await import("../routes/ingest.js");
+  stub((fn) => {
+    if (fn === "ingest_lead") return [{ lead_id: "lead-sink-1", queued: 2, deduped: false }];
+    if (fn === "claim_deliveries") return [];
+    return true;
+  });
+
+  await handleIngest(post(lead({ lead: { email: "durable@sink.invalid" } })), ctx());
+  await settle();
+
+  // Postgres holds it, so `erase_subject` and `purge_expired` can both reach it.
+  // A sink line here is the same person's data in a file neither one knows about.
+  expect(await sinkRecordsFor("leads.jsonl", "durable@sink.invalid")).toHaveLength(0);
+});
+
+// The Critical from D-24's own review, and the reason `durable` exists as a
+// third field rather than `!fanOut`. `ingest_lead` commits the lead row BEFORE it
+// inserts any `delivery` row and returns the id on every success path — so a
+// client with no `delivery_target` gets `queued: 0` with the lead durably stored.
+// `queueOwnsIt` is false there (nothing will deliver it, so the legacy fan-out
+// MUST run), and the first version of this change read the sink off that flag —
+// which wrote a shadow copy of a lead Postgres already held. Nothing creates
+// `delivery_target` rows until WO12, so that is not an edge case: it is every
+// lead on every Postgres deployment today.
+test("a lead stored with NO delivery target is in Postgres, so it is not in the sink either", async () => {
+  const { handleIngest } = await import("../routes/ingest.js");
+  const { outbound } = stub((fn) => {
+    if (fn === "ingest_lead") return [{ lead_id: "lead-no-target", queued: 0, deduped: false }];
+    return [];
+  });
+
+  await handleIngest(post(lead({ lead: { email: "notarget@sink.invalid" } })), ctx());
+  await settle();
+
+  // Both halves, because the bug was reading one flag for both questions: the
+  // fan-out still has to run (nobody else delivers this lead) ...
+  expect(outbound.filter((u) => u.includes(FANOUT_HOST))).toHaveLength(1);
+  // ... and the sink still must not, because `erase_subject` can reach the row.
+  expect(await sinkRecordsFor("leads.jsonl", "notarget@sink.invalid")).toHaveLength(0);
+});
+
+// Same shape one step further along: a deduped resubmit keeps the FIRST submit's
+// committed row (`on conflict (dedupe_key) do nothing`), so it is durable too.
+test("a deduped resubmit leaves no sink copy — the first submit's row is still there", async () => {
+  const { handleIngest } = await import("../routes/ingest.js");
+  stub((fn) => {
+    if (fn === "ingest_lead") return [{ lead_id: "lead-dupe", queued: 0, deduped: true }];
+    return true;
+  });
+
+  await handleIngest(post(lead({ lead: { email: "dupe@sink.invalid" } })), ctx());
+  await settle();
+
+  expect(await sinkRecordsFor("leads.jsonl", "dupe@sink.invalid")).toHaveLength(0);
+});
+
+test("a lead the database REFUSED does land in the sink — it is the only copy left", async () => {
+  const { handleIngest } = await import("../routes/ingest.js");
+  globalThis.fetch = /** @type {any} */ (
+    async (url) => {
+      if (String(url).startsWith(DB)) throw new TypeError("fetch failed");
+      return new Response("", { status: 200 });
+    }
+  );
+
+  await handleIngest(post(lead({ lead: { email: "outage@sink.invalid" } })), ctx());
+  await settle();
+
+  // The other half of the same decision, and the reason this is not simply
+  // "skip the sink when a database is configured": with the database down and
+  // no delivery target configured, dropping this write loses the lead outright.
+  expect(await sinkRecordsFor("leads.jsonl", "outage@sink.invalid")).toHaveLength(1);
+});
+
+test("a stored event leaves no copy in the sink either", async () => {
+  const { handleIngest } = await import("../routes/ingest.js");
+  stub((fn) => (fn === "ingest_event" ? [] : true));
+
+  const req = new Request("http://localhost/api/events", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ funnelId: "lead-gen", sessionId: "s-sink-evt", type: "step_view", stepId: "one" }),
+  });
+  await handleIngest(req, { path: "/api/events", server: { requestIP: () => ({ address: `203.0.113.${++ip}` }) } });
+  await settle();
+
+  // Events carry the session id `subject_matches` erases a person's trail by, so
+  // the sink copy is as much outside Art. 17 as the lead's is.
+  expect(await sinkRecordsFor("events.jsonl", "s-sink-evt")).toHaveLength(0);
+});
+
+// The other direction, which nothing covered: `/api/events` passes
+// `durable: stored`, and `storeEvent` SWALLOWS its own failure and returns false
+// rather than throwing — drop-off analytics are never escalated. So a hard-coded
+// or inverted `durable` here would not fail loudly anywhere: the event would be
+// in neither Postgres nor the sink, and no test in the suite would notice. That
+// is silent data loss on the path whose session id is the only join
+// `erase_subject` has.
+test("an event the database REFUSED lands in the sink, since nothing else holds it", async () => {
+  const { handleIngest } = await import("../routes/ingest.js");
+  globalThis.fetch = /** @type {any} */ (
+    async (url) => {
+      if (String(url).startsWith(DB)) throw new TypeError("fetch failed");
+      return new Response("", { status: 200 });
+    }
+  );
+
+  const req = new Request("http://localhost/api/events", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ funnelId: "lead-gen", sessionId: "s-sink-evt-lost", type: "step_view", stepId: "one" }),
+  });
+  await handleIngest(req, { path: "/api/events", server: { requestIP: () => ({ address: `203.0.113.${++ip}` }) } });
+  await settle();
+
+  expect(await sinkRecordsFor("events.jsonl", "s-sink-evt-lost")).toHaveLength(1);
+});

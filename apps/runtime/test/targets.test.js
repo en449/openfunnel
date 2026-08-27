@@ -232,7 +232,15 @@ function captureMail() {
 test("the visitor's autoresponder still sends once the queue owns the lead", async () => {
   const { recipients } = captureMail();
 
-  await persist("leads", { funnelId: "wo12a-unknown", lead: { email: "visitor1@example.invalid" } }, { fanOut: false });
+  await persist(
+    "leads",
+    { funnelId: "wo12a-unknown", lead: { email: "visitor1@example.invalid" } },
+    // `durable` alongside it, because the queue owning a lead means Postgres
+    // committed the row (WO D-24). Omitting it left this fixture describing a
+    // state that cannot occur — delivered by the queue, stored by nothing — and
+    // the next reader would take it as evidence that the two flags move together.
+    { fanOut: false, durable: true },
+  );
 
   // fanOut false means a delivery_target exists, so the operator's alert is the
   // queue's job now. The autoresponder is NOT a delivery of the lead and has no

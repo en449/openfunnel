@@ -158,7 +158,7 @@ Routes:
 | `GET /_app/*`, `/`, `/builder`, `/leads`, … | public | console shell (see `APP_ROUTES`) |
 | `GET /api/funnels`, `/api/funnels/:slug` | public | funnel list / document |
 | `GET /r/:token` | public | one client's read-only report; the token in the path is the credential |
-| `POST /api/lead`, `/api/events` | public, rate-limited | ingest → JSONL + the Postgres delivery queue (or the direct fan-out) |
+| `POST /api/lead`, `/api/events` | public, rate-limited | ingest → the Postgres delivery queue, or the direct fan-out + the JSONL sink when it did not take the record |
 | `POST /api/otp/send`, `/api/otp/verify` | public, rate-limited | email verification challenge |
 | `POST /api/internal/drain` | **INTERNAL_SECRET** | delivery-queue drain, called by pg_cron via pg_net |
 | `GET /healthz` | public | liveness |
@@ -241,8 +241,35 @@ degraded delivery beats a lost lead. Both at once is the operator receiving
 every lead twice, which is why the flag is passed explicitly rather than derived
 inside `store.js` from `dbConfigured()`.
 
-The JSONL sink is written on every path. It is the operator's own copy and the
-console's lead inbox — not a delivery channel.
+The JSONL sink is decided by a THIRD field, `durable`, not by `fanOut` (WO D-24).
+It used to be written on every path, which made `.data/*.jsonl` a second copy of
+every lead on a deployment that has Postgres — and `erase_subject` and
+`purge_expired` are both Postgres-only, so an erased lead went on sitting in that
+file with nothing able to reach it. It is now written only when nothing durable
+took the record, which makes it the store of LAST RESORT that PLAN.md §2.4 always
+described.
+
+**`durable` is not `fanOut` inverted, and the first version of D-24 shipped that
+bug into review.** `ingest_lead` commits the lead row BEFORE it inserts any
+`delivery` row and returns the id on every success path, so a client with no
+`delivery_target` gets `queued: 0` with the lead durably stored: `queueOwnsIt` is
+false (nothing will deliver it, so the legacy fan-out must run) while `durable` is
+true (Art. 17 can reach the row). Nothing creates `delivery_target` rows until
+WO12, so that is not an edge case — it is every lead on every Postgres deployment
+today, and reading the sink off `fanOut` reproduced the exact defect D-24 removed.
+
+So `storeLead()` returns three fields for three questions, and answering two of
+them with one value has cost something every single time:
+
+    leadId      — is there anything to DRAIN right now?
+    queueOwnsIt — will anything else DELIVER this lead?
+    durable     — did a store erase_subject can reach actually TAKE it?
+
+Do not "fix" this back to unconditional to repopulate the console's lead inbox.
+That inbox reads the sink and only the sink (`/api/admin/leads`,
+`computeStats`), which is why it is empty on Vercel today and empty on a
+Postgres self-host now — the answer is a Postgres-backed inbox
+(TASK-HANDOFF.md), not a personal-data store nothing can delete from.
 
 `fanOut` answers "will anything else deliver this lead?", and it is deliberately
 NOT `Boolean(leadId)`. Those came apart in both directions, and both reached the

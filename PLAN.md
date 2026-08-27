@@ -437,7 +437,7 @@ Retry safety, from `reference/postgres-tenant-isolation.md` §5: the receiver ma
 | Part | Fate |
 | --- | --- |
 | `packages/engine` | Keep, unchanged, until Phase R replaces it. It works and it is audited. |
-| `apps/runtime` | Keep the `lib/` + `routes/` structure; they already return `Response`. Extract the router from `Bun.serve` into `handleRequest(req)` with two entry points (Vercel function, local Bun dev shell). Add: Postgres store, delivery drain endpoint, assets, domains, report tokens, Postgres-backed rate limits/OTP/mail cap. Remove: JSONL sinks (no durable FS). Keep and extend `supabaseInsert` — it is now the store, not an optional forward. |
+| `apps/runtime` | Keep the `lib/` + `routes/` structure; they already return `Response`. Extract the router from `Bun.serve` into `handleRequest(req)` with two entry points (Vercel function, local Bun dev shell). Add: Postgres store, delivery drain endpoint, assets, domains, report tokens, Postgres-backed rate limits/OTP/mail cap. Remove: JSONL sinks (no durable FS). Keep and extend `supabaseInsert` — it is now the store, not an optional forward. **Neither of those last two happened as written (noted 2026-08-27):** `supabaseInsert` was deleted outright in favour of the `supabase/migrations/` schema, and the JSONL sinks were kept and narrowed by WO D-24 rather than removed — they are the store of last resort for a record nothing durable took. |
 | `apps/app` (console) | Extend, do not rewrite — **confirmed by running it**, see [REALITY-CHECK.md](REALITY-CHECK.md) §4. It is a working three-pane builder with live preview and zero console errors. New views (delivery log, clients, assets) follow the documented `VIEWS`/`ROUTES`/`APP_ROUTES` recipe. Deploys as the private Vercel project. |
 | `apps/builder`, `apps/admin` | Delete. Already unmounted; `git rm -r apps/builder apps/admin` is still pending from the audit. |
 
@@ -909,8 +909,17 @@ deadline and there is no way to *find* what needs deleting.
 
 ### 8.7 Löschkonzept — deletion that is actually complete
 
-Personal data lives in four places under the Vercel + Supabase design — one fewer than the VPS
-design, because there is no JSONL sink. A deletion that misses one is not a deletion.
+Personal data lives in four places under the Vercel + Supabase design. A deletion that misses one
+is not a deletion.
+
+> **Corrected 2026-08-27 (WO D-24).** This paragraph used to read "one fewer than the VPS design,
+> because there is no JSONL sink." That was never what shipped: `persist()` wrote `.data/*.jsonl`
+> on every path, whatever the database was doing. It was inert on Vercel only by accident of a
+> read-only filesystem, and on a self-hosted Bun install with a writable `DATA_DIR` it was a live
+> fifth store that `erase_subject` and `purge_expired` — both Postgres-only — could not reach.
+> The sink is now written only when nothing durable took the record, which makes the count above
+> true rather than aspirational. The residue is in [LOESCHKONZEPT.md](LOESCHKONZEPT.md) §4:
+> a database outage still writes that file, and those records need clearing by hand.
 
 1. `lead` row in Postgres — soft delete, then hard delete on the sweeper's next run (24h)
 2. `event` rows keyed to that session

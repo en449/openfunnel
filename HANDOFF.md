@@ -6,6 +6,21 @@
 > log) and `PLAN.md` (architecture, DSGVO §8, phases).
 > Replace this file's "State" section when it stops being true — do not stack entries.
 
+## State (2026-08-27)
+
+**Since 2026-08-21:** TASK-HANDOFF.md item 25 (the JSONL sink, WO D-24) is done. `persist()`
+writes `.data/*.jsonl` only when nothing durable took the record, so it is no longer a second
+copy of every lead sitting outside `erase_subject` / `purge_expired`. **The predicate is a THIRD
+field, `durable`, and NOT `!fanOut`** — the first version used `fanOut`, and review caught it as
+a Critical: `ingest_lead` commits the lead row before it inserts any `delivery` row, so a client
+with no `delivery_target` gets `queued: 0` with the lead durably stored and `queueOwnsIt: false`,
+which is *every* lead on *every* Postgres deployment until WO12. Four review passes, each of the
+first three finding something real. Details and the two things it deliberately left undone are in
+TASK-HANDOFF.md item 25; the deletion story is LOESCHKONZEPT.md §4.
+
+**Section A below is unchanged and still Enno's** — the two migrations and the cron step. Nothing
+in D-24 touched the database.
+
 ## State (2026-08-21)
 
 Branch `phase-1-delivery-queue`, head `2c3d4bb`, clean tree, CI green on the fork. `main`

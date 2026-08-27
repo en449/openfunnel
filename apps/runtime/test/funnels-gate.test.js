@@ -271,6 +271,8 @@ test("POST /api/lead still answers 202 and stores, for a funnel the gate is refu
   // `gate-ingest` is genuinely blocked: it is in the funnel table with no
   // `legal` block at all, same shape as the "c" refusal fixtures.
   const blockedDoc = doc();
+  /** Every `ingest_lead` body, which is where "stores" is now observable. */
+  const ingested = [];
 
   globalThis.fetch = /** @type {any} */ (
     async (url, init) => {
@@ -279,6 +281,7 @@ test("POST /api/lead still answers 202 and stores, for a funnel the gate is refu
         new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
       if (target.includes("/rpc/rate_hit")) return reply(true);
       if (target.includes("/rpc/ingest_lead")) {
+        ingested.push(JSON.parse(String(init?.body || "{}")));
         return reply([{ lead_id: "ingest-gate-1", queued: 1, deduped: false }]);
       }
       if (target.includes("/rpc/claim_deliveries")) return reply([]);
@@ -317,10 +320,19 @@ test("POST /api/lead still answers 202 and stores, for a funnel the gate is refu
   // `persist()` is fire-and-forget from the route's point of view.
   await Bun.sleep(150);
 
+  // "Stores" is asserted against Postgres, not the JSONL sink. This test used to
+  // read `leads.jsonl`, which stopped being written on this path in WO D-24: the
+  // queue took the lead, so the sink — the store of LAST resort — correctly holds
+  // nothing. Reading the file here would have made the test pass again only by
+  // restoring a copy of the lead that `erase_subject` cannot reach, so the
+  // assertion moved to the store that actually holds it.
+  expect(ingested).toHaveLength(1);
+  expect(ingested[0].p_slug).toBe("gate-ingest");
+  expect(ingested[0].p_payload?.lead?.email).toBe("visitor@example.invalid");
+
+  // And the sink stays empty, which is the other half of the same claim.
   const records = await readJsonlRecords("leads.jsonl");
-  const stored = records.find((r) => r.funnelId === "gate-ingest");
-  expect(stored).toBeTruthy();
-  expect(stored?.lead?.email).toBe("visitor@example.invalid");
+  expect(records.find((r) => r.funnelId === "gate-ingest")).toBeUndefined();
 });
 
 /* ========================================================================== *

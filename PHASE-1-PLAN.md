@@ -640,6 +640,13 @@ frozen the moment the response is written, and the one of those that must not be
 **fan-out on the degraded path**: when `queueOwnsIt` is false, nothing else will ever deliver
 that lead, and on Vercel the JSONL sink it would otherwise sit in does not exist either.
 
+> **Narrowed by WO D-24 (2026-08-27).** The sink is no longer a backstop for this whole path.
+> It is written only when nothing DURABLE took the record, so the common `queueOwnsIt: false`
+> case — a lead Postgres committed with no `delivery_target` to send it to — writes nothing to
+> disk on any platform, not just Vercel. The argument above is unchanged where it matters
+> (the fan-out is still the only delivery that lead gets, so it must not be dropped), but do
+> not read the sink as a second copy that catches it.
+
 So deferred work goes through `opts.waitUntil`:
 
 - Bun entry: fire-and-forget with a `catch`, which is exactly today's behaviour.

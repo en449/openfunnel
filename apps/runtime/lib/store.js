@@ -9,8 +9,13 @@
  * Phase 1 demoted the fan-out rather than removing it. It is now the fallback
  * for when the delivery queue could not take a lead — see `fanOut` below — and
  * the reason it survives at all is that it is the only path a self-hoster with
- * no Supabase project ever uses. The legacy `supabaseInsert` that posted the
- * whole record into a flat `leads` table is gone: the schema in
+ * no Supabase project ever uses. WO D-24 put the JSONL sink on a footing of its
+ * own: it is written only when nothing durable took the record — which is what
+ * PLAN.md §2.4 always described it as ("the old design wrote a JSONL sink when
+ * Postgres was unreachable") and not what the code did. That is a DIFFERENT
+ * question from `fanOut`; see `persist` below for the case where the two
+ * disagree. The legacy `supabaseInsert` that
+ * posted the whole record into a flat `leads` table is gone: the schema in
  * `supabase/migrations/` replaced it, and leaving it in place meant every
  * ingest also fired a doomed request at a table that no longer exists.
  */
@@ -19,6 +24,7 @@ import { mkdir, appendFile, open, rename, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { forwardMetaCapi } from "./capi.js";
 import { DATA_DIR } from "./config.js";
+import { dbConfigured } from "./db.js";
 import { notifyOperatorOfLead, sendLeadAutoresponder } from "./email.js";
 import { loadFunnel } from "./funnels.js";
 import { errSummary } from "./log.js";
@@ -57,6 +63,33 @@ const dataDir = () => resolve(process.env.DATA_DIR || DATA_DIR);
 
 /** The sink directory cannot be created — a platform fact, warned about once. */
 let warnedNoDataDir = false;
+
+/** A sink write on a database-configured install is an incident. Warned once per process. */
+let warnedIncidentSink = false;
+
+/**
+ * Say so when the sink takes a record on a deployment that has Postgres.
+ *
+ * On such a deployment this file is not routine any more (WO D-24) — it means
+ * the database refused the record, so what lands here is personal data that
+ * `erase_subject` and `purge_expired` will never reach. That is the right
+ * trade against losing the lead, but it is a store the operator now has to
+ * clear by hand, and a store nobody knows about is the failure this project
+ * keeps re-finding. Once per process, because it is a property of the outage
+ * rather than of the record: per-lead it would be a line per lead for the
+ * duration.
+ *
+ * @param {string} file  the sink the record actually landed in.
+ */
+function warnIncidentSink(file) {
+  if (warnedIncidentSink || !dbConfigured()) return;
+  warnedIncidentSink = true;
+  console.warn(
+    `[runtime] the database did not take a record, so ${file} now holds one. ` +
+      "That file is outside erase_subject and purge_expired — clear it by hand once the " +
+      "records in it are safely stored (LOESCHKONZEPT.md §4).",
+  );
+}
 
 /**
  * Append one record to a JSONL file. Local-first storage: readable with `tail`,
@@ -122,6 +155,10 @@ async function appendJsonl(kind, record) {
   // Still non-fatal — ingest must not fail the visitor — but no longer invisible.
   try {
     await appendFile(file, `${JSON.stringify(record)}\n`, { encoding: "utf8", mode: 0o600 });
+    // After the write, not before it: on a read-only filesystem — every
+    // serverless deployment — nothing lands, and a warning that says a file now
+    // holds personal data when it does not is the D7 failure in a log line.
+    warnIncidentSink(file);
   } catch (err) {
     console.warn(`[runtime] ${kind}.jsonl append failed: ${errSummary(err)}`);
   }
@@ -196,15 +233,33 @@ export async function readJsonlRecords(filename) {
  * and `true` whenever the queue did not take the lead, which is what makes an
  * outage a degraded delivery rather than a lost one.
  *
- * The JSONL sink is written either way. It is the operator's own copy and the
- * console's lead inbox, not a delivery channel.
+ * The JSONL sink is decided by a SECOND flag, `durable`, and the distinction is
+ * the whole of WO D-24. The sink used to be written on every path, so a
+ * deployment with Postgres kept a second copy of every lead in a file that
+ * `erase_subject` and `purge_expired` — both Postgres-only — do not know exists:
+ * an erased lead still sat on disk. It is now written only when NOTHING durable
+ * took the record, which makes it the store of last resort PLAN.md §2.4 always
+ * described rather than a shadow copy outside every deletion mechanism.
+ *
+ * `durable` is not `fanOut` inverted, and the first version of this change got
+ * that wrong. A lead Postgres committed with no `delivery_target` row to send it
+ * to has `fanOut: true` (nothing will deliver it, so the legacy path must run)
+ * and `durable: true` (the row exists and Art. 17 can reach it). That is every
+ * lead on every deployment until WO12 ships, so writing the sink on `fanOut`
+ * reproduced the exact defect this work order removed.
+ *
+ * Both flags are READ, not re-derived: the invariant against deciding this from
+ * `dbConfigured()` inside this file (CLAUDE.md) still holds — the route knows
+ * things `dbConfigured()` cannot, a deduped resubmit being the one that cost a
+ * duplicate delivery. `dbConfigured()` appears in this file for a log line only
+ * (`warnIncidentSink`), never in a decision about what is written or delivered.
  *
  * @param {"leads"|"events"} kind
  * @param {Record<string, unknown>} record
- * @param {{ fanOut?: boolean }} [opts]
+ * @param {{ fanOut?: boolean, durable?: boolean }} [opts]
  */
 export async function persist(kind, record, opts = {}) {
-  const { fanOut = true } = opts;
+  const { fanOut = true, durable = false } = opts;
 
   // The sink copy carries no raw IP (PLAN.md §10, REALITY-CHECK.md §3). The
   // Postgres column has always been a salted hash and `lib/delivery.js` strips
@@ -214,7 +269,9 @@ export async function persist(kind, record, opts = {}) {
   // here rather than at the call site because `record.ip` still has an in-process
   // consumer: `forwardMetaCapi` reads it below, consent-gated and opt-in.
   const { ip: _ip, ...sinkRecord } = record;
-  const tasks = [appendJsonl(kind, sinkRecord), forwardMetaCapi(record)];
+  /** @type {Promise<any>[]} */
+  const tasks = [forwardMetaCapi(record)];
+  if (!durable) tasks.push(appendJsonl(kind, sinkRecord));
   if (kind === "leads") {
     // The autoresponder is outside the `fanOut` decision on purpose. It is a
     // courtesy mail to the VISITOR, not a delivery of the lead to the operator,

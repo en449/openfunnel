@@ -118,28 +118,55 @@ Nothing here is a compliance gate. Roughly in the order the plan lists them.
 22. **Measure real-device LCP on a preset funnel over 4G** — 22 unbundled module requests
     per page load. This is the measurement that decides whether the no-build-step
     invariant still pays (REALITY-CHECK.md §6).
-23. **`apps/app` is not type-checked.** `bun run typecheck` covers the engine and
+23. **The console's lead inbox and analytics have no Postgres path.**
+    `GET /api/admin/leads` ([admin.js:124](apps/runtime/routes/admin.js#L124)) and
+    `computeStats` ([admin.js:762-763](apps/runtime/routes/admin.js#L762-L763)) read the
+    JSONL sink and *nothing else*; [app.js:900-902](apps/app/app.js#L900-L902) is the only
+    consumer. So on **Vercel the operator's inbox and analytics already read empty**, and
+    have since the serverless move — `DATA_DIR` resolves under the repo root, which is
+    read-only there, and `appendJsonl` warns once and gives up. Item 25 makes that true on
+    a Postgres self-host too. The DB-backed surfaces that exist today are D4's Subjects
+    view and `/r/:token`, neither of which is an inbox. Overlaps item 17: the rollup is
+    the right source for the analytics half, a plain `lead` select for the inbox half.
+    **Do not close this by making the sink unconditional again** (CLAUDE.md invariant).
+
+24. **`apps/app` is not type-checked.** `bun run typecheck` covers the engine and
     `apps/runtime` only. The console is ~5k lines of untyped JS, and the last time
     coverage was added to a directory here it surfaced a real bug on the first run.
 
 ---
 
-## D. Two defects found while writing the Löschkonzept — decide, then act
+## D. Two defects found while writing the Löschkonzept — one fixed, one open
 
 Both are documented in [LOESCHKONZEPT.md](LOESCHKONZEPT.md) §4 rather than silently
 carried. Neither affects Enno's own Vercel deployment; both affect a self-hoster.
+**25 is done (2026-08-27); 26 is still open.** 25 is kept here rather than moved to
+HANDOFF.md because the two things it deliberately left undone are the parts a later
+session would otherwise re-file as bugs.
 
-24. **The JSONL sink is outside every deletion mechanism.** `persist()` writes
-    `.data/*.jsonl` unconditionally — regardless of whether Postgres is configured.
-    On Vercel it is inert (read-only filesystem, caught and warned once). On a
-    **self-hosted Bun install with a writable `DATA_DIR` it is a live personal-data
-    store**, and `erase_subject` and `purge_expired` are both Postgres-only: an erased
-    lead still sits in the sink. A no-database self-hoster has no subject-rights
-    mechanism at all. Decide: skip the sink when `dbConfigured()`, give it its own
-    purge, or document it as unsupported for real data. PLAN.md §8.7 currently claims
-    this design has no JSONL sink, which is simply not what shipped.
+25. **The JSONL sink is outside every deletion mechanism.** ~~`persist()` writes
+    `.data/*.jsonl` unconditionally.~~ **DONE 2026-08-27.** `persist()` now writes the
+    sink only when nothing durable took the record, so it is the store of last resort
+    PLAN.md §2.4 always described rather than a shadow copy outside `erase_subject` /
+    `purge_expired`. **The predicate is a THIRD field, `durable`, and not `!fanOut` —
+    the first version used `fanOut` and review caught it as a Critical.** A lead
+    Postgres commits with no `delivery_target` row has `fanOut: true` (nothing will
+    deliver it) and `durable: true` (the row exists), and since nothing creates target
+    rows until WO12 that is *every* lead on *every* Postgres deployment today — so the
+    first version closed almost nothing. See CLAUDE.md's fan-out section. PLAN.md §8.7's false claim is corrected
+    in place, LOESCHKONZEPT.md §4 is rewritten, and README gains a
+    *"Real personal data needs a database"* boundary.
+    **Two things this deliberately did NOT do**, so they are not re-derived as bugs:
+    a database outage still writes the sink (dropping that write loses the lead when no
+    delivery target is configured), so those records are outside both deletion functions
+    until cleared by hand — the runtime warns once per process naming the directory; and
+    a no-Postgres install still has no subject-rights mechanism, which is now documented
+    as an unsupported-for-real-data boundary rather than engineered around. Building it
+    would mean a JS matcher duplicating `subject_matches()` — the shape of the bug that
+    erases the wrong person's inbox — plus a streaming rewrite, the unread `.jsonl.1`,
+    and a scheduler where there is no `pg_cron`.
 
-25. **Deleting a funnel does not delete its Storage assets.** `removeFunnel()` never
+26. **Deleting a funnel does not delete its Storage assets.** `removeFunnel()` never
     calls `deleteAsset()` — the only caller is `DELETE /api/admin/assets`, one object
     at a time from the console. PHASE-2-PLAN.md §4 Decision 2 reads as though the
     cascade exists. Today those objects are the operator's own marketing photography,

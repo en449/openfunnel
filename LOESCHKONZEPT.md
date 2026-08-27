@@ -29,7 +29,7 @@ client's Datenschutzerklärung, which is generated separately per funnel
 |---|-------|----------------|---------------------|-----------|-------------|
 | 1 | `lead` (Postgres) | contact fields, free-text answers, IP hash, consent record | `erase_subject()` (on request, soft) → `purge_expired()` step 3 (hard, 24h later) | per client `retention_months` (default 12, floor `greatest(., 1)`) via `purge_expired()` step 2 | **Not scheduled/callable yet** — migration unapplied |
 | 2 | `event` (Postgres) | step/drop-off events, `session_id` | `erase_subject()` deletes events on a shared session on request; `purge_expired()` step 1 deletes on age; step 3 deletes a soft-deleted lead's events if the session is then empty | 90 days, fixed and global (not per client) | **Not scheduled/callable yet** — migration unapplied |
-| 3 | `.data/*.jsonl` (JSONL sink) | the same lead/event records, written a second time as the operator's own copy | **none** — see §4 | rotates at 64MB by file size, not by age | Written **only** where the process has a writable filesystem; see §4 |
+| 3 | `.data/*.jsonl` (JSONL sink) | lead/event records the database did **not** take — an outage, or an install with no Postgres at all | **none automatic** — cleared by hand, see §4 | rotates at 64MB by file size, not by age | Written only where the process has a writable filesystem AND nothing durable took the record; see §4 |
 | 4 | Supabase Storage (`funnel-assets` bucket) | operator-uploaded funnel images (hero photos, gallery items) | `DELETE /api/admin/assets`, one object at a time, by the console | none automatic | live since 2026-08-13; **not linked to lead deletion** — see §2 |
 | 5 | Backups / PITR | a point-in-time copy of everything in Postgres | not deletable per-row | **not configured** — see §5 | Free tier |
 | 6 | Vercel function logs | request path, IP, status; never a lead body if the no-raw-IP invariant holds | Vercel's own retention | not independently set by this project | disclosed platform log, not a store this project controls |
@@ -166,34 +166,80 @@ raise the limit or run it more often.
 
 ---
 
-## 4. The JSONL sink — the store the plan said would not exist
+## 4. The JSONL sink — a store of last resort, and what it still leaves open
 
-`apps/runtime/lib/store.js`'s `persist()` writes every lead and event to
-`.data/leads.jsonl` / `.data/events.jsonl` **unconditionally, whether or not
-Postgres is configured** — "the JSONL sink is written either way," in the code's
-own words. PLAN.md §8.7 said the Vercel+Supabase design has "one fewer" store than
-a VPS design "because there is no JSONL sink." That is not what shipped, and this
-document corrects it rather than repeating it:
+**Changed 2026-08-27 (WO D-24).** `apps/runtime/lib/store.js`'s `persist()` used to
+append every lead and every event to `.data/leads.jsonl` / `.data/events.jsonl`
+**unconditionally, whether or not Postgres was configured** — "the JSONL sink is
+written either way," in the code's own words at the time. That made the file a second
+copy of every lead on a deployment that also had a database, and **neither
+`erase_subject` nor `purge_expired` touches it — both are Postgres-only**. An erased
+lead went on sitting in a file that nothing in §2 or §3 knew existed.
 
-- **On Vercel** (Enno's actual deployment target), the filesystem outside `/tmp`
-  is read-only. `appendJsonl()`'s own `mkdir` throws, is caught, and after one
-  warning per process the sink is silently off — nothing is lost (Postgres already
-  holds the lead, or the fan-out delivered it), but no second copy accumulates on
-  disk there either. **On this deployment, §8.7's original premise holds in
-  practice, for a reason the plan did not state.**
-- **On a self-hosted Bun deployment with a writable `DATA_DIR`**, the sink *is*
-  written, and it is real personal data at rest on that machine's disk. **Neither
-  `erase_subject` nor `purge_expired` touches it — both are Postgres-only.** A
-  self-hoster running Postgres alongside a writable `DATA_DIR` has a copy of every
-  erased or purged lead sitting in a `.jsonl` file that the mechanisms in §2 and §3
-  do not know exists.
-- **A self-hoster running with *no* database at all** has the JSONL sink as their
-  *only* lead store. There is no `find_subject`, no `erase_subject`, no
-  `purge_expired` for that deployment — `GET`/`DELETE /api/admin/subjects` both
-  answer `503 db_not_configured`. Deletion there is manual: edit or truncate the
-  file. This is not a defect to silently accept — it is the honest boundary of
-  what this concept currently covers, and it belongs in any self-hosting
-  documentation this project publishes.
+PLAN.md §8.7 had claimed the Vercel + Supabase design has "one fewer" store "because
+there is no JSONL sink." That was not what shipped, and it is now corrected there
+rather than repeated.
+
+### What it does now
+
+The sink is written **only when nothing durable took the record** — which is what
+PLAN.md §2.4 always described it as ("the old design wrote a JSONL sink when Postgres
+was unreachable"). Four cases:
+
+> **It is NOT the `fanOut` flag, and an earlier draft of this section said it was.**
+> `fanOut` answers "will anything else DELIVER this lead"; the sink needs "did a store
+> `erase_subject` can reach actually TAKE it". `storeLead()` answers the second with a
+> separate field, `durable`. The first version of this change reused `fanOut` and a
+> code review caught it as a Critical — see the third case below for where the two
+> disagree. Anyone tempted to simplify the two flags back into one should read that
+> case first: it is not an edge, it is every lead on this deployment today.
+
+- **The database took the lead and something will deliver it** (`queued > 0`): nothing
+  is written to disk. Postgres is the only store, so `erase_subject` and
+  `purge_expired` reach all of it. This is the hole above, closed.
+- **The database took the lead and nothing will deliver it** (`queued = 0` — no
+  `delivery_target` row for the client, which is EVERY funnel until WO12 ships the
+  console UI that creates them): still nothing written to disk. The row is committed —
+  `ingest_lead` inserts the lead before it inserts any `delivery` row — so Art. 17
+  reaches it. The legacy fan-out runs so the operator still gets the lead by webhook or
+  mail, and that is what `fanOut` is for. **This is the case the two flags disagree on,
+  and gating the sink on `fanOut` here meant a shadow copy of essentially every lead
+  the system has ever taken.**
+- **Nothing durable took it** — the database was unreachable, the slug is unknown, the
+  row was refused, or the record carried no `funnelId` and so was never sent at all.
+  Only the first of those is an outage; the rest mean the database answered and
+  declined. The sink is written in every one of them for the same reason: there is no
+  row, so if the funnel also has no webhook or notification address the write is the
+  only thing standing between the visitor's submission and nothing at all. A degraded
+  store beats no store. **This is the residue, and it is real**: those records are
+  personal data outside both deletion mechanisms until someone clears them. The runtime
+  warns once per process, naming the file, when it happens; there is no automatic
+  cleanup, and pretending otherwise would be the same defect in a new place.
+- **No database configured at all**: unchanged. The sink is the only lead store, and
+  it is the case §4a covers.
+
+### 4a. An install with no Postgres is not a DSGVO-complete deployment
+
+This is a boundary, stated rather than engineered around. With no database there is no
+`find_subject`, no `erase_subject`, no `purge_expired` — `GET`/`DELETE
+/api/admin/subjects` both answer `503 db_not_configured`, and nothing purges on any
+schedule. Deletion is manual: find the records in `.data/*.jsonl` (and the rotated
+`.jsonl.1` beside it, which no reader in this codebase opens) and edit or truncate the
+file.
+
+**A deployment that handles real personal data must run Postgres.** Without one,
+OpenFunnel is a local, development, or demonstration mode. That is written into
+README.md's self-hosting notes as well, because this document is not what a
+self-hoster reads first.
+
+Building subject rights against the sink itself — a JSON matcher duplicating
+`subject_matches()`, a streaming rewrite that does not truncate history the way
+`readJsonlRecords()`'s tail read would, the `.jsonl.1` file, an append landing
+mid-rewrite, a retention number with no `client` row to read it from, and a scheduler
+where there is no `pg_cron` — was considered and rejected for now. It is a
+multi-work-order build for a deployment shape that has no users, and a second matcher
+for the same question is the exact shape of the bug that erases the wrong person's
+inbox.
 
 ---
 

@@ -28,7 +28,11 @@
  * live in the `funnel` table (the directory becoming a fallback), and a lead is
  * written with its delivery rows in one transaction — retried, backed off and
  * dead-lettered by the queue instead of being lost to a `console.warn`. The
- * JSONL sink is written either way. Ingest must never fail a visitor's funnel.
+ * JSONL sink is then the store of LAST RESORT, not a second copy: WO D-24 made
+ * it write only when nothing durable took the record, because both deletion
+ * mechanisms are Postgres-only and a shadow copy on disk is outside Art. 17.
+ * See `persist()` in `lib/store.js` — the flag is `durable`, not `fanOut`.
+ * Ingest must never fail a visitor's funnel.
  *
  * Run:  bun run dev   (from apps/runtime)   ·   PORT=3000 bun server.js
  */

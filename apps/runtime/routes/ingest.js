@@ -174,13 +174,21 @@ function attributionOf(record) {
  * ========================================================================== */
 
 /**
- * @typedef {object} Stored  What the queue did with a lead.
+ * @typedef {object} Stored  What the database did with a lead.
  * @property {string|null} leadId   Set only when there are fresh rows to drain.
  * @property {boolean} queueOwnsIt  True when the queue will deliver this lead.
+ * @property {boolean} durable      True when Postgres committed the row.
  *
- * `queueOwnsIt` is the whole answer the caller needs, and it is deliberately NOT
- * `Boolean(leadId)`. Those came apart in two directions, both of which reached
- * the operator:
+ * THREE fields because there are three different questions, and every time two
+ * of them have been answered with one value it has cost something:
+ *
+ *   leadId      — is there anything to DRAIN right now?
+ *   queueOwnsIt — will anything else DELIVER this lead?
+ *   durable     — did a store that `erase_subject` and `purge_expired` can reach
+ *                 actually TAKE this lead? (WO D-24: it decides the JSONL sink.)
+ *
+ * `queueOwnsIt` is deliberately NOT `Boolean(leadId)`. Those came apart in two
+ * directions, both of which reached the operator:
  *
  * - A DEDUPED resubmit has no rows to drain — the first submit queued them —
  *   but the queue does own the delivery. Reading it off a null lead id fanned
@@ -193,6 +201,14 @@ function attributionOf(record) {
  *   creates those rows yet) has a lead id and NOBODY to deliver it. Reading it
  *   off a truthy id suppressed the fan-out and took the operator's webhook and
  *   "new lead" alert silently dark.
+ *
+ * `durable` is NOT `queueOwnsIt` either, and that same `queued === 0` case is
+ * why. The row IS committed — `ingest_lead` inserts the lead before it inserts
+ * any `delivery` row and returns the id on every success path — but nothing will
+ * deliver it, so `queueOwnsIt` is false. WO D-24 reused that flag for the sink
+ * and therefore went on writing a shadow copy of a lead Postgres already held,
+ * for every lead on every deployment with no `delivery_target` rows — which is
+ * all of them until WO12. Exactly the defect the work order existed to remove.
  */
 
 /**
@@ -204,7 +220,7 @@ function attributionOf(record) {
  */
 async function storeLead(record, ip) {
   /** Nothing was stored, so the direct fan-out is the only delivery left. */
-  const fallBack = { leadId: null, queueOwnsIt: false };
+  const fallBack = { leadId: null, queueOwnsIt: false, durable: false };
 
   const slug = String(record.funnelId || "");
   if (!slug) {
@@ -232,7 +248,8 @@ async function storeLead(record, ip) {
       // deliveries. Fanning out here would send the operator the same lead
       // twice, and draining would re-send rows another attempt already owns.
       console.warn(`[runtime] duplicate submit within the dedupe window for ${oneLine(slug, 80)}`);
-      return { leadId: null, queueOwnsIt: true };
+      // Durable on the FIRST submit's row, which `on conflict do nothing` kept.
+      return { leadId: null, queueOwnsIt: true, durable: true };
     }
     if (!out?.lead_id) return fallBack;
 
@@ -245,9 +262,11 @@ async function storeLead(record, ip) {
       console.warn(
         `[runtime] no delivery_target for ${oneLine(slug, 80)} — lead stored, delivering via the direct fan-out`,
       );
-      return { leadId: null, queueOwnsIt: false };
+      // `durable` is true here and `queueOwnsIt` is false — the one case where
+      // they differ, and the one this deployment is in for every lead today.
+      return { leadId: null, queueOwnsIt: false, durable: true };
     }
-    return { leadId: out.lead_id, queueOwnsIt: true };
+    return { leadId: out.lead_id, queueOwnsIt: true, durable: true };
   } catch (err) {
     // Three shapes, one response to the visitor and three different log lines,
     // because they need three different things from the operator:
@@ -371,21 +390,26 @@ export async function handleIngest(req, ctx) {
 
   if (path === "/api/events") {
     const stored = dbConfigured() ? await storeEvent(record) : false;
-    defer(ctx, persist("events", record, { fanOut: !stored }));
+    defer(ctx, persist("events", record, { fanOut: !stored, durable: stored }));
     return json({ ok: true }, 202, CORS);
   }
 
-  const { leadId, queueOwnsIt } = dbConfigured()
+  const { leadId, queueOwnsIt, durable } = dbConfigured()
     ? await storeLead(record, ip)
-    : { leadId: null, queueOwnsIt: false };
+    : { leadId: null, queueOwnsIt: false, durable: false };
 
   // The queue owns delivery now, so the direct fan-out runs only when the queue
   // did not take responsibility for this lead. Both running would send the
   // operator two copies; neither running would lose the lead outright — which is
   // why this reads `queueOwnsIt` rather than inferring it from `leadId`.
-  // The JSONL sink is written either way — it is the console's lead inbox and
-  // the operator's own copy, not a delivery channel.
-  defer(ctx, persist("leads", record, { fanOut: !queueOwnsIt }));
+  // The sink reads `durable`, NOT `fanOut` (WO D-24). They differ for a lead
+  // Postgres committed with no `delivery_target` to send it to: nothing will
+  // deliver it, so the fan-out must run — but the row exists and
+  // `erase_subject` can reach it, so a second copy on disk is exactly the
+  // shadow store this work order removed. That case is every lead on every
+  // deployment until WO12 creates target rows, so reusing one flag for both
+  // would have closed nothing.
+  defer(ctx, persist("leads", record, { fanOut: !queueOwnsIt, durable }));
 
   // The first attempt happens here rather than waiting for the cron drain, so a
   // working webhook fires in the same second the visitor submitted. It goes
